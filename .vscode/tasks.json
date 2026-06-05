@@ -1,0 +1,47 @@
+{
+  // VS Code task runner for fpga-sim.
+  // Run with Terminal > Run Task..., or Ctrl+Shift+B for the default (Sim: run).
+  "version": "2.0.0",
+  "options": {
+    "cwd": "${workspaceFolder}"
+  },
+  "presentation": { "clear": true, "panel": "shared" },
+  "tasks": [
+    {
+      "label": "Sim: setup",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "sim.ps1", "setup"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Sim: run",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "sim.ps1", "run"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Sim: run + waveform",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "sim.ps1", "test"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Sim: open waveform",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "sim.ps1", "wave"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Sim: clean",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-ExecutionPolicy", "Bypass", "-File", "sim.ps1", "clean"],
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# Python venv
+.venv/
+__pycache__/
+*.pyc
+
+# Simulation build artifacts & waveforms
+sim_build/
+*.fst
+*.fst.hier
+*.vcd
+results.xml

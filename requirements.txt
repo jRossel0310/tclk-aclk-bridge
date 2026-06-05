@@ -1,0 +1,6 @@
+# Python dependencies for the simulation environment.
+# Recreate the venv from these with:  ./sim.sh setup   (or  .\sim.ps1 setup)
+cocotb==2.0.1
+
+# Optional but recommended: richer cocotb AssertionError messages.
+pytest
