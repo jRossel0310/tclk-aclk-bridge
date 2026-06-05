@@ -1,18 +1,16 @@
 # constraints/
 
-Placeholder for the **hardware / synthesis** stage (not used by simulation).
+Physical constraints for the **hardware / synthesis** stage (not used by
+simulation). Xilinx `.xdc` files map top-level ports to package pins, set I/O
+standards, and define timing. Vivado reads these; the cocotb simulation does not.
 
-When you move from simulation to a real FPGA, put your physical constraints
-here — e.g. Xilinx `.xdc` files mapping top-level ports to package pins and
-defining clock timing. Vivado (or your synthesis flow) reads these; the cocotb
-simulation does not.
+| File | Target |
+|------|--------|
+| `kr260.xdc` | Kria KR260 — `serial_in`/`serial_out` on PMOD pins for the `uart_echo_top` bring-up |
 
-Suggested layout once you get there:
+> ⚠️ The PMOD package pins in `kr260.xdc` are **starter values** from the KR260
+> master pinout. Verify them against the official KR260 master XDC / carrier-card
+> schematic (AMD Kria K26 docs) before connecting an adapter to the board.
 
-```
-constraints/
-  <board>.xdc        # pin assignments + I/O standards + clock constraints
-synth/               # synthesis scripts / Vivado project (add when needed)
-```
-
-Until then this directory just reserves the spot so `rtl/` stays pure RTL.
+The scripted Vivado build that consumes this file lives in
+[`../vivado/`](../vivado/) (`build.tcl`, run via `hw.ps1` / `hw.sh`).

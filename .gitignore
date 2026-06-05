@@ -9,3 +9,11 @@ sim_build/
 *.fst.hier
 *.vcd
 results.xml
+
+# Vivado build artifacts (the bitstream flow). Keep build.tcl + uart_echo_bd.tcl;
+# ignore everything generated.
+vivado/build/
+vivado/*.log
+vivado/*.jou
+.Xil/
+*.str

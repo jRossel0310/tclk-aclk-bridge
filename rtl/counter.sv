@@ -1,7 +1,7 @@
 // rtl/counter.sv
 //
 // Trivial up-counter: synchronous active-high reset, count enable.
-// This is smoke-test RTL — its job is to validate the toolchain plumbing
+// This is smoke-test RTL, its job is to validate the toolchain plumbing
 // (compile -> simulate -> cocotb -> waveform), NOT to do anything useful.
 //
 // Kept deliberately simple. Real modules go in their own rtl/<name>.sv files.
