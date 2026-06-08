@@ -126,7 +126,7 @@ SIM=verilator python runner.py      # or: ./sim.sh run -s verilator
 ## Hardware: KR260 bitstream
 
 The same RTL also builds to a bitstream for the **Kria KR260** (Zynq UltraScale+,
-part `xck26-sfva676-2LV-c`). UltraScale+ has no open-source bitstream path, so
+part `xck26-sfvc784-2LV-c`). UltraScale+ has no open-source bitstream path, so
 this stage needs **AMD Vivado** — the free **ML Standard Edition** supports the
 KR260. The first hardware target is [`rtl/uart_echo_top.sv`](rtl/uart_echo_top.sv):
 a UART loopback (`uart_receiver` → `fifo` → `uart_transmitter`) — type into a

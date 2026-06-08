@@ -1,0 +1,11 @@
+/* bootgen image file: convert the Vivado .bit into a .bit.bin that the Kria
+ * FPGA manager (fpgautil / xmutil) can load into the PL.
+ *
+ * Usage (from a Vivado/Vitis shell, in the folder holding the .bit):
+ *   bootgen -arch zynqmp -process_bitstream bin -image uart_echo.bif
+ * Produces: uart_echo_bd_wrapper.bit.bin
+ */
+all:
+{
+    uart_echo_bd_wrapper.bit
+}

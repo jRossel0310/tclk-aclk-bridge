@@ -1,7 +1,7 @@
 # vivado/ — Kria KR260 hardware build
 
 Scripted RTL → bitstream flow for the Kria KR260 (Zynq UltraScale+ MPSoC,
-part `xck26-sfva676-2LV-c`). UltraScale+ has no open-source bitstream path, so
+part `xck26-sfvc784-2LV-c`). UltraScale+ has no open-source bitstream path, so
 this stage requires **AMD Vivado** (the free **ML Standard Edition** supports the
 KR260). The cocotb simulation in `tb/` stays the fast inner loop; this is the
 slow path you run when you want real hardware.

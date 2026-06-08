@@ -30,7 +30,10 @@ param(
 $ErrorActionPreference = "Stop"
 $Root     = $PSScriptRoot
 $BuildTcl = Join-Path $Root "vivado\build.tcl"
-$BuildDir = Join-Path $Root "vivado\build"
+# Build in a space-free directory: Vivado's IP Integrator (block design) breaks
+# when the project path contains spaces, and this repo lives under "Summer 2026".
+# Override with $env:KRIA_BUILD_DIR. Must match the default in vivado/build.tcl.
+$BuildDir = if ($env:KRIA_BUILD_DIR) { $env:KRIA_BUILD_DIR } else { Join-Path $env:USERPROFILE "kria-builds\uart_echo" }
 
 function Resolve-Vivado {
     if ($Vivado) {
@@ -52,10 +55,50 @@ the KR260 / xck26), then make it resolvable in ONE of these ways:
 switch ($Task) {
     "build" {
         $vivado = Resolve-Vivado
-        Write-Host "==> building bitstream with $vivado" -ForegroundColor Cyan
-        & $vivado -mode batch -source $BuildTcl -nojournal -log (Join-Path $Root "vivado\build.log")
-        if ($LASTEXITCODE -ne 0) { throw "Vivado build failed (exit $LASTEXITCODE)" }
-        Write-Host "==> done. Bitstream is under vivado\build\uart_echo.runs\impl_1\" -ForegroundColor Green
+        $env:KRIA_BUILD_DIR = $BuildDir
+        $parent = Split-Path $BuildDir -Parent
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+        $log = Join-Path $parent "build.log"
+
+        # Vivado's batch IP-Integrator rule init intermittently fails to read its
+        # own .tcl files ("couldn't read file ...: No error", "bd::utils::*"),
+        # usually antivirus scanning Vivado's many small script files mid-load.
+        # It fails fast (~30s, before synthesis), so retry ONLY that flake; never
+        # retry a real synth/impl failure.
+        # "couldn't read file" is the common thread across all these AV-induced
+        # transient read failures (utils_dbg.tcl, aximm xgui, rule .tcl, ...).
+        $bdFlakeSignatures = @(
+            "couldn't read file",
+            "create_bd_design' failed",
+            "Error in initialization of Rule object",
+            "Failed to load customization data",
+            "Failed to load feature",
+            "bd::utils::"
+        )
+        $maxAttempts = 12
+        $ok = $false
+        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            Write-Host "==> building bitstream with $vivado (attempt $attempt/$maxAttempts)" -ForegroundColor Cyan
+            Write-Host "    output dir: $BuildDir" -ForegroundColor DarkGray
+            # Run from a space-free CWD; IP Integrator also chokes on spaces in cwd.
+            Push-Location $parent
+            try {
+                & $vivado -mode batch -source $BuildTcl -nojournal -log $log
+            } finally { Pop-Location }
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+
+            $logText = if (Test-Path $log) { Get-Content $log -Raw } else { "" }
+            $isFlake = $false
+            foreach ($sig in $bdFlakeSignatures) { if ($logText -like "*$sig*") { $isFlake = $true; break } }
+            if ($isFlake -and $attempt -lt $maxAttempts) {
+                Write-Host "==> block-design init flaked (Vivado batch IPI bug); retrying..." -ForegroundColor Yellow
+                continue
+            }
+            throw "Vivado build failed (exit $LASTEXITCODE) - see $log"
+        }
+        if ($ok) {
+            Write-Host "==> done. Bitstream: $BuildDir\uart_echo.runs\impl_1\uart_echo_bd_wrapper.bit" -ForegroundColor Green
+        }
     }
     "gui" {
         $vivado = Resolve-Vivado
@@ -65,7 +108,7 @@ switch ($Task) {
         Start-Process $vivado -ArgumentList "`"$xpr`""
     }
     "clean" {
-        if (Test-Path $BuildDir) { Remove-Item $BuildDir -Recurse -Force; Write-Host "removed vivado\build\" }
+        if (Test-Path $BuildDir) { Remove-Item $BuildDir -Recurse -Force; Write-Host "removed $BuildDir" }
         else { Write-Host "nothing to clean" }
     }
     "help" { Get-Help $PSCommandPath -Detailed }

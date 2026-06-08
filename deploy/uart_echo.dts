@@ -1,0 +1,41 @@
+/dts-v1/;
+/plugin/;
+
+/* Device-tree overlay for the uart_echo PL design — FALLBACK only.
+ *
+ * You do NOT need this for the primary /dev/mem test path (see README). Use it if
+ * /dev/mem is locked down and you want UIO access instead: it loads the bitstream
+ * and exposes the AXI UART Lite (base 0xA000_0000) as a /dev/uioN device.
+ *
+ * Compile:  dtc -@ -O dtb -o uart_echo.dtbo uart_echo.dts
+ *
+ * NOTE: the &fpga_full / &amba labels and the address must match your board's
+ * Linux image — verify against /proc/device-tree if it won't load.
+ */
+
+/ {
+    fragment@0 {
+        target = <&fpga_full>;
+        __overlay__ {
+            #address-cells = <2>;
+            #size-cells = <2>;
+            firmware-name = "uart_echo_bd_wrapper.bit.bin";
+            /* Release the four PL resets (pl_resetn0-3) after programming.
+             * Without this the fpga-region never deasserts pl_resetn, so the
+             * design stays held in reset and every AXI access bus-errors. These
+             * indices (0x74-0x77) are what the stock k26-starter-kits app uses. */
+            resets = <&zynqmp_reset 0x74>, <&zynqmp_reset 0x75>,
+                     <&zynqmp_reset 0x76>, <&zynqmp_reset 0x77>;
+        };
+    };
+
+    fragment@1 {
+        target = <&amba>;
+        __overlay__ {
+            uart_echo_axi: uart_echo@80000000 {
+                compatible = "generic-uio";
+                reg = <0x0 0x80000000 0x0 0x10000>;
+            };
+        };
+    };
+};

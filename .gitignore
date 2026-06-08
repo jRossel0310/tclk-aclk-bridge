@@ -17,3 +17,13 @@ vivado/*.log
 vivado/*.jou
 .Xil/
 *.str
+
+# Stray GUI-created Vivado projects (use the scripted vivado/ flow instead).
+project_1/
+*.xpr
+
+# Compiled/loadable deploy artifacts — the deploy/ SOURCES (.dts/.bif/.json/.py)
+# ARE tracked; these generated outputs are not.
+*.dtbo
+*.bit.bin
+*.bit
