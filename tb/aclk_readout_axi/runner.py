@@ -1,15 +1,10 @@
-"""Cocotb 2.0 Python runner for the ACLK_RCV decoder testbench.
+"""Cocotb 2.0 Python runner for the AXI-Lite readout testbench.
 
-ACLK_RCV (rtl/aclk_bridge/ACLK_REV.v) is the receive/decode end of the ACLK-Lite
-link: it turns the 16-bit + K-flag transceiver word stream into ACLK_EVENT[15:0]
-+ ACLK_DATA[63:0] + an ACLK_VALID strobe. It is a multi-file design, the runner
-compiles its two children (GEARBOX_16_TO_96, CRC8_CALC) along with it. All three
-are plain Verilog with no vendor primitives, so they simulate under Icarus.
-
-Pinned to Icarus. Verilator is unverified for this DUT: GEARBOX_16_TO_96 leaves
-its k_a register intentionally unreset, so Icarus (X warm-up) and Verilator
-(2-state 0 init) can differ in the pre-alignment cycles. Output correctness is
-unaffected (the decoder only trusts CRC==0), but we don't claim Verilator works.
+The DUT (tb_aclk_readout_axi_top) is the full PL readout as Phase B will build it:
+the real decoder (ACLK_RCV + GEARBOX_16_TO_96 + CRC8_CALC) feeding
+aclk_readout_axi (aclk_readout_core = timestamping packer + async_fifo, plus the
+AXI4-Lite slave and the cdc_gray_count diagnostic counters). All sources compiled
+here. The receive side is driven by the shared tb/aclk_tx_model.py.
 
 Switch simulators by changing SIM below, or from the shell:
     $env:SIM = "verilator"      # PowerShell
@@ -29,29 +24,32 @@ SIM = os.getenv("SIM", "icarus")        # "icarus" (default); verilator unverifi
 TB_DIR   = Path(__file__).resolve().parent
 PROJ_DIR = TB_DIR.parents[1]
 RTL_DIR  = PROJ_DIR / "rtl"
-BUILD    = PROJ_DIR / "sim_build" / "aclk_rcv"
+BUILD    = PROJ_DIR / "sim_build" / "aclk_readout_axi"
 
 sys.path.insert(0, str(TB_DIR))
 sys.path.insert(0, str(TB_DIR.parent))    # for the shared tb/aclk_tx_model.py
 
-# Best-effort: honor OSS_CAD_SUITE if set; otherwise rely on the tools already
-# being on PATH (the sim.sh / sim.ps1 wrappers put them there for you).
 _oss = os.getenv("OSS_CAD_SUITE")
 if _oss and (Path(_oss) / "bin").is_dir():
     os.environ["PATH"] = str(Path(_oss) / "bin") + os.pathsep + os.environ.get("PATH", "")
 
 
-def test_aclk_rcv():
+def test_aclk_readout_axi():
     runner = get_runner(SIM)
     build_args = ["--trace-fst", "--trace-structs"] if SIM == "verilator" else []
     runner.build(
-        # Note the aclk_bridge/ subdir, these sources don't live flat in rtl/.
         sources=[
             RTL_DIR / "aclk_bridge" / "crc8_calc.v",
             RTL_DIR / "aclk_bridge" / "GEARBOX_16_TO_96.v",
             RTL_DIR / "aclk_bridge" / "ACLK_REV.v",
+            RTL_DIR / "synchronizer.sv",
+            RTL_DIR / "async_fifo.sv",
+            RTL_DIR / "cdc_gray_count.sv",
+            RTL_DIR / "aclk_readout" / "aclk_readout_core.sv",
+            RTL_DIR / "aclk_readout" / "aclk_readout_axi.sv",
+            TB_DIR  / "tb_aclk_readout_axi_top.sv",
         ],
-        hdl_toplevel="ACLK_RCV",
+        hdl_toplevel="tb_aclk_readout_axi_top",
         build_dir=BUILD,
         build_args=build_args,
         timescale=("1ns", "1ps"),
@@ -59,12 +57,12 @@ def test_aclk_rcv():
         always=True,
     )
     runner.test(
-        hdl_toplevel="ACLK_RCV",
-        test_module="test_aclk_rcv",
+        hdl_toplevel="tb_aclk_readout_axi_top",
+        test_module="test_aclk_readout_axi",
         build_dir=BUILD,
         waves=True,
     )
 
 
 if __name__ == "__main__":
-    test_aclk_rcv()
+    test_aclk_readout_axi()
