@@ -4,3 +4,6 @@ cocotb==2.0.1
 
 # Optional but recommended: richer cocotb AssertionError messages.
 pytest
+
+# Plotting: cocotb tests emit occupancy / throughput PNGs when a sim completes.
+matplotlib

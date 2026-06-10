@@ -1,13 +1,13 @@
-# sv-sim-skeleton — SystemVerilog + cocotb simulation starter
+# sv-sim-skeleton, SystemVerilog + cocotb simulation starter
 
 A reusable starting point for SystemVerilog projects: write RTL, test it in
-Python with [cocotb](https://www.cocotb.org/), and view waveforms — all locally,
+Python with [cocotb](https://www.cocotb.org/), and view waveforms all locally,
 no Vivado or hardware required. Clone it, run `setup`, and you have a passing
 smoke test in under a minute.
 
 > Simulation is the fast inner loop and needs no Vivado or hardware. A scripted
 > **Vivado bitstream flow** for the **Xilinx Kria KR260 (Zynq UltraScale+)** also
-> lives here — see [Hardware: KR260 bitstream](#hardware-kr260-bitstream) below.
+> lives here,  see [Hardware: KR260 bitstream](#hardware-kr260-bitstream) below.
 
 ## Prerequisites
 
@@ -57,7 +57,7 @@ Expect `TESTS=1 PASS=1 FAIL=0` and an FST at `sim_build/counter/counter.fst`.
     counter/
       test_counter.py  # cocotb tests
       runner.py        # cocotb Python runner (SIM switch lives here)
-  constraints/         # hardware pin/timing constraints (.xdc) — not used by sim
+  constraints/         # hardware pin/timing constraints (.xdc),  not used by sim
     kr260.xdc          # KR260 PMOD pin map for uart_echo_top
   vivado/              # scripted Vivado RTL -> bitstream flow (KR260)
     build.tcl          # block design + synth/impl/bitstream
@@ -77,7 +77,7 @@ Expect `TESTS=1 PASS=1 FAIL=0` and an FST at `sim_build/counter/counter.fst`.
 
 (`\.sim.ps1 new fifo` in PowerShell.) The scaffold is a minimal reset-to-zero
 module + cocotb smoke test, so a freshly scaffolded module passes out of the box
-— replace the body of each with your real logic and checks.
+,  replace the body of each with your real logic and checks.
 
 ## Wrapper commands
 
@@ -101,7 +101,7 @@ setup / run / run+waveform / open waveform / clean.
 ### Manual equivalent (what the wrapper does)
 
 ```bash
-# git bash — note: source Scripts/activate (not bin/) on Windows
+# git bash,  note: source Scripts/activate (not bin/) on Windows
 source .venv/Scripts/activate
 cd tb/counter
 python runner.py
@@ -111,7 +111,7 @@ gtkwave ../../sim_build/counter/counter.fst
 ## Switch simulators (one line)
 
 In a module's `runner.py`, change `SIM = os.getenv("SIM", "icarus")`, or set the
-env var without editing code — the wrappers expose `-s`/`-Sim`:
+env var without editing code,  the wrappers expose `-s`/`-Sim`:
 
 ```bash
 SIM=verilator python runner.py      # or: ./sim.sh run -s verilator
@@ -119,7 +119,7 @@ SIM=verilator python runner.py      # or: ./sim.sh run -s verilator
 
 > **Verilator on Windows note:** Verilator is bundled with OSS CAD Suite, but
 > running it natively on Windows (and cocotb+Verilator specifically) is finicky
-> — it shells out to a C++ compiler and a Perl wrapper. If Icarus chokes on real
+>,  it shells out to a C++ compiler and a Perl wrapper. If Icarus chokes on real
 > SystemVerilog and you need Verilator, the smoothest path is WSL2 + Ubuntu
 > (`sudo apt install verilator`). The `SIM` switch is wired up regardless.
 
@@ -127,13 +127,13 @@ SIM=verilator python runner.py      # or: ./sim.sh run -s verilator
 
 The same RTL also builds to a bitstream for the **Kria KR260** (Zynq UltraScale+,
 part `xck26-sfvc784-2LV-c`). UltraScale+ has no open-source bitstream path, so
-this stage needs **AMD Vivado** — the free **ML Standard Edition** supports the
+this stage needs **AMD Vivado**,  the free **ML Standard Edition** supports the
 KR260. The first hardware target is [`rtl/uart_echo_top.sv`](rtl/uart_echo_top.sv):
-a UART loopback (`uart_receiver` → `fifo` → `uart_transmitter`) — type into a
+a UART loopback (`uart_receiver` → `fifo` → `uart_transmitter`),  type into a
 serial terminal and the characters echo back.
 
 The clock and reset come from the Zynq PS inside a Vivado block design
-(`pl_clk0` at 100 MHz, an active-high reset from `pl_resetn`) — Kria has no
+(`pl_clk0` at 100 MHz, an active-high reset from `pl_resetn`),  Kria has no
 free-running user oscillator wired to general PL logic, so this is the standard
 flow. The build is fully scripted in [`vivado/build.tcl`](vivado/build.tcl).
 
@@ -152,7 +152,7 @@ Point the wrapper at Vivado if it isn't on PATH: `-Vivado "C:\Xilinx\Vivado\<ver
 Boards → Kria KR260), and **verify the PMOD pins** in
 [`constraints/kr260.xdc`](constraints/kr260.xdc) against the official KR260 master
 XDC. See [`vivado/README.md`](vivado/README.md) for details. Simulate the echo
-first — `./sim.sh run -m uart_echo_top` — before spending Vivado time.
+first,  `./sim.sh run -m uart_echo_top`,  before spending Vivado time.
 
 > Loading the bitstream onto the board (JTAG Hardware Manager, `fpgautil`, or the
 > Kria `xmutil loadapp` app flow) is done on the board itself and is not scripted

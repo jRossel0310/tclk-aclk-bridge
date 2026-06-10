@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Is the PL running? Read the free-running counter (pl_heartbeat) through the AXI
 GPIO at 0x8000_0000, several times. If the value changes between reads, the PL
-fabric is configured AND clocked — i.e. your design is genuinely running.
+fabric is configured AND clocked, i.e. your design is genuinely running.
 
     sudo python3 pltest.py /dev/uio4
 """
