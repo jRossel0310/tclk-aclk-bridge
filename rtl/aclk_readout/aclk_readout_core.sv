@@ -14,15 +14,19 @@
 //
 // Per event (one ACLK_VALID strobe):
 //   - null / idle packets (ACLK_EVENT[7:0] == 0xFF) are dropped.
-//   - everything else is packed into { TS[63:0], EVENT[15:0], DATA[63:0] } and
-//     pushed into the FIFO.
+//   - everything else is packed into { FLAGS[15:0], TS[63:0], EVENT[15:0],
+//     DATA[63:0] } and pushed into the FIFO.
+// FLAGS carries per-event metadata from the decoder (for the Manchester ADM:
+// bit0 = has_data, bit1 = is_tclk). Events with no 64-bit payload (8/16-bit
+// events) set has_data low and carry DATA = 0.
 // ACLK_ERROR (a bad-CRC packet) never asserts ACLK_VALID, so it never enters the
 // FIFO; the AXI layer counts it separately.
 
 `timescale 1ns / 1ps
 
 module aclk_readout_core #(
-    parameter int ADDR_WIDTH = 6           // FIFO depth = 2**ADDR_WIDTH
+    parameter int ADDR_WIDTH = 6,          // FIFO depth = 2**ADDR_WIDTH
+    parameter bit DROP_NULL  = 1'b1        // 1: drop 0xFF nulls (ACLK); 0: keep all (TCLK)
 ) (
     // ---- rx_clk domain: decoded stream from ACLK_RCV ----
     input  logic         rx_clk,
@@ -31,12 +35,13 @@ module aclk_readout_core #(
     input  logic         aclk_valid,
     input  logic [15:0]  aclk_event,
     input  logic [63:0]  aclk_data,
+    input  logic [15:0]  flags,            // per-event metadata (bit0 has_data, bit1 is_tclk)
 
     // ---- rd_clk domain: PS-facing read side ----
     input  logic         rd_clk,
     input  logic         rd_rstn,          // async, active-low
     input  logic         rd_en,
-    output logic [143:0] rd_data,          // { TS[63:0], EVENT[15:0], DATA[63:0] }
+    output logic [159:0] rd_data,          // { FLAGS[15:0], TS[63:0], EVENT[15:0], DATA[63:0] }
     output logic         empty,
     output logic         overflow,         // an event was lost (FIFO was full)
     output logic         dropped_null      // rx-domain strobe: a null packet was dropped
@@ -51,14 +56,15 @@ module aclk_readout_core #(
     end
 
     // A null / idle packet is one whose low event byte is 0xFF (per top_module.v).
-    wire is_null = (aclk_event[7:0] == 8'hFF);
+    // For TCLK (DROP_NULL=0) 0xFF can be a real event code, so nulls are never dropped.
+    wire is_null = DROP_NULL && (aclk_event[7:0] == 8'hFF);
     wire push    = aclk_valid && !is_null;
 
     assign dropped_null = aclk_valid && is_null;
 
-    wire [143:0] packed_word = {ts, aclk_event, aclk_data};
+    wire [159:0] packed_word = {flags, ts, aclk_event, aclk_data};
 
-    async_fifo #(.WIDTH(144), .ADDR_WIDTH(ADDR_WIDTH)) u_fifo (
+    async_fifo #(.WIDTH(160), .ADDR_WIDTH(ADDR_WIDTH)) u_fifo (
         .wr_clk   (rx_clk),
         .wr_rstn  (rx_rstn),
         .wr_en    (push),

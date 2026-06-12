@@ -20,7 +20,7 @@ module tb_aclk_readout_top #(
     input  logic        rd_clk,
     input  logic        rd_rstn,
     input  logic        rd_en,
-    output logic [143:0] rd_data,
+    output logic [159:0] rd_data,
     output logic        empty,
     output logic        overflow,
     output logic        dropped_null,
@@ -55,6 +55,7 @@ module tb_aclk_readout_top #(
         .aclk_valid   (aclk_valid),
         .aclk_event   (aclk_event),
         .aclk_data    (aclk_data),
+        .flags        (16'h0001),            // ACLK_RCV events always carry 64-bit data
         .rd_clk       (rd_clk),
         .rd_rstn      (rd_rstn),
         .rd_en        (rd_en),

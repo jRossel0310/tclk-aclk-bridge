@@ -28,7 +28,8 @@
 
 module aclk_readout_axi #(
     parameter int ADDR_WIDTH = 6,          // FIFO depth = 2**ADDR_WIDTH
-    parameter int AXI_ADDR_W = 8           // byte-address width of the register space
+    parameter int AXI_ADDR_W = 8,          // byte-address width of the register space
+    parameter bit DROP_NULL  = 1'b1        // 1: drop 0xFF nulls (ACLK); 0: keep all (TCLK)
 ) (
     // ---- event input side (recovered-RX domain) ----
     input  logic         rx_clk,
@@ -37,6 +38,7 @@ module aclk_readout_axi #(
     input  logic         aclk_valid,
     input  logic [15:0]  aclk_event,
     input  logic [63:0]  aclk_data,
+    input  logic [15:0]  flags,            // per-event metadata (bit0 has_data, bit1 is_tclk)
     input  logic         aclk_error,
     output logic         dropped_null,     // debug passthrough
 
@@ -66,18 +68,19 @@ module aclk_readout_axi #(
     // Readout core: timestamping packer + dual-clock FIFO. The FIFO read side
     // lives in the AXI clock domain.
     // ---------------------------------------------------------------
-    wire [143:0] head;
+    wire [159:0] head;
     wire         empty;
     wire         overflow;
     logic        pop;
 
-    aclk_readout_core #(.ADDR_WIDTH(ADDR_WIDTH)) u_core (
+    aclk_readout_core #(.ADDR_WIDTH(ADDR_WIDTH), .DROP_NULL(DROP_NULL)) u_core (
         .rx_clk       (rx_clk),
         .rx_rstn      (rx_rstn),
         .pps          (pps),
         .aclk_valid   (aclk_valid),
         .aclk_event   (aclk_event),
         .aclk_data    (aclk_data),
+        .flags        (flags),
         .rd_clk       (s_axi_aclk),
         .rd_rstn      (s_axi_aresetn),
         .rd_en        (pop),
@@ -87,16 +90,20 @@ module aclk_readout_axi #(
         .dropped_null (dropped_null)
     );
 
-    // Head field views: head = { TS[63:0], EVENT[15:0], DATA[63:0] }.
-    wire [63:0] head_data = head[63:0];
-    wire [15:0] head_evt  = head[79:64];
-    wire [63:0] head_ts   = head[143:80];
+    // Head field views: head = { FLAGS[15:0], TS[63:0], EVENT[15:0], DATA[63:0] }.
+    wire [63:0] head_data  = head[63:0];
+    wire [15:0] head_evt   = head[79:64];
+    wire [63:0] head_ts    = head[143:80];
+    wire [15:0] head_flags = head[159:144];
 
     // ---------------------------------------------------------------
     // Diagnostic counters: incremented in the rx domain, read on the AXI clock.
     // ---------------------------------------------------------------
-    wire push_evt   = aclk_valid && (aclk_event[7:0] != 8'hFF);
-    wire push_null  = aclk_valid && (aclk_event[7:0] == 8'hFF);
+    // Mirror the core's drop decision so EVENT_COUNT tracks what actually enters
+    // the FIFO. With DROP_NULL=0 (TCLK) nothing is a null, so NULL_COUNT stays 0.
+    wire core_is_null = DROP_NULL && (aclk_event[7:0] == 8'hFF);
+    wire push_evt   = aclk_valid && !core_is_null;
+    wire push_null  = aclk_valid &&  core_is_null;
 
     wire [31:0] event_count, null_count, error_count;
 
@@ -127,7 +134,7 @@ module aclk_readout_axi #(
             rvalid_r  <= 1'b1;
             case (rsel)
                 'd0:  rdata_r <= {30'b0, overflow, empty};
-                'd1:  rdata_r <= {16'b0, head_evt};
+                'd1:  rdata_r <= {head_flags, head_evt};
                 'd2:  rdata_r <= head_data[63:32];
                 'd3:  rdata_r <= head_data[31:0];
                 'd4:  rdata_r <= head_ts[63:32];

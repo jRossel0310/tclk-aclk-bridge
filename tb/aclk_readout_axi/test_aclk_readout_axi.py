@@ -21,6 +21,7 @@ from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
 from aclk_tx_model import stream_frames, MASK64
+from axi_lite_bfm import axi_read, axi_write
 
 RX_PERIOD_NS = 16     # recovered RX clock (CLK1)
 AXI_PERIOD_NS = 10    # PS / AXI clock
@@ -41,48 +42,8 @@ def _b(sig) -> int:
 
 
 # ---------------------------------------------------------------------------
-# AXI4-Lite master BFM (single outstanding, valid/ready handshakes)
+# AXI4-Lite event read (built on the shared axi_read / axi_write BFM)
 # ---------------------------------------------------------------------------
-
-async def axi_read(dut, addr):
-    await RisingEdge(dut.s_axi_aclk)
-    dut.s_axi_araddr.value = addr
-    dut.s_axi_arvalid.value = 1
-    dut.s_axi_rready.value = 0
-    while True:                                  # wait until read data is presented
-        await RisingEdge(dut.s_axi_aclk)
-        await Timer(1, unit="ns")
-        if _b(dut.s_axi_rvalid) == 1:
-            break
-    val = int(dut.s_axi_rdata.value)
-    dut.s_axi_arvalid.value = 0
-    dut.s_axi_rready.value = 1                    # accept the data beat
-    await RisingEdge(dut.s_axi_aclk)
-    await Timer(1, unit="ns")
-    dut.s_axi_rready.value = 0
-    return val
-
-
-async def axi_write(dut, addr, data=0):
-    await RisingEdge(dut.s_axi_aclk)
-    dut.s_axi_awaddr.value = addr
-    dut.s_axi_awvalid.value = 1
-    dut.s_axi_wdata.value = data
-    dut.s_axi_wstrb.value = 0xF
-    dut.s_axi_wvalid.value = 1
-    dut.s_axi_bready.value = 0
-    while True:                                  # wait for the write response
-        await RisingEdge(dut.s_axi_aclk)
-        await Timer(1, unit="ns")
-        if _b(dut.s_axi_bvalid) == 1:
-            break
-    dut.s_axi_awvalid.value = 0
-    dut.s_axi_wvalid.value = 0
-    dut.s_axi_bready.value = 1
-    await RisingEdge(dut.s_axi_aclk)
-    await Timer(1, unit="ns")
-    dut.s_axi_bready.value = 0
-
 
 async def axi_read_event(dut):
     """Read one head event (EVENT/DATA/TS) and pop it. Returns (event, data, ts)."""

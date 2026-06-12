@@ -67,6 +67,7 @@ module tb_aclk_readout_axi_top (
         .aclk_valid    (aclk_valid),
         .aclk_event    (aclk_event),
         .aclk_data     (aclk_data),
+        .flags         (16'h0001),            // ACLK_RCV events always carry 64-bit data
         .aclk_error    (aclk_error),
         .dropped_null  (dropped_null),
 
