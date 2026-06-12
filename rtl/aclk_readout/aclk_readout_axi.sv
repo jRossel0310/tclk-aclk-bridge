@@ -10,7 +10,7 @@
 // its fields and get a consistent snapshot:
 //
 //   0x00 STATUS       RO  bit0 = empty, bit1 = overflow (sticky: an event was lost)
-//   0x04 EVENT        RO  { 16'b0, EVENT[15:0] }   of the FIFO head
+//   0x04 EVENT        RO  { FLAGS[15:0], EVENT[15:0] }   of the FIFO head
 //   0x08 DATA_HI      RO  DATA[63:32]
 //   0x0C DATA_LO      RO  DATA[31:0]
 //   0x10 TS_HI        RO  TIMESTAMP[63:32]
@@ -19,6 +19,8 @@
 //   0x1C EVENT_COUNT  RO  events enqueued
 //   0x20 NULL_COUNT   RO  null / idle packets dropped
 //   0x24 ERROR_COUNT  RO  bad-CRC events seen (ACLK_ERROR)
+//   0x28 DEBUG        RO  caller-supplied debug word (TCLK: { sig_err, raw_level,
+//                         tclk_transitions[29:0] }; 0 on the ACLK/Manchester path)
 //
 // PS read sequence: poll STATUS; while not empty, read EVENT / DATA_* / TS_*,
 // then write POP. The counters cross from the recovered-RX domain through Gray
