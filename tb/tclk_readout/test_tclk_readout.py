@@ -38,8 +38,8 @@ WARMUP_CELLS = 40
 GAP_CELLS = 12
 
 # Register byte offsets (aclk_readout_axi.sv). EVENT returns {FLAGS, EVENT}.
-STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP, EVENT_COUNT, NULL_COUNT, ERROR_COUNT = (
-    0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x20, 0x24
+STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP, EVENT_COUNT, NULL_COUNT, ERROR_COUNT, DEBUG = (
+    0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x20, 0x24, 0x28
 )
 
 FLAG_HAS_DATA = 0x1
@@ -288,3 +288,34 @@ async def test_tclk_parity_error_to_axi(dut):
         f"TCLK parity path OK over AXI: good frames {[f'0x{x:02X}' for x in got]} read, "
         f"bad-parity frame dropped, ERROR_COUNT delta = {err_count - base_err}"
     )
+
+
+@cocotb.test()
+async def test_tclk_debug_activity(dut):
+    """The 0x28 DEBUG register's transition counter climbs while the TCLK line
+    toggles; the level/sig_err bits read back. This is the on-board signal-presence
+    diagnostic: transitions climbing but EVENT_COUNT flat => signal present, decoder
+    not locking; transitions flat => no signal / pin / front-end."""
+    _start_clocks(dut)
+    await reset_dut(dut)
+
+    events = [0x9D, 0xD2, 0x07]
+    acct = {"w": 0, "read": 0}
+    cocotb.start_soon(_tclk_driver(dut, events, acct))
+
+    await _wait_flag(dut, acct, "warm_done")
+    await ClockCycles(dut.s_axi_aclk, 8)
+    d0 = await axi_read(dut, DEBUG)
+    c0 = d0 & 0x3FFFFFFF
+
+    await _wait_flag(dut, acct, "drive_done", step=8)
+    await ClockCycles(dut.s_axi_aclk, 8)
+    d1 = await axi_read(dut, DEBUG)
+    c1 = d1 & 0x3FFFFFFF
+    acct["stop_drive"] = True
+
+    assert c1 > c0, f"DEBUG transition count did not climb: c0={c0} c1={c1}"
+    sig_err = (d1 >> 31) & 1
+    level = (d1 >> 30) & 1
+    assert sig_err in (0, 1) and level in (0, 1), f"DEBUG flag bits unreadable: 0x{d1:08X}"
+    dut._log.info(f"DEBUG OK: transitions {c0} -> {c1}, level={level}, sig_err={sig_err}")

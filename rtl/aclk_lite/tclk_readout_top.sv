@@ -112,6 +112,43 @@ module tclk_readout_top #(
     end
     wire perr_pulse = perr & ~perr_d;      // one clk_40m cycle per new parity error
 
+    // ---- raw-TCLK activity diagnostic (-> DEBUG register 0x28) ----
+    // 2-FF synchronize the raw line into clk_80m (80 MHz oversamples the <=20 MHz
+    // biphase edge rate), count every transition, and cross the count to the AXI
+    // domain with the same Gray-coded counter the readout uses elsewhere.
+    logic tclk_m, tclk_s, tclk_s_d;
+    always_ff @(posedge clk_80m or negedge rstn) begin
+        if (!rstn) begin
+            tclk_m   <= 1'b0;
+            tclk_s   <= 1'b0;
+            tclk_s_d <= 1'b0;
+        end else begin
+            tclk_m   <= tclk;
+            tclk_s   <= tclk_m;
+            tclk_s_d <= tclk_s;
+        end
+    end
+    wire tclk_edge = tclk_s ^ tclk_s_d;          // one clk_80m pulse per transition
+
+    wire [29:0] edge_count;
+    cdc_gray_count #(.W(30)) u_cnt_edge (
+        .src_clk(clk_80m), .src_rstn(rstn), .incr(tclk_edge),
+        .dst_clk(s_axi_aclk), .count_dst(edge_count));
+
+    // Live level + serdec carrier error, synchronized into the AXI domain.
+    logic lvl_m, lvl_s, serr_m, serr_s;
+    always_ff @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
+        if (!s_axi_aresetn) begin
+            lvl_m  <= 1'b0; lvl_s  <= 1'b0;
+            serr_m <= 1'b0; serr_s <= 1'b0;
+        end else begin
+            lvl_m  <= tclk;    lvl_s  <= lvl_m;
+            serr_m <= sig_err; serr_s <= serr_m;
+        end
+    end
+
+    wire [31:0] tclk_dbg_word = {serr_s, lvl_s, edge_count};
+
     // ---- adapter: TCLK_RCV -> readout ----
     wire        adapt_valid = ~davn;
     wire [15:0] adapt_event = {8'h00, data};
@@ -137,7 +174,7 @@ module tclk_readout_top #(
         .flags         (adapt_flags),
         .aclk_error    (perr_pulse),
         .dropped_null  (dropped_null),
-        .dbg_word      (32'd0),
+        .dbg_word      (tclk_dbg_word),
 
         .s_axi_aclk    (s_axi_aclk),
         .s_axi_aresetn (s_axi_aresetn),
