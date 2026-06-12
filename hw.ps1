@@ -5,8 +5,9 @@
 
 .EXAMPLE
   .\hw.ps1 build                # RTL -> bitstream via vivado/build.tcl (batch)
+  .\hw.ps1 build -Tcl vivado\build_pinblink.tcl -Name pinblink   # a different design
   .\hw.ps1 gui                  # open the generated project in the Vivado GUI
-  .\hw.ps1 clean                # delete vivado/build/
+  .\hw.ps1 clean                # delete the build dir
 
 .NOTES
   Finds Vivado in one of three ways (first that works wins):
@@ -24,16 +25,27 @@ param(
     [ValidateSet("build", "gui", "clean", "help")]
     [string]$Task = "build",
 
-    [string]$Vivado = ""
+    [string]$Vivado = "",
+
+    # Which build tcl to run (default vivado\build.tcl) and the project name used
+    # for the build dir / runs folder. Lets the same AV-retry wrapper drive other
+    # designs, e.g. -Tcl vivado\build_pinblink.tcl -Name pinblink.
+    [string]$Tcl  = "",
+    [string]$Name = "uart_echo"
 )
 
 $ErrorActionPreference = "Stop"
 $Root     = $PSScriptRoot
-$BuildTcl = Join-Path $Root "vivado\build.tcl"
+if ($Tcl) {
+    $BuildTcl = if ([System.IO.Path]::IsPathRooted($Tcl)) { $Tcl } else { Join-Path $Root $Tcl }
+} else {
+    $BuildTcl = Join-Path $Root "vivado\build.tcl"
+}
 # Build in a space-free directory: Vivado's IP Integrator (block design) breaks
 # when the project path contains spaces, and this repo lives under "Summer 2026".
-# Override with $env:KRIA_BUILD_DIR. Must match the default in vivado/build.tcl.
-$BuildDir = if ($env:KRIA_BUILD_DIR) { $env:KRIA_BUILD_DIR } else { Join-Path $env:USERPROFILE "kria-builds\uart_echo" }
+# Derived from -Name (one dir per design); the build task exports it as
+# KRIA_BUILD_DIR, which the build tcls honor.
+$BuildDir = Join-Path $env:USERPROFILE "kria-builds\$Name"
 
 function Resolve-Vivado {
     if ($Vivado) {
@@ -97,12 +109,12 @@ switch ($Task) {
             throw "Vivado build failed (exit $LASTEXITCODE) - see $log"
         }
         if ($ok) {
-            Write-Host "==> done. Bitstream: $BuildDir\uart_echo.runs\impl_1\uart_echo_bd_wrapper.bit" -ForegroundColor Green
+            Write-Host "==> done. Bitstream: $BuildDir\$Name.runs\impl_1\uart_echo_bd_wrapper.bit" -ForegroundColor Green
         }
     }
     "gui" {
         $vivado = Resolve-Vivado
-        $xpr = Join-Path $BuildDir "uart_echo.xpr"
+        $xpr = Join-Path $BuildDir "$Name.xpr"
         if (-not (Test-Path $xpr)) { throw "No project at $xpr - run: .\hw.ps1 build" }
         Write-Host "==> opening $xpr" -ForegroundColor Cyan
         Start-Process $vivado -ArgumentList "`"$xpr`""
