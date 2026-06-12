@@ -137,6 +137,7 @@ module tclk_readout_top #(
         .flags         (adapt_flags),
         .aclk_error    (perr_pulse),
         .dropped_null  (dropped_null),
+        .dbg_word      (32'd0),
 
         .s_axi_aclk    (s_axi_aclk),
         .s_axi_aresetn (s_axi_aresetn),

@@ -41,6 +41,7 @@ module aclk_readout_axi #(
     input  logic [15:0]  flags,            // per-event metadata (bit0 has_data, bit1 is_tclk)
     input  logic         aclk_error,
     output logic         dropped_null,     // debug passthrough
+    input  logic [31:0]  dbg_word,         // RO debug word -> 0x28 (AXI-domain, caller-synced)
 
     // ---- AXI4-Lite slave (PS clock) ----
     input  logic                   s_axi_aclk,
@@ -142,6 +143,7 @@ module aclk_readout_axi #(
                 'd7:  rdata_r <= event_count;
                 'd8:  rdata_r <= null_count;
                 'd9:  rdata_r <= error_count;
+                'd10: rdata_r <= dbg_word;
                 default: rdata_r <= 32'b0;
             endcase
         end else if (rvalid_r && s_axi_rready) begin
