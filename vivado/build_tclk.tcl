@@ -88,7 +88,7 @@ apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { \
 set clkw [create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:* clk_wiz_0]
 set_property -dict [list \
     CONFIG.PRIM_SOURCE {No_buffer} \
-    CONFIG.PRIM_IN_FREQ {100.000} \
+    CONFIG.PRIM_IN_FREQ {99.999} \
     CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {80.000} \
     CONFIG.CLKOUT2_USED {true} \
     CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {40.000} \
