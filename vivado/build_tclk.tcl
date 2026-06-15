@@ -51,7 +51,10 @@ update_compile_order -fileset sources_1
 
 create_bd_design $design_name
 
-# Zynq US+ PS with board preset; three PL clocks + the LPD AXI master.
+# Zynq US+ PS with board preset; pl_clk0 (100 MHz) + the LPD AXI master. The 80/40
+# MHz receive clocks are made in the PL by a Clocking Wizard below, NOT by the PS:
+# a runtime bitstream load cannot reprogram the PS PL clock frequencies (pl_clk1/2
+# stay at boot defaults), so the design must depend only on pl_clk0.
 set ps [create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e:* zynq_ultra_ps_e_0]
 if {[llength $bp] > 0} {
     apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e -config {apply_board_preset 1} $ps
@@ -59,10 +62,6 @@ if {[llength $bp] > 0} {
 set_property -dict [list \
     CONFIG.PSU__FPGA_PL0_ENABLE {1} \
     CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ {100} \
-    CONFIG.PSU__FPGA_PL1_ENABLE {1} \
-    CONFIG.PSU__CRL_APB__PL1_REF_CTRL__FREQMHZ {80} \
-    CONFIG.PSU__FPGA_PL2_ENABLE {1} \
-    CONFIG.PSU__CRL_APB__PL2_REF_CTRL__FREQMHZ {40} \
     CONFIG.PSU__USE__M_AXI_GP0 {0} \
     CONFIG.PSU__USE__M_AXI_GP1 {0} \
     CONFIG.PSU__USE__M_AXI_GP2 {1} \
@@ -82,16 +81,28 @@ apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { \
     master_apm  {0} \
 } [get_bd_intf_pins u_tclk/S_AXI]
 
-# Tie the auto-reset's dcm_locked high so the design isn't held in reset.
-set rst [lindex [get_bd_cells -filter {VLNV =~ "*proc_sys_reset*"}] 0]
-set vcc [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:* dcm_locked_const]
-set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {1}] $vcc
-connect_bd_net [get_bd_pins $vcc/dout] [get_bd_pins $rst/dcm_locked]
+# Clocking Wizard: make the 80 + 40 MHz receive clocks from pl_clk0 (100 MHz)
+# INSIDE the PL, so we depend only on pl_clk0 (the one PL clock a runtime bitstream
+# load leaves at the expected frequency). pl_clk0 is an internal clock net, so the
+# MMCM input takes it with no buffer. The MMCM 'locked' drives the reset.
+set clkw [create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:* clk_wiz_0]
+set_property -dict [list \
+    CONFIG.PRIM_SOURCE {No_buffer} \
+    CONFIG.PRIM_IN_FREQ {100.000} \
+    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {80.000} \
+    CONFIG.CLKOUT2_USED {true} \
+    CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {40.000} \
+    CONFIG.USE_LOCKED {true} \
+    CONFIG.USE_RESET {false} \
+] $clkw
+connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins clk_wiz_0/clk_in1]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins u_tclk/clk_80m]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out2] [get_bd_pins u_tclk/clk_40m]
 
-# Receive-domain clocks + reset.
-connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk1] [get_bd_pins u_tclk/clk_80m]
-connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk2] [get_bd_pins u_tclk/clk_40m]
-connect_bd_net [get_bd_pins $rst/peripheral_aresetn]   [get_bd_pins u_tclk/rstn]
+# Reset: hold the design in reset until the MMCM locks (dcm_locked = clk_wiz locked).
+set rst [lindex [get_bd_cells -filter {VLNV =~ "*proc_sys_reset*"}] 0]
+connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_pins $rst/dcm_locked]
+connect_bd_net [get_bd_pins $rst/peripheral_aresetn] [get_bd_pins u_tclk/rstn]
 
 # External TCLK input -> H12 (constrained in the XDC).
 create_bd_port -dir I tclk
