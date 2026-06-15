@@ -96,6 +96,11 @@ set_property -dict [list \
     CONFIG.USE_RESET {false} \
 ] $clkw
 connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins clk_wiz_0/clk_in1]
+# pl_clk0 reports an odd exact rate (e.g. 99999001 Hz, not 100 MHz); copy it onto
+# the MMCM input pin so validate_bd_design sees an exact FREQ_HZ match. PRIM_IN_FREQ
+# can only express 99.999 (99999000), so the 1 Hz delta would trip BD 41-238; it is
+# irrelevant to the MMCM divisor math.
+set_property CONFIG.FREQ_HZ [get_property CONFIG.FREQ_HZ [get_bd_pins zynq_ultra_ps_e_0/pl_clk0]] [get_bd_pins clk_wiz_0/clk_in1]
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins u_tclk/clk_80m]
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out2] [get_bd_pins u_tclk/clk_40m]
 
