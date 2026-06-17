@@ -26,7 +26,8 @@
 //                         tclk_transitions[29:0] }; 0 on the ACLK/Manchester path)
 //   0xB0 HEARTBEAT    RO  free-running clk_40m counter (cdc_gray_count) - CDC liveness
 //   0xC0 LOCK         RO  bit0 = MMCM locked (synchronized)
-//   0xD0 CONST        RO  fixed 0xC0FFEE00 (TEMP: wide-value read sanity check)
+//   0xD0 FILTER_CFG    WO  {bit8=drop, bits[7:0]=code} -> set/clear a drop_mask bit
+//   0xE0 FILTERED_COUNT RO events dropped by the mask (not pushed to the FIFO)
 //
 // PS read sequence: poll STATUS; while not empty, read EVENT / DATA_* / TS_*,
 // then write POP. The counters cross from the recovered-RX domain through Gray
@@ -76,6 +77,39 @@ module aclk_readout_axi #(
 );
 
     // ---------------------------------------------------------------
+    // Mirror the core's null decision so the drop-mask never suppresses a null
+    // (nulls are handled by DROP_NULL / dropped_null, not by the mask).
+    // With DROP_NULL=0 (TCLK) nothing is a null, so NULL_COUNT stays 0.
+    // Declared here (above u_core) so that core_valid can be computed before
+    // the instantiation.
+    // ---------------------------------------------------------------
+    wire core_is_null = DROP_NULL && (aclk_event[7:0] == 8'hFF);
+
+    // ---------------------------------------------------------------
+    // Configurable event drop-mask. One bit per event code (0x00-0xFF): a set bit
+    // means "do not push this code to the FIFO; count it in FILTERED_COUNT instead."
+    // Reset = all zeros = drop nothing = original behavior. Written via FILTER_CFG
+    // (0xD0) one bit at a time, so at most one bit changes between writes -- the
+    // 2-FF per-bit sync into rx_clk is safe (single-bit, gray-like). Quasi-static
+    // config: a transient during a mid-run change at worst mis-filters one event.
+    // ---------------------------------------------------------------
+    logic [255:0] drop_mask;                 // s_axi_aclk domain (written by the write FSM)
+    wire  [255:0] drop_mask_rx;
+    synchronizer #(.WIDTH(256), .STAGES(2)) u_mask_sync (
+        .clk          (rx_clk),
+        .async_signal (drop_mask),
+        .sync_signal  (drop_mask_rx)
+    );
+
+    wire drop_this  = drop_mask_rx[aclk_event[7:0]] && !core_is_null;  // never drop a null
+    wire core_valid = aclk_valid && !drop_this;     // gated valid into the FIFO packer
+
+    wire [31:0] filtered_count;
+    cdc_gray_count #(.W(32)) u_cnt_filt (
+        .src_clk(rx_clk), .src_rstn(rx_rstn), .incr(aclk_valid && drop_this),
+        .dst_clk(s_axi_aclk), .count_dst(filtered_count));
+
+    // ---------------------------------------------------------------
     // Readout core: timestamping packer + dual-clock FIFO. The FIFO read side
     // lives in the AXI clock domain.
     // ---------------------------------------------------------------
@@ -88,7 +122,7 @@ module aclk_readout_axi #(
         .rx_clk       (rx_clk),
         .rx_rstn      (rx_rstn),
         .pps          (pps),
-        .aclk_valid   (aclk_valid),
+        .aclk_valid   (core_valid),
         .aclk_event   (aclk_event),
         .aclk_data    (aclk_data),
         .flags        (flags),
@@ -110,10 +144,7 @@ module aclk_readout_axi #(
     // ---------------------------------------------------------------
     // Diagnostic counters: incremented in the rx domain, read on the AXI clock.
     // ---------------------------------------------------------------
-    // Mirror the core's drop decision so EVENT_COUNT tracks what actually enters
-    // the FIFO. With DROP_NULL=0 (TCLK) nothing is a null, so NULL_COUNT stays 0.
-    wire core_is_null = DROP_NULL && (aclk_event[7:0] == 8'hFF);
-    wire push_evt   = aclk_valid && !core_is_null;
+    wire push_evt   = core_valid && !core_is_null;   // events actually pushed (kept)
     wire push_null  = aclk_valid &&  core_is_null;
 
     wire [31:0] event_count, null_count, error_count;
@@ -177,7 +208,7 @@ module aclk_readout_axi #(
                 'd10: rdata_r <= dbg_word;
                 'd11: rdata_r <= rx_heartbeat;        // 0xB0: free-running clk_40m heartbeat
                 'd12: rdata_r <= {31'b0, lock_sync[1]}; // 0xC0: MMCM locked (synced)
-                'd13: rdata_r <= 32'hC0FFEE00;        // 0xD0: const - wide-value read sanity (TEMP)
+                'd14: rdata_r <= filtered_count;        // 0xE0: events dropped by the mask
                 default: rdata_r <= 32'b0;
             endcase
         end else if (rvalid_r && s_axi_rready) begin
@@ -202,6 +233,7 @@ module aclk_readout_axi #(
     // ---------------------------------------------------------------
     logic awready_r, wready_r, bvalid_r;
     logic [AXI_ADDR_W-5:0] waddr_q;          // latched write reg-address (16-byte stride)
+    logic [31:0] wdata_q;                    // latched write data (W may precede/follow AW)
 
     always_ff @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
         if (!s_axi_aresetn) begin
@@ -210,18 +242,24 @@ module aclk_readout_axi #(
             bvalid_r  <= 1'b0;
             pop       <= 1'b0;
             waddr_q   <= '0;
+            drop_mask <= '0;
+            wdata_q   <= '0;
         end else begin
             pop <= 1'b0;
             if (s_axi_awvalid && awready_r) begin
                 awready_r <= 1'b0;
                 waddr_q   <= s_axi_awaddr[AXI_ADDR_W-1:4];
             end
-            if (s_axi_wvalid && wready_r)
+            if (s_axi_wvalid && wready_r) begin
                 wready_r  <= 1'b0;
+                wdata_q   <= s_axi_wdata;
+            end
             if (!awready_r && !wready_r && !bvalid_r) begin
                 bvalid_r <= 1'b1;
                 if (waddr_q == 'd6 && !empty)
-                    pop <= 1'b1;            // POP @ 0x60: advance the FIFO head
+                    pop <= 1'b1;                       // POP @ 0x60
+                if (waddr_q == 'd13)
+                    drop_mask[wdata_q[7:0]] <= wdata_q[8];  // FILTER_CFG @ 0xD0
             end
             if (bvalid_r && s_axi_bready) begin
                 bvalid_r  <= 1'b0;
