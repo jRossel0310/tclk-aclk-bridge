@@ -33,6 +33,8 @@ STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP, EVENT_COUNT, NULL_COUNT, ERR
 
 NULL_EVENT = (0xFFFF, MASK64)
 
+FILTER_CFG, FILTERED_COUNT = 0xD0, 0xE0   # drop-mask config (write-only); dropped-event count (read)
+
 
 def _b(sig) -> int:
     try:
@@ -259,3 +261,46 @@ async def test_axi_error_count(dut):
     assert err_count >= 1, f"ERROR_COUNT did not register the corrupted frame (got {err_count})"
     assert ev_count > 0, "no good events decoded around the corrupted frame"
     dut._log.info(f"error-count OK: ERROR_COUNT={err_count}, EVENT_COUNT={ev_count}")
+
+
+@cocotb.test()
+async def test_event_filter_drop(dut):
+    """Program the drop-mask to suppress code 0x01: it must never reach the FIFO
+    and must increment FILTERED_COUNT, while the unmasked code 0xA5 still reads
+    out and increments EVENT_COUNT."""
+    cocotb.start_soon(Clock(dut.CLK1, RX_PERIOD_NS, unit="ns").start())
+    cocotb.start_soon(Clock(dut.s_axi_aclk, AXI_PERIOD_NS, unit="ns").start())
+    await _reset(dut)
+
+    # Drop low-byte code 0x01 (bit8 = drop). Keep 0xA5.
+    await axi_write(dut, FILTER_CFG, 0x100 | 0x01)
+
+    drop_evt = (0x0001, 0x1111222233334444)
+    keep_evt = (0x00A5, 0xAAAABBBBCCCCDDDD)
+    await stream_frames(dut, [drop_evt, keep_evt], repeat=10)
+
+    stop = {"done": False}
+    cocotb.start_soon(_idle_carrier(dut, stop))     # keep the link aligned during readout
+    await ClockCycles(dut.CLK1, 8)
+    await ClockCycles(dut.s_axi_aclk, 6)
+
+    collected = []
+    while True:
+        status = await axi_read(dut, STATUS)
+        if status & 0x1:                            # empty
+            break
+        collected.append(await axi_read_event(dut))
+    stop["done"] = True
+
+    assert collected, "no events read over AXI"
+    for ev, da, ts in collected:
+        assert (ev & 0xFF) == 0xA5, f"dropped code 0x01 leaked into the FIFO: 0x{ev:04X}"
+
+    filtered = await axi_read(dut, FILTERED_COUNT)
+    ev_count = await axi_read(dut, EVENT_COUNT)
+    assert filtered > 0, "FILTERED_COUNT did not register the dropped 0x01 events"
+    assert ev_count == len(collected), \
+        f"EVENT_COUNT {ev_count} != kept events read {len(collected)}"
+    dut._log.info(
+        f"filter OK: dropped 0x01 (FILTERED_COUNT={filtered}), kept {len(collected)} x 0xA5"
+    )
