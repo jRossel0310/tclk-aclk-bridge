@@ -26,9 +26,9 @@ from axi_lite_bfm import axi_read, axi_write
 RX_PERIOD_NS = 16     # recovered RX clock (CLK1)
 AXI_PERIOD_NS = 10    # PS / AXI clock
 
-# Register byte offsets (see aclk_readout_axi.sv).
+# Register byte offsets (16-byte spacing — see aclk_readout_axi.sv).
 STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP, EVENT_COUNT, NULL_COUNT, ERROR_COUNT = (
-    0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x20, 0x24
+    0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90
 )
 
 NULL_EVENT = (0xFFFF, MASK64)

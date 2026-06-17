@@ -37,9 +37,9 @@ AXI_PERIOD_NS = 14        # PS / AXI clock (independent, exercises the CDC)
 WARMUP_CELLS = 40
 GAP_CELLS = 12
 
-# Register byte offsets (aclk_readout_axi.sv). EVENT returns {FLAGS, EVENT}.
+# Register byte offsets (16-byte spacing — see aclk_readout_axi.sv). EVENT returns {FLAGS, EVENT}.
 STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP, EVENT_COUNT, NULL_COUNT, ERROR_COUNT, DEBUG = (
-    0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C, 0x20, 0x24, 0x28
+    0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0
 )
 
 FLAG_HAS_DATA = 0x1
