@@ -19,6 +19,7 @@ probe + a watchdog name the exact register if an AXI read wedges the bus. If a r
 ever hangs uninterruptibly, the LAST line on screen tells you which offset did it.
 """
 import mmap, os, struct, sys, threading, time
+from tclk_filter import parse_drop_codes, filter_cfg_word
 
 # Force line buffering so a freeze can never hide already-printed output (the #1 reason
 # this looked like "the header never even ran"). Guarded: not every stdout supports it.
@@ -30,7 +31,17 @@ except Exception:
 def say(msg):
     print(msg, flush=True)
 
-DEV = sys.argv[1] if len(sys.argv) > 1 else "/dev/uio4"
+_args = sys.argv[1:]
+_drop_spec = ""
+_pos = []
+_i = 0
+while _i < len(_args):
+    if _args[_i] == "--drop" and _i + 1 < len(_args):
+        _drop_spec = _args[_i + 1]; _i += 2
+    else:
+        _pos.append(_args[_i]); _i += 1
+DEV = _pos[0] if _pos else "/dev/uio4"
+DROP_CODES = parse_drop_codes(_drop_spec)
 OFF = 0 if "uio" in DEV else 0x8000_0000
 
 # Registers are spaced 16 BYTES apart: the hand-written AXI4-Lite slave only returns
@@ -39,13 +50,14 @@ STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP, EVENT_COUNT, NULL_COUNT, ERR
     0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0
 )
 HEARTBEAT, LOCK = 0xB0, 0xC0   # free-running clk_40m counter (trust check); MMCM-locked bit
-CONST = 0xD0   # fixed 0xC0FFEE00: wide-value read sanity check (TEMP)
+FILTER_CFG, FILTERED_COUNT = 0xD0, 0xE0   # drop-mask config (write); dropped-event count (read)
 TICK_NS = 25.0  # clk_40m = 40 MHz timestamp tick
 
 NAME = {STATUS: "STATUS", EVENT: "EVENT", DATA_HI: "DATA_HI", DATA_LO: "DATA_LO",
         TS_HI: "TS_HI", TS_LO: "TS_LO", POP: "POP", EVENT_COUNT: "EVENT_COUNT",
         NULL_COUNT: "NULL_COUNT", ERROR_COUNT: "ERROR_COUNT", DEBUG: "DEBUG",
-        HEARTBEAT: "HEARTBEAT", LOCK: "LOCK", CONST: "CONST"}
+        HEARTBEAT: "HEARTBEAT", LOCK: "LOCK",
+        FILTER_CFG: "FILTER_CFG", FILTERED_COUNT: "FILTERED_COUNT"}
 
 # --- Watchdog -------------------------------------------------------------------
 # An AXI read that never returns RVALID wedges the CPU's load instruction
@@ -102,8 +114,8 @@ def read_event():
 
 def stats_line():
     dbg = rd(DEBUG)
-    return "[stats] EVT=%d NULL=%d ERR=%d | tclk_edges=%d level=%d sig_err=%d | hb=%d lock=%d" % (
-        rd(EVENT_COUNT), rd(NULL_COUNT), rd(ERROR_COUNT),
+    return "[stats] EVT=%d NULL=%d ERR=%d FILT=%d | tclk_edges=%d level=%d sig_err=%d | hb=%d lock=%d" % (
+        rd(EVENT_COUNT), rd(NULL_COUNT), rd(ERROR_COUNT), rd(FILTERED_COUNT),
         dbg & 0x3FFFFFFF, (dbg >> 30) & 1, (dbg >> 31) & 1,
         rd(HEARTBEAT), rd(LOCK) & 1)
 
@@ -136,14 +148,6 @@ def probe():
         say("# --- WARNING: MMCM locked but heartbeat STUCK => the cdc_gray_count AXI "
             "readback is still broken. EVENT_COUNT / tclk_edges read 0 even when alive, "
             "so fix the readback BEFORE wiring TCLK (else bring-up is uninterpretable). ---")
-    # Sanity: a hardwired wide constant must read back exactly -- proves wide values
-    # survive the read path now that the registers are spaced 16 bytes apart.
-    c = rd(CONST)
-    say("#   CONST (0xD0) = 0x%08X  (expect 0xC0FFEE00)" % c)
-    if c == 0xC0FFEE00:
-        say("# --- READ PATH OK: wide values read back correctly at 16-byte spacing. ---")
-    else:
-        say("# --- WARNING: CONST mismatch -- the read path is still dropping wide values. ---")
     say("# --- probe complete: AXI reads return, the bus is alive. ---")
 
 # --- Open + map -----------------------------------------------------------------
@@ -152,6 +156,10 @@ fd = os.open(DEV, os.O_RDWR | os.O_SYNC)
 m = mmap.mmap(fd, 0x1000, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=OFF)
 say("# mmap ok (0x1000 bytes). starting watchdog ...")
 threading.Thread(target=_watchdog, daemon=True).start()
+for _c in DROP_CODES:
+    wr(FILTER_CFG, filter_cfg_word(_c))
+if DROP_CODES:
+    say("# drop-mask: suppressing " + ", ".join("0x%02X" % c for c in DROP_CODES))
 
 say("# streaming TCLK events from %s (offset 0x%x). Ctrl-C to stop." % (DEV, OFF))
 probe()
