@@ -37,11 +37,19 @@ module cdc_gray_count #(
     );
 
     // Gray to binary: binary[i] = XOR reduction of gray_sync[W-1:i].
+    logic [W-1:0] count_comb;
     genvar gi;
     generate
         for (gi = 0; gi < W; gi = gi + 1) begin : gen_g2b
-            assign count_dst[gi] = ^(gray_sync >> gi);
+            assign count_comb[gi] = ^(gray_sync >> gi);
         end
     endgenerate
+
+    // Register the decoded count into the destination domain. This extra dst_clk flop
+    // matters on hardware: a consumer that latches the raw combinational gray->binary
+    // decode (e.g. the AXI read mux) read back 0, while a registered value reads fine.
+    // Adds one dst_clk of latency, harmless for a monotonic diagnostic counter.
+    always_ff @(posedge dst_clk)
+        count_dst <= count_comb;
 
 endmodule

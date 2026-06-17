@@ -5,22 +5,28 @@
 // small read-mostly register block. The FIFO read side is clocked by the AXI
 // clock, so reads and the POP write happen entirely in the s_axi_aclk domain.
 //
-// Register map (byte offsets from the slave base, e.g. 0x8000_0000 on the KR260
-// LPD port). The head event is held stable until POP, so the PS can read all of
-// its fields and get a consistent snapshot:
+// Register map. Registers are spaced 16 BYTES apart (not 4): on the KR260 LPD path,
+// reads of this hand-written module-reference AXI4-Lite slave only return correct data
+// at 16-byte-aligned offsets -- any offset with araddr[3:2]!=0 read back 0 on hardware
+// (a packaged AXI IP at the same base read 4-byte-spaced regs fine; root cause unpinned,
+// confirmed not the PL fabric/PS-width/Linux-mapping). 16-byte spacing sidesteps it.
+// The head event is held stable until POP for a consistent snapshot.
 //
 //   0x00 STATUS       RO  bit0 = empty, bit1 = overflow (sticky: an event was lost)
-//   0x04 EVENT        RO  { FLAGS[15:0], EVENT[15:0] }   of the FIFO head
-//   0x08 DATA_HI      RO  DATA[63:32]
-//   0x0C DATA_LO      RO  DATA[31:0]
-//   0x10 TS_HI        RO  TIMESTAMP[63:32]
-//   0x14 TS_LO        RO  TIMESTAMP[31:0]
-//   0x18 POP          WO  write (any value) to pop the head and advance
-//   0x1C EVENT_COUNT  RO  events enqueued
-//   0x20 NULL_COUNT   RO  null / idle packets dropped
-//   0x24 ERROR_COUNT  RO  bad-CRC events seen (ACLK_ERROR)
-//   0x28 DEBUG        RO  caller-supplied debug word (TCLK: { sig_err, raw_level,
+//   0x10 EVENT        RO  { FLAGS[15:0], EVENT[15:0] }   of the FIFO head
+//   0x20 DATA_HI      RO  DATA[63:32]
+//   0x30 DATA_LO      RO  DATA[31:0]
+//   0x40 TS_HI        RO  TIMESTAMP[63:32]
+//   0x50 TS_LO        RO  TIMESTAMP[31:0]
+//   0x60 POP          WO  write (any value) to pop the head and advance
+//   0x70 EVENT_COUNT  RO  events enqueued
+//   0x80 NULL_COUNT   RO  null / idle packets dropped
+//   0x90 ERROR_COUNT  RO  bad-CRC events seen (ACLK_ERROR)
+//   0xA0 DEBUG        RO  caller-supplied debug word (TCLK: { sig_err, raw_level,
 //                         tclk_transitions[29:0] }; 0 on the ACLK/Manchester path)
+//   0xB0 HEARTBEAT    RO  free-running clk_40m counter (cdc_gray_count) - CDC liveness
+//   0xC0 LOCK         RO  bit0 = MMCM locked (synchronized)
+//   0xD0 CONST        RO  fixed 0xC0FFEE00 (TEMP: wide-value read sanity check)
 //
 // PS read sequence: poll STATUS; while not empty, read EVENT / DATA_* / TS_*,
 // then write POP. The counters cross from the recovered-RX domain through Gray
@@ -44,6 +50,8 @@ module aclk_readout_axi #(
     input  logic         aclk_error,
     output logic         dropped_null,     // debug passthrough
     input  logic [31:0]  dbg_word,         // RO debug word -> 0x28 (AXI-domain, caller-synced)
+    input  logic         mmcm_locked,      // async MMCM locked; synced + read at 0x30
+    output logic         dbg_hb,           // rx_heartbeat[12] -> pin: raw deep-cdc value probe
 
     // ---- AXI4-Lite slave (PS clock) ----
     input  logic                   s_axi_aclk,
@@ -120,12 +128,33 @@ module aclk_readout_axi #(
         .src_clk(rx_clk), .src_rstn(rx_rstn), .incr(aclk_error),
         .dst_clk(s_axi_aclk), .count_dst(error_count));
 
+    // Free-running rx_clk (clk_40m) heartbeat. src_rstn tied high so it counts purely
+    // on the clock, NOT gated by rx_rstn -- this isolates "is the rx clock alive" from
+    // "is the rx logic held in reset". If reg 0x2C climbs between two AXI reads the MMCM
+    // is producing clk_40m; if it is frozen the receive clock is dead (MMCM not locking).
+    wire [31:0] rx_heartbeat;
+    cdc_gray_count #(.W(32)) u_cnt_hb (
+        .src_clk(rx_clk), .src_rstn(1'b1), .incr(1'b1),
+        .dst_clk(s_axi_aclk), .count_dst(rx_heartbeat));
+    assign dbg_hb = rx_heartbeat[12];   // raw value to a pin: does the deep heartbeat count?
+
+    // MMCM locked, 2-FF synchronized into the AXI domain (read at 0x30). Lets the PS
+    // tell "MMCM never locked" (reg=0) apart from "locked but rx clock still dead"
+    // (reg=1) -- the AXI domain (s_axi_aclk) is always alive, so this reads even when
+    // clk_40m is dead.
+    logic [1:0] lock_sync;
+    always_ff @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
+        if (!s_axi_aresetn) lock_sync <= 2'b00;
+        else                lock_sync <= {lock_sync[0], mmcm_locked};
+    end
+
     // ---------------------------------------------------------------
-    // AXI4-Lite read channel (single outstanding)
+    // AXI4-Lite read channel (single outstanding). 16-byte register stride, so the
+    // register select is araddr[7:4] (see the register-map note at the top).
     // ---------------------------------------------------------------
     logic        arready_r, rvalid_r;
     logic [31:0] rdata_r;
-    wire [AXI_ADDR_W-3:0] rsel = s_axi_araddr[AXI_ADDR_W-1:2];
+    wire [AXI_ADDR_W-5:0] rsel = s_axi_araddr[AXI_ADDR_W-1:4];
 
     always_ff @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
         if (!s_axi_aresetn) begin
@@ -146,6 +175,9 @@ module aclk_readout_axi #(
                 'd8:  rdata_r <= null_count;
                 'd9:  rdata_r <= error_count;
                 'd10: rdata_r <= dbg_word;
+                'd11: rdata_r <= rx_heartbeat;        // 0xB0: free-running clk_40m heartbeat
+                'd12: rdata_r <= {31'b0, lock_sync[1]}; // 0xC0: MMCM locked (synced)
+                'd13: rdata_r <= 32'hC0FFEE00;        // 0xD0: const - wide-value read sanity (TEMP)
                 default: rdata_r <= 32'b0;
             endcase
         end else if (rvalid_r && s_axi_rready) begin
@@ -161,9 +193,15 @@ module aclk_readout_axi #(
 
     // ---------------------------------------------------------------
     // AXI4-Lite write channel (single outstanding). Only POP has an effect.
+    // AW and W are accepted INDEPENDENTLY: the PS interconnect may present the write
+    // address a cycle before (or after) the write data, and a slave that only fires
+    // when AWVALID and WVALID are both high in the SAME cycle deadlocks -- it completes
+    // whichever handshake arrives first, then never sees both high together, so BVALID
+    // never asserts and the CPU's store hangs forever (observed on hardware: any POP
+    // wedged the LPD bus). Latch each handshake on its own; raise BVALID once both land.
     // ---------------------------------------------------------------
     logic awready_r, wready_r, bvalid_r;
-    wire [AXI_ADDR_W-3:0] wsel = s_axi_awaddr[AXI_ADDR_W-1:2];
+    logic [AXI_ADDR_W-5:0] waddr_q;          // latched write reg-address (16-byte stride)
 
     always_ff @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
         if (!s_axi_aresetn) begin
@@ -171,15 +209,21 @@ module aclk_readout_axi #(
             wready_r  <= 1'b1;
             bvalid_r  <= 1'b0;
             pop       <= 1'b0;
+            waddr_q   <= '0;
         end else begin
             pop <= 1'b0;
-            if (awready_r && wready_r && s_axi_awvalid && s_axi_wvalid) begin
+            if (s_axi_awvalid && awready_r) begin
                 awready_r <= 1'b0;
+                waddr_q   <= s_axi_awaddr[AXI_ADDR_W-1:4];
+            end
+            if (s_axi_wvalid && wready_r)
                 wready_r  <= 1'b0;
-                bvalid_r  <= 1'b1;
-                if (wsel == 'd6 && !empty)
-                    pop <= 1'b1;            // POP: advance the FIFO head
-            end else if (bvalid_r && s_axi_bready) begin
+            if (!awready_r && !wready_r && !bvalid_r) begin
+                bvalid_r <= 1'b1;
+                if (waddr_q == 'd6 && !empty)
+                    pop <= 1'b1;            // POP @ 0x60: advance the FIFO head
+            end
+            if (bvalid_r && s_axi_bready) begin
                 bvalid_r  <= 1'b0;
                 awready_r <= 1'b1;
                 wready_r  <= 1'b1;

@@ -42,6 +42,7 @@ module tclk_readout_top #(
     input  logic        rstn,              // async, active-low (rx side)
     input  logic        pps,               // optional White Rabbit pulse-per-second
     input  logic        tclk,              // raw biphase-mark TCLK line (LVCMOS33 baseband)
+    input  logic        mmcm_locked,       // MMCM locked (async) -> AXI 0x30 diagnostic
 
     // ---- AXI4-Lite slave (PS clock) ----
     input  logic                   s_axi_aclk,
@@ -69,6 +70,7 @@ module tclk_readout_top #(
     output logic [7:0]  dbg_data,          // decoded event byte
     output logic        dbg_perr,          // raw sticky PERR from the deserializer
     output logic        dbg_sig_err,       // serdec carrier / signal error
+    output logic        dbg_hb,            // deep cdc heartbeat[12] -> pin probe
     output logic        dropped_null       // tied 0 (DROP_NULL=0); parity with the ACLK top
 );
 
@@ -175,6 +177,8 @@ module tclk_readout_top #(
         .aclk_error    (perr_pulse),
         .dropped_null  (dropped_null),
         .dbg_word      (tclk_dbg_word),
+        .mmcm_locked   (mmcm_locked),
+        .dbg_hb        (dbg_hb),
 
         .s_axi_aclk    (s_axi_aclk),
         .s_axi_aresetn (s_axi_aresetn),
