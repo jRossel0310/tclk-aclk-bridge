@@ -31,7 +31,12 @@ param(
     # for the build dir / runs folder. Lets the same AV-retry wrapper drive other
     # designs, e.g. -Tcl vivado\build_pinblink.tcl -Name pinblink.
     [string]$Tcl  = "",
-    [string]$Name = "uart_echo"
+    [string]$Name = "uart_echo",
+
+    # Where build artifacts land. Default is repo-local ./build/kria; the per-design
+    # dir is $BuildRoot\$Name. Override -BuildRoot to relocate (e.g. a space-free
+    # scratch dir) - the build tcls honor it via the KRIA_BUILD_DIR env var.
+    [string]$BuildRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,11 +46,14 @@ if ($Tcl) {
 } else {
     $BuildTcl = Join-Path $Root "vivado\build.tcl"
 }
-# Build in a space-free directory: Vivado's IP Integrator (block design) breaks
-# when the project path contains spaces, and this repo lives under "Summer 2026".
-# Derived from -Name (one dir per design); the build task exports it as
-# KRIA_BUILD_DIR, which the build tcls honor.
-$BuildDir = Join-Path $env:USERPROFILE "kria-builds\$Name"
+# Build dir is repo-local by default (./build/kria/<Name>), one dir per design.
+# The build task exports it as KRIA_BUILD_DIR, which the build tcls honor.
+# NOTE: Vivado's IP Integrator (block design) breaks when the project path
+# contains spaces, and this repo lives under "Summer 2026". The build task
+# Push-Locations into a space-free parent and runs batch from there; if a user
+# still hits a space-path issue, pass -BuildRoot to a space-free directory.
+if (-not $BuildRoot) { $BuildRoot = Join-Path $Root "build\kria" }
+$BuildDir = Join-Path $BuildRoot $Name
 
 function Resolve-Vivado {
     if ($Vivado) {
@@ -109,7 +117,8 @@ switch ($Task) {
             throw "Vivado build failed (exit $LASTEXITCODE) - see $log"
         }
         if ($ok) {
-            Write-Host "==> done. Bitstream: $BuildDir\$Name.runs\impl_1\uart_echo_bd_wrapper.bit" -ForegroundColor Green
+            $impl = Join-Path $BuildDir "$Name.runs\impl_1"
+            Write-Host "==> bitstream built in $impl" -ForegroundColor Green
         }
     }
     "gui" {

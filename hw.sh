@@ -16,10 +16,12 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_TCL="$ROOT/vivado/build.tcl"
 
-# Build in a SPACE-FREE directory: Vivado's IP Integrator (block design) breaks
-# when the project path contains spaces, and this repo may live under
-# "Summer 2026". Default under $HOME; override with $KRIA_BUILD_DIR.
-BUILD_DIR_NATIVE="${KRIA_BUILD_DIR:-$HOME/kria-builds/uart_echo}"
+# Repo-local default to match hw.ps1 (./build/kria/<name>); override with
+# $KRIA_BUILD_DIR. NOTE: Vivado's IP Integrator breaks on spaces in the project
+# path (this repo may live under "Summer 2026"); the build runs from a space-free
+# parent, but set $KRIA_BUILD_DIR to a space-free dir if you still hit it.
+# hw.ps1 is the full-featured wrapper (also does bootgen packaging + deploy).
+BUILD_DIR_NATIVE="${KRIA_BUILD_DIR:-$ROOT/build/kria/uart_echo}"
 PARENT_NATIVE="$(dirname "$BUILD_DIR_NATIVE")"
 
 # Under git-bash/MSYS on Windows, Vivado is a Windows .exe and needs Windows-style

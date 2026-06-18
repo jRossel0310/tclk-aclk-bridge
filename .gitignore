@@ -10,8 +10,11 @@ sim_build/
 *.vcd
 results.xml
 
-# Vivado build artifacts (the bitstream flow). Keep build.tcl + uart_echo_bd.tcl;
-# ignore everything generated.
+# Vivado build artifacts (the bitstream flow). Source stays tracked
+# (build*.tcl, uart_echo_bd.tcl); generated outputs are ignored.
+# /build/ is the repo-local default (./build/kria/<name>); build-manifest.json
+# lives under it and is intentionally ignored (it is a build output).
+/build/
 vivado/build/
 vivado/*.log
 vivado/*.jou
