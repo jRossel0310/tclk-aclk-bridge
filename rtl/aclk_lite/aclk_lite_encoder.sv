@@ -35,7 +35,7 @@ module aclk_lite_encoder #(
     logic [81:0] sr;        // bits to send, MSB-first; top bit (sr[81]) = start bit
     logic [7:0]  nbits;     // total bits in this frame (length + 2)
     logic [7:0]  bit_idx;   // bit currently being sent, 0..nbits-1
-    logic [7:0]  half_cnt;  // half-bit cycle counter, 0..HALF-1
+    logic [7:0]  half_cnt;  // half-bit cycle counter, 0..HALF
     logic        phase;     // 0 = first half (~b), 1 = second half (b)
 
     wire cur_bit  = sr[8'd81 - bit_idx];
