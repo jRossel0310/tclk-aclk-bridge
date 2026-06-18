@@ -36,9 +36,12 @@ STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP, EVENT_COUNT, NULL_COUNT, ERR
 FLAG_HAS_DATA = 0x1
 FLAG_IS_TCLK = 0x2
 
+DEBUG, LOCK = 0xA0, 0xC0
+
 
 async def reset_dut(dut):
     dut.line.value = 1
+    dut.mmcm_locked.value = 1
     dut.rx_rstn.value = 0
     dut.s_axi_aresetn.value = 0
     dut.s_axi_awaddr.value = 0
@@ -193,6 +196,12 @@ async def test_manchester_to_axi(dut):
     err_count = await axi_read(dut, ERROR_COUNT)
     assert ev_count == len(expected), f"EVENT_COUNT {ev_count} != {len(expected)}"
     assert err_count == 0, f"ERROR_COUNT {err_count} on clean frames"
+
+    lock = await axi_read(dut, LOCK)
+    assert lock & 0x1 == 1, f"LOCK 0x{lock:08X} did not reflect mmcm_locked=1"
+    dbg = await axi_read(dut, DEBUG)
+    edges = dbg & 0x3FFFFFFF
+    assert edges > 0, f"DEBUG edge count {edges} did not climb while the line toggled"
 
     path = _save_plot(series, len(collected), "manchester_to_axi.png")
     if path:
