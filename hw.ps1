@@ -232,6 +232,7 @@ all:
         $deployDir = Join-Path $Root "deploy"
         $pyMap = @{
             "tclk"      = @("tclk_read.py", "tclk_filter.py")
+            "aclk"      = @("aclk_read.py", "tclk_filter.py")
             "uart_echo" = @("uart_echo_test.py")
         }
         $pyFiles = @()
