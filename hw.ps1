@@ -4,8 +4,10 @@
   counterpart to sim.ps1. (git bash users: use ./hw.sh instead.)
 
 .EXAMPLE
-  .\hw.ps1 build                # RTL -> bitstream via vivado/build.tcl (batch)
+  .\hw.ps1 build                # RTL -> bitstream + bootgen + hash via vivado/build.tcl
+  .\hw.ps1 build -Tcl vivado\build_tclk.tcl -Name tclk           # build + bootgen + hash
   .\hw.ps1 build -Tcl vivado\build_pinblink.tcl -Name pinblink   # a different design
+  .\hw.ps1 deploy -Name tclk -DeployHost ubuntu@kria             # scp .bit.bin + readers
   .\hw.ps1 gui                  # open the generated project in the Vivado GUI
   .\hw.ps1 clean                # delete the build dir
 
@@ -22,7 +24,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("build", "gui", "clean", "help")]
+    [ValidateSet("build", "gui", "clean", "deploy", "help")]
     [string]$Task = "build",
 
     [string]$Vivado = "",
@@ -36,7 +38,10 @@ param(
     # Where build artifacts land. Default is repo-local ./build/kria; the per-design
     # dir is $BuildRoot\$Name. Override -BuildRoot to relocate (e.g. a space-free
     # scratch dir) - the build tcls honor it via the KRIA_BUILD_DIR env var.
-    [string]$BuildRoot = ""
+    [string]$BuildRoot = "",
+
+    # Target for `deploy` (scp), e.g. ubuntu@kria or "ubuntu@[fe80::..%6]".
+    [string]$DeployHost = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -212,6 +217,41 @@ all:
     "clean" {
         if (Test-Path $BuildDir) { Remove-Item $BuildDir -Recurse -Force; Write-Host "removed $BuildDir" }
         else { Write-Host "nothing to clean" }
+    }
+    "deploy" {
+        if (-not $DeployHost) { throw "deploy needs -DeployHost, e.g. .\hw.ps1 deploy -Name tclk -DeployHost ubuntu@kria" }
+        $impl = Join-Path $BuildDir "$Name.runs\impl_1"
+        $bin  = Get-ChildItem -Path $impl -Filter *_wrapper.bit.bin -File -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+        if (-not $bin) { throw "No *_wrapper.bit.bin in $impl. Run: .\hw.ps1 build -Tcl <tcl> -Name $Name" }
+
+        # Design -> Python deploy files (scp'd alongside the .bit.bin). Add entries as
+        # designs are added; default copies just the reader+filter pair for tclk.
+        $deployDir = Join-Path $Root "deploy"
+        $pyMap = @{
+            "tclk"      = @("tclk_read.py", "tclk_filter.py")
+            "uart_echo" = @("uart_echo_test.py")
+        }
+        $pyFiles = @()
+        if ($pyMap.ContainsKey($Name)) {
+            foreach ($f in $pyMap[$Name]) {
+                $p = Join-Path $deployDir $f
+                if (-not (Test-Path $p)) { throw "deploy file missing: $p" }
+                $pyFiles += $p
+            }
+        } else {
+            Write-Host "note: no Python deploy files mapped for '$Name'; copying the .bit.bin only." -ForegroundColor Yellow
+        }
+
+        $files = @($bin.FullName) + $pyFiles
+        Write-Host "==> scp to ${DeployHost}:~" -ForegroundColor Cyan
+        $files | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        & scp @($files + "${DeployHost}:~")
+        if ($LASTEXITCODE -ne 0) { throw "scp failed (exit $LASTEXITCODE)" }
+        Write-Host "==> copied. Board load (manual, UIO + overlay):" -ForegroundColor Green
+        Write-Host "    md5sum ~/$($bin.Name)"
+        Write-Host "    sudo xmutil unloadapp"
+        Write-Host "    sudo fpgautil -b ~/$($bin.Name) -o uart_echo.dtbo"
     }
     "help" { Get-Help $PSCommandPath -Detailed }
 }
