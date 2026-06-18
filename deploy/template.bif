@@ -1,0 +1,9 @@
+// Generic bootgen recipe template for the KR260 PL bitstream flow.
+// hw.ps1 auto-generates a per-build .bif naming the actual generated .bit, so
+// this file is only a reference/fallback. To use manually, replace the filename
+// with your generated <design>_wrapper.bit and run, in the folder holding it:
+//   bootgen -arch zynqmp -process_bitstream bin -image template.bif
+all:
+{
+    uart_echo_bd_wrapper.bit
+}

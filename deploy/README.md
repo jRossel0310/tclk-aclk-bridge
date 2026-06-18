@@ -1,77 +1,89 @@
-# deploy/ — test uart_echo on the KR260 over the network
+# deploy/ — load a KR260 PL bitstream and run a reader
 
-This design lets you exercise the custom `uart_echo` RTL from Linux on the board,
-with **no external adapter and no PMOD wiring**. The bitstream contains an AMD
-**AXI UART Lite** (AXI base `0x8000_0000`) whose serial `tx`/`rx` are cross-wired
-to `uart_echo` *inside the PL*:
+Generic flow for getting a Vivado design onto the KR260 and talking to its AXI
+slave at `0x8000_0000` from Linux on the board. (See `tclk.md` for the live-TCLK
+runbook and the "uart_echo example" section below for the original echo demo.)
+
+## Artifacts in the flow
+
+| Artifact | Made by | Role |
+|----------|---------|------|
+| `.bit` | Vivado (`hw.ps1 build`) | raw PL bitstream |
+| `.bit.bin` | bootgen (auto, in `hw.ps1 build`) | what `fpgautil`/FPGA-manager loads |
+| `.dtbo` | `dtc` from a `.dts` | device-tree overlay; needed for the UIO path |
+
+## Build (PC)
+
+```powershell
+.\hw.ps1 build -Tcl vivado\build_tclk.tcl -Name tclk
+```
+Prints `BIT`, `BIN`, `MD5`, `SHA256` and writes `build-manifest.json`. Artifacts
+land repo-local under `build\kria\<name>\<name>.runs\impl_1\`.
+
+Optional copy to the board:
+```powershell
+.\hw.ps1 deploy -Name tclk -DeployHost ubuntu@kria
+```
+
+## Load on the board (UIO + overlay — preferred)
+
+```bash
+md5sum ~/uart_echo_bd_wrapper.bit.bin     # must equal the PC MD5
+sudo xmutil unloadapp
+sudo fpgautil -b ~/uart_echo_bd_wrapper.bit.bin -o uart_echo.dtbo
+ls -l /dev/uio*
+```
+
+- The `-o <overlay>.dtbo` form is required for the UIO readers: it creates
+  `/dev/uioN` and releases PL reset.
+- `-f Full` programs the PL but does NOT create a UIO device, so it is not
+  equivalent — do not substitute it for the UIO flow.
+- A cosmetic `OF: overlay: WARNING: memory leak will occur ...` on load is
+  harmless.
+
+## Readers
+
+Python readers mmap either `/dev/uioN` (offset 0) or `/dev/mem` (offset
+`0x8000_0000`); register offsets are identical. Find the right UIO node via
+`cat /sys/class/uio/uio*/name`. Run with `-u` for unbuffered output, e.g.:
+```bash
+sudo python3 -u tclk_read.py /dev/uio4 --drop 07,0F,BA,8F
+```
+
+### `/dev/mem` fallback
+
+If UIO is unavailable or locked down, a root reader can mmap `/dev/mem` at the
+AXI base directly — no overlay, no driver. Use this only if the UIO path is not
+available; the overlay path is preferred because it also releases PL reset.
+
+## Verifying the load matches your build
+
+Compare the board-side `md5sum ~/<bit.bin>` against the `MD5` line printed by
+`hw.ps1 build` (also recorded in `build-manifest.json`). Mismatch means a stale
+copy on the board.
+
+---
+
+## Example: uart_echo (original demo)
+
+The first design here, `uart_echo`, cross-wires an AXI UART Lite to the custom
+`uart_echo` RTL inside the PL so a byte sent from the PS echoes back:
 
 ```
    PS  --AXI-->  AXI UART Lite  --tx-->  uart_echo.serial_in
                                 <--rx--  uart_echo.serial_out
 ```
 
-Send a byte from the UART Lite → it passes through your receiver → FIFO →
-transmitter → comes back in the UART Lite RX FIFO. Read it back over SSH and you've
-proven the custom UART works on real hardware.
-
-## Files
-
-| File | Purpose |
-|------|---------|
-| `uart_echo.bif` | bootgen recipe: Vivado `.bit` → loadable `.bit.bin` |
-| `uart_echo_test.py` | mmaps the UART Lite via `/dev/mem` and checks the echo |
-| `uart_echo.dts` | (fallback) device-tree overlay if you use the UIO path |
-
-## Steps
-
-### 1. Build the bitstream (PC)
+Build and run:
 ```powershell
-.\hw.ps1 build
+.\hw.ps1 build            # design_name uart_echo
 ```
-→ `…\kria-builds\uart_echo\uart_echo.runs\impl_1\uart_echo_bd_wrapper.bit`
-
-### 2. Convert .bit → .bit.bin (PC, in a Vivado/Vitis shell)
-Copy `uart_echo.bif` next to the `.bit`, then:
-```bat
-bootgen -arch zynqmp -process_bitstream bin -image uart_echo.bif
-```
-→ `uart_echo_bd_wrapper.bit.bin`
-
-### 3. Copy to the board
 ```bash
-scp uart_echo_bd_wrapper.bit.bin uart_echo_test.py ubuntu@<board-ip>:~
-```
-
-### 4. Load the bitstream and run the test (on the board, over SSH)
-```bash
-sudo xmutil unloadapp                                   # free the PL
-sudo fpgautil -b uart_echo_bd_wrapper.bit.bin -f Full   # program the PL
+sudo xmutil unloadapp
+sudo fpgautil -b ~/uart_echo_bd_wrapper.bit.bin -o uart_echo.dtbo
 sudo python3 uart_echo_test.py
 ```
-Expected:
-```
-sent 0x41  got 0x41  OK
-sent 0x55  got 0x55  OK
-...
-PASS — uart_echo works on hardware
-```
-
-## Why `/dev/mem`?
-
-The UART Lite sits at a fixed AXI address (`0x8000_0000`) reachable from the PS
-once the bitstream is loaded, so a root process can mmap it directly — no kernel
-driver, no device-tree node, no interrupt. Simplest possible path.
-
-## Fallback: UIO (if `/dev/mem` is locked down)
-
-Some hardened kernels block `/dev/mem` access to device memory. If
-`uart_echo_test.py` fails at `os.open("/dev/mem")`, switch to UIO:
-
-1. Compile the overlay: `dtc -@ -O dtb -o uart_echo.dtbo uart_echo.dts`
-2. Load it alongside the bitstream (xmutil app flow, or `fpgautil -b ... -o uart_echo.dtbo`).
-3. Find the device: `ls -l /dev/uio*` (read `/sys/class/uio/uio*/name`).
-4. In `uart_echo_test.py`, change the mmap source from `/dev/mem` (offset `BASE`)
-   to the matching `/dev/uioN` (offset `0`). The register offsets are identical.
-
-> The `uart_echo.dts` labels (`&fpga_full`, `&amba`) and the address must match
-> your board image — verify against `/proc/device-tree` if the overlay won't load.
+`uart_echo_test.py` historically used `/dev/mem` (`-f Full` load); it still works
+that way, but the UIO + overlay flow above is the current default. Files
+`uart_echo.bif` / `uart_echo.dts` are kept for this example and as overlay
+sources; `template.bif` is the generic reference.
