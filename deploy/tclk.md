@@ -1,4 +1,4 @@
-# deploy/tclk.md — read real TCLK events on the board
+# deploy/tclk.md - read real TCLK events on the board
 
 Real 3.3V biphase-mark TCLK enters H12 -> decoded -> AXI readout @ 0x8000_0000 ->
 `tclk_read.py` streams events. Reuses the existing overlay (design_name=uart_echo_bd).
@@ -10,7 +10,7 @@ Real 3.3V biphase-mark TCLK enters H12 -> decoded -> AXI readout @ 0x8000_0000 -
 One command now does Vivado + bootgen + hashing. Output (repo-local):
 `build\kria\tclk\tclk.runs\impl_1\uart_echo_bd_wrapper.bit(.bin)`. It prints:
 - `BIT` path, `BIN` path
-- `MD5` (and `SHA256`) — also saved in `build\kria\tclk\build-manifest.json`
+- `MD5` (and `SHA256`), also saved in `build\kria\tclk\build-manifest.json`
 
 If Vivado flakes on `couldn't read file` mid-BD, the wrapper retries (antivirus
 on C:\Xilinx). If bootgen is not found, add Vivado 2024.2's `bin` to PATH.
@@ -22,7 +22,7 @@ on C:\Xilinx). If bootgen is not found, add Vivado 2024.2's `bin` to PATH.
 Copies `uart_echo_bd_wrapper.bit.bin` + `tclk_read.py` + `tclk_filter.py` to `~`.
 (Manual equivalent: `scp` those three files yourself.)
 
-## 3. Load (board) — UIO + overlay
+## 3. Load (board): UIO + overlay
 ```bash
 md5sum ~/uart_echo_bd_wrapper.bit.bin      # must match the PC MD5
 sudo xmutil unloadapp

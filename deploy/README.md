@@ -1,4 +1,4 @@
-# deploy/ — load a KR260 PL bitstream and run a reader
+# deploy/ - load a KR260 PL bitstream and run a reader
 
 Generic flow for getting a Vivado design onto the KR260 and talking to its AXI
 slave at `0x8000_0000` from Linux on the board. (See `tclk.md` for the live-TCLK
@@ -25,7 +25,7 @@ Optional copy to the board:
 .\hw.ps1 deploy -Name tclk -DeployHost ubuntu@kria
 ```
 
-## Load on the board (UIO + overlay — preferred)
+## Load on the board (UIO + overlay, preferred)
 
 ```bash
 md5sum ~/uart_echo_bd_wrapper.bit.bin     # must equal the PC MD5
@@ -37,7 +37,7 @@ ls -l /dev/uio*
 - The `-o <overlay>.dtbo` form is required for the UIO readers: it creates
   `/dev/uioN` and releases PL reset.
 - `-f Full` programs the PL but does NOT create a UIO device, so it is not
-  equivalent — do not substitute it for the UIO flow.
+  equivalent; do not substitute it for the UIO flow.
 - A cosmetic `OF: overlay: WARNING: memory leak will occur ...` on load is
   harmless.
 
@@ -53,7 +53,7 @@ sudo python3 -u tclk_read.py /dev/uio4 --drop 07,0F,BA,8F
 ### `/dev/mem` fallback
 
 If UIO is unavailable or locked down, a root reader can mmap `/dev/mem` at the
-AXI base directly — no overlay, no driver. Use this only if the UIO path is not
+AXI base directly (no overlay, no driver). Use this only if the UIO path is not
 available; the overlay path is preferred because it also releases PL reset.
 
 ## Verifying the load matches your build
