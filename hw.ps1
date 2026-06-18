@@ -164,7 +164,9 @@ all:
 "@ | Set-Content -Encoding ASCII $bifPath
 
         $bootgen = Resolve-Bootgen $vivado
-        $bootgenArgs = @("-arch", "zynqmp", "-process_bitstream", "bin", "-image", $bit.Name)
+        # -image takes the .bif recipe (NOT the .bit); bootgen runs from $impl so a
+        # bare filename resolves there.
+        $bootgenArgs = @("-arch", "zynqmp", "-process_bitstream", "bin", "-image", (Split-Path $bifPath -Leaf))
         Write-Host "==> packaging with bootgen: $bootgen $($bootgenArgs -join ' ')" -ForegroundColor Cyan
         Push-Location $impl
         try { & $bootgen @bootgenArgs } finally { Pop-Location }
