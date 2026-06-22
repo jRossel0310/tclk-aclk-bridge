@@ -1,6 +1,6 @@
-"""Cocotb 2.0 runner for the ACLK-Lite generator -> decoder loopback. Compiles the
-encoder, the hardcoded timeline, the existing decoder + its synchronizer, and the
-tb top.
+"""Cocotb 2.0 runner for the ACLK-Lite generator -> unified clk_rcv loopback. Compiles
+the real receiver chain (serdec4_9MHz + clk_byte_framer + clk_rcv), the encoder, the
+hardcoded timeline, and the tb top.
 """
 
 import os
@@ -29,8 +29,9 @@ def test_aclk_gen_loopback():
     build_args = ["--trace-fst", "--trace-structs"] if SIM == "verilator" else []
     runner.build(
         sources=[
-            RTL_DIR / "synchronizer.sv",
-            RTL_DIR / "aclk_lite" / "aclk_lite_decoder.sv",
+            RTL_DIR / "aclk_bridge" / "serdec4_9MHz.v",
+            RTL_DIR / "aclk_lite" / "clk_byte_framer.sv",
+            RTL_DIR / "aclk_lite" / "clk_rcv.sv",
             RTL_DIR / "aclk_lite" / "aclk_lite_encoder.sv",
             RTL_DIR / "aclk_lite" / "aclk_lite_gen_timeline.sv",
             TB_DIR / "tb_aclk_gen_loopback.sv",

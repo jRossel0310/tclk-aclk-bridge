@@ -1,17 +1,19 @@
 // tb/aclk_lite_gen_loopback/tb_aclk_gen_loopback.sv
 //
-// Loopback harness: the hardcoded timeline's Manchester line feeds the real
-// aclk_lite_decoder. Both run at OVERSAMPLE=12. IDLE_GAP/TRIO_GAP are shrunk so a
-// few trios run quickly in sim. cocotb drives clk/rstn and watches the decoder.
+// Loopback harness: the rewritten timeline's biphase-mark line feeds the REAL unified
+// receiver (clk_rcv = serdec4_9MHz + clk_byte_framer). The generator and serdec run on
+// clk_80m; the framer runs on clk_40m. IDLE_GAP/TRIO_GAP are shrunk so a few trios run
+// quickly. cocotb drives the clocks/reset and watches the decoder.
 
 `timescale 1ns / 1ps
 
 module tb_aclk_gen_loopback #(
-    parameter int OVERSAMPLE = 12,
-    parameter int IDLE_GAP   = 32,
-    parameter int TRIO_GAP   = 64
+    parameter int SAMPLES_PER_CELL = 8,
+    parameter int IDLE_GAP = 48,
+    parameter int TRIO_GAP = 96
 ) (
-    input  logic        clk,
+    input  logic        clk_80m,
+    input  logic        clk_40m,
     input  logic        rstn,
     output logic        event_valid,
     output logic [15:0] event_id,
@@ -21,20 +23,25 @@ module tb_aclk_gen_loopback #(
     output logic        is_tclk,
     output logic        frame_sync
 );
-
     logic line;
 
     aclk_lite_gen_timeline #(
-        .OVERSAMPLE(OVERSAMPLE), .IDLE_GAP(IDLE_GAP), .TRIO_GAP(TRIO_GAP)
+        .SAMPLES_PER_CELL(SAMPLES_PER_CELL), .IDLE_GAP(IDLE_GAP), .TRIO_GAP(TRIO_GAP)
     ) u_gen (
-        .clk(clk), .rstn(rstn), .line(line), .frame_sync(frame_sync)
+        .clk(clk_80m), .rstn(rstn), .line(line), .frame_sync(frame_sync)
     );
 
-    aclk_lite_decoder #(.OVERSAMPLE(OVERSAMPLE)) u_dec (
-        .clk(clk), .rstn(rstn), .line(line),
-        .event_valid(event_valid), .event_id(event_id),
-        .data_valid(data_valid), .data(data),
-        .parity_error(parity_error), .is_tclk(is_tclk)
+    clk_rcv u_rcv (
+        .RESETn      (rstn),
+        .CLK_40M     (clk_40m),
+        .CLK_80M     (clk_80m),
+        .clkline     (line),
+        .event_valid (event_valid),
+        .event_id    (event_id),
+        .data_valid  (data_valid),
+        .data        (data),
+        .parity_error(parity_error),
+        .is_tclk     (is_tclk),
+        .sig_err     ()
     );
-
 endmodule
