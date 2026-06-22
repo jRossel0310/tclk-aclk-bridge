@@ -17,8 +17,8 @@ module clk_readout_top #(
     parameter int AXI_ADDR_W = 8
 ) (
     // ---- receive domain ----
-    input  logic        CLK_80M,
-    input  logic        CLK_40M,
+    input  logic        clk_80m,
+    input  logic        clk_40m,
     input  logic        rstn,
     input  logic        pps,
     input  logic        clkline,        // raw Manchester serial line (LVCMOS33 baseband)
@@ -59,8 +59,8 @@ module clk_readout_top #(
 
     clk_rcv u_rcv (
         .RESETn       (rstn),
-        .CLK_40M      (CLK_40M),
-        .CLK_80M      (CLK_80M),
+        .CLK_40M      (clk_40m),
+        .CLK_80M      (clk_80m),
         .clkline      (clkline),
         .event_valid  (ev_valid),
         .event_id     (ev_id),
@@ -83,7 +83,7 @@ module clk_readout_top #(
     // 2FF-sync the raw line into clk_80m, count every transition, cross to the AXI
     // domain with the same Gray counter the readout uses elsewhere.
     logic line_m, line_s, line_s_d;
-    always_ff @(posedge CLK_80M or negedge rstn) begin
+    always_ff @(posedge clk_80m or negedge rstn) begin
         if (!rstn) begin line_m <= 1'b1; line_s <= 1'b1; line_s_d <= 1'b1; end
         else       begin line_m <= clkline; line_s <= line_m; line_s_d <= line_s; end
     end
@@ -91,7 +91,7 @@ module clk_readout_top #(
 
     wire [29:0] edge_count;
     cdc_gray_count #(.W(30)) u_cnt_edge (
-        .src_clk(CLK_80M), .src_rstn(rstn), .incr(line_edge),
+        .src_clk(clk_80m), .src_rstn(rstn), .incr(line_edge),
         .dst_clk(s_axi_aclk), .count_dst(edge_count));
 
     logic lvl_m, lvl_s, serr_m, serr_s;
@@ -103,7 +103,7 @@ module clk_readout_top #(
 
     // ---- readout + AXI-Lite slave (null-drop disabled) ----
     aclk_readout_axi #(.ADDR_WIDTH(ADDR_WIDTH), .AXI_ADDR_W(AXI_ADDR_W), .DROP_NULL(1'b0)) u_axi (
-        .rx_clk        (CLK_40M),
+        .rx_clk        (clk_40m),
         .rx_rstn       (rstn),
         .pps           (pps),
         .aclk_valid    (ev_valid),

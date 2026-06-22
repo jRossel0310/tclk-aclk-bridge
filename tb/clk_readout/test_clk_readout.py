@@ -31,12 +31,12 @@ async def reset_dut(dut):
     dut.s_axi_araddr.value = 0
     dut.s_axi_arvalid.value = 0
     dut.s_axi_rready.value = 0
-    await ClockCycles(dut.CLK_80M, 10)
+    await ClockCycles(dut.clk_80m, 10)
     await ClockCycles(dut.s_axi_aclk, 5)
     await Timer(1, unit="ns")
     dut.rstn.value = 1
     dut.s_axi_aresetn.value = 1
-    await ClockCycles(dut.CLK_80M, 10)
+    await ClockCycles(dut.clk_80m, 10)
     await ClockCycles(dut.s_axi_aclk, 4)
 
 
@@ -54,8 +54,8 @@ async def read_one(dut):
 
 @cocotb.test()
 async def test_chain(dut):
-    cocotb.start_soon(Clock(dut.CLK_80M, 12500, unit="ps").start())
-    cocotb.start_soon(Clock(dut.CLK_40M, 25000, unit="ps").start())
+    cocotb.start_soon(Clock(dut.clk_80m, 12500, unit="ps").start())
+    cocotb.start_soon(Clock(dut.clk_40m, 25000, unit="ps").start())
     cocotb.start_soon(Clock(dut.s_axi_aclk, 14000, unit="ps").start())
     await reset_dut(dut)
 
@@ -74,16 +74,16 @@ async def test_chain(dut):
 
     samples = stream_frames(frames, warmup_cells=WARMUP_CELLS)
     warm_n = WARMUP_CELLS * SAMPLES_PER_CELL
-    await drive_samples(dut.CLK_80M, dut.clkline, samples[:warm_n])
+    await drive_samples(dut.clk_80m, dut.clkline, samples[:warm_n])
     # Baseline error count after warm-up: serdec emits one spurious PERR while first
     # locking to the carrier (documented in test_tclk_readout.py). The clean-stream
     # check uses a delta so the startup PERR is excluded.
-    await ClockCycles(dut.CLK_40M, 20)
+    await ClockCycles(dut.clk_40m, 20)
     await ClockCycles(dut.s_axi_aclk, 6)
     base_err = await axi_read(dut, ERROR_COUNT)
 
-    await drive_samples(dut.CLK_80M, dut.clkline, samples[warm_n:])
-    await ClockCycles(dut.CLK_40M, 40)
+    await drive_samples(dut.clk_80m, dut.clkline, samples[warm_n:])
+    await ClockCycles(dut.clk_40m, 40)
     await ClockCycles(dut.s_axi_aclk, 8)
 
     collected = []
