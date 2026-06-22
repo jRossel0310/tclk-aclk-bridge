@@ -52,6 +52,30 @@ def _contains(big, sub):
     return any(big[i:i + n] == sub for i in range(len(big) - n + 1))
 
 
+def _save_line_plot(levels, name, title):
+    """Save a step plot of the captured line levels (matplotlib + Agg backend)."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        import warnings
+        warnings.warn(f"matplotlib unavailable, skipping plot: {exc}")
+        return None
+    from pathlib import Path
+    xs = list(range(len(levels)))
+    fig, ax = plt.subplots(figsize=(11, 3))
+    ax.step(xs, levels, where="post", color="tab:green", lw=1.4)
+    ax.set_ylim(-0.2, 1.2); ax.set_yticks([0, 1])
+    ax.set_xlabel("oversampling-clock sample"); ax.set_ylabel("line")
+    ax.set_title(title); ax.grid(True, alpha=0.3)
+    out_dir = Path(__file__).resolve().parents[2] / "sim_build" / "aclk_lite_encoder" / "plots"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / name
+    fig.tight_layout(); fig.savefig(path, dpi=120); plt.close(fig)
+    return path
+
+
 async def reset_dut(dut):
     dut.start.value = 0
     dut.event_id.value = 0
@@ -90,6 +114,7 @@ async def test_encoder_biphase_framing(dut):
         (0xABCD, 0, 1),                    # ACLK event 2 bytes
         (0x1234, 0xDEADBEEFCAFE0001, 2),   # full 12 bytes
     ]
+    full_frame_levels = None
     for ev, dat, ft in cases:
         bl = byte_list(ev, dat, ft)
         n_cells = len(bl) * 10 + 30        # frame cells + idle margin
@@ -98,6 +123,18 @@ async def test_encoder_biphase_framing(dut):
         gt = golden_transitions(bl)
         assert _contains(trans, gt), \
             f"frame_type {ft}: biphase framing not found in emitted line"
+        if ft == 2:
+            full_frame_levels = levels
         await ClockCycles(dut.clk, 20 * SPC)   # drain back to idle
 
     dut._log.info("encoder biphase framing OK for 1/2/12-byte frames")
+
+    # Emit waveform plot of full 12-byte case
+    if full_frame_levels is not None:
+        plot_path = _save_line_plot(
+            full_frame_levels,
+            "encoder_frame.png",
+            "ACLK-Lite encoder line: full 12-byte packet (event 0x1234 + data)"
+        )
+        if plot_path:
+            dut._log.info(f"encoder waveform plot: {plot_path}")

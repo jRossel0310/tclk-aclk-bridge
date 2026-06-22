@@ -1,6 +1,6 @@
-"""Cocotb 2.0 runner for rtl/aclk_lite/aclk_lite_encoder.sv (Manchester encoder).
+"""Cocotb 2.0 runner for rtl/aclk_lite/aclk_lite_encoder.sv (biphase-mark encoder).
 The encoder is a leaf module (no dependencies). The test reuses the shared
-tb/manchester_tx_model.py golden reference.
+tb/clk_tx_model.py / tb/tclk_tx_model.py golden reference.
 """
 
 import os
@@ -17,7 +17,7 @@ RTL_DIR  = PROJ_DIR / "rtl"
 BUILD    = PROJ_DIR / "sim_build" / "aclk_lite_encoder"
 
 sys.path.insert(0, str(TB_DIR))
-sys.path.insert(0, str(TB_DIR.parent))    # for tb/manchester_tx_model.py
+sys.path.insert(0, str(TB_DIR.parent))    # for tb/clk_tx_model.py, tb/tclk_tx_model.py
 
 _oss = os.getenv("OSS_CAD_SUITE")
 if _oss and (Path(_oss) / "bin").is_dir():
