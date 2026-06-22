@@ -2,7 +2,7 @@
 #
 # Counterpart to build_aclk.tcl (the receiver), but this is the TX/generator. It
 # reuses the receiver's proven clocking topology verbatim - PS pl_clk0 (100 MHz) +
-# a PL clk_wiz MMCM deriving a 120 MHz oversample clock (clk_os), MMCM resetn from
+# a PL clk_wiz MMCM deriving an 80 MHz cell clock (clk_os), MMCM resetn from
 # pl_resetn0, an auto proc_sys_reset with dcm_locked tied HIGH - but has NO AXI: the
 # generator boots and transmits a hardcoded timeline, so there is no LPD AXI master,
 # no SmartConnect, and no AXI slave. The Manchester stream leaves on H12 (constrained
@@ -77,7 +77,7 @@ set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {1}] $vcc
 connect_bd_net [get_bd_pins $vcc/dout] [get_bd_pins rst_pl0/dcm_locked]
 connect_bd_net [get_bd_pins rst_pl0/peripheral_aresetn] [get_bd_pins u_gen/rstn]
 
-# Clocking Wizard: ONE 120 MHz oversample clock (clk_os) from pl_clk0 INSIDE the PL,
+# Clocking Wizard: ONE 80 MHz cell clock (clk_os) from pl_clk0 INSIDE the PL,
 # so we depend only on pl_clk0 (the one PL clock a runtime bitstream load leaves at
 # the expected frequency). pl_clk0 is an internal net, so the MMCM input takes it with
 # no buffer. clk_wiz's clk_in1 FREQ_HZ is read-only and derived from PRIM_IN_FREQ, so
@@ -88,7 +88,7 @@ set pl0_mhz [format %.6f [expr {$pl0_hz / 1000000.0}]]
 set_property -dict [list \
     CONFIG.PRIM_SOURCE {No_buffer} \
     CONFIG.PRIM_IN_FREQ $pl0_mhz \
-    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {120.000} \
+    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {80.000} \
     CONFIG.USE_LOCKED {true} \
     CONFIG.USE_RESET {true} \
     CONFIG.RESET_TYPE {ACTIVE_LOW} \
