@@ -25,6 +25,9 @@ module clk_byte_framer (
     output logic        is_tclk
 );
     // Synchronize sclk + sdata into clk and detect sclk rising edge (one pulse/cell).
+    // serdec holds SDATA stable across each recovered cell and pulses SCLK mid-cell, so
+    // sampling sdata_smpl at the sclk rising edge (sclk_pe) captures the correct cell value.
+    // Same sclk/sdata sync pattern as the hardware-proven TCLK_DESERIALIZER2.
     logic sclk_cap, sclk_smpl, sclk_edge, sdata_cap, sdata_smpl;
     always_ff @(posedge clk or negedge rstn) begin
         if (!rstn) begin
@@ -68,6 +71,7 @@ module clk_byte_framer (
                             cur_byte  <= 8'd0;
                             byte_cnt  <= 4'd0;
                             frame_bad <= 1'b0;
+                            frame_buf <= 96'd0;
                             state     <= ST_DATA;
                         end
                     end
