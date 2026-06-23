@@ -100,25 +100,30 @@ def read_event():
     return event, flags, data, ts
 
 def stats_line():
-    # M0 bring-up DEBUG word (0xA0), round 2 - look inside the GT 8b10b decode:
-    #   [9:0]   gen      = frames the on-board generator has emitted (TX alive?)
-    #   [19:10] comma    = bytes the GT RX decoded as a comma char (rxctrl2)
-    #   [29:20] kchar    = bytes the GT RX decoded as a K char (rxctrl0)
-    #   [30]    byteali  = GT RX byte-aligned
-    #   [31]    rcv_algn = ACLK_RCV comma-aligned (decoder locked?)
-    # kchar=0 -> K never decoded (K not transmitted); kchar>0,comma=0 -> comma cfg;
-    # comma>0,rcv_aligned=0 -> data/CRC/byte-order into ACLK_RCV. (counters are 10-bit, wrap.)
+    # M0 bring-up DEBUG word (0xA0), round 3 - SNAPSHOT the decoded K-char byte:
+    #   [7:0]   kbyte    = value of the first K char the GT RX decoded (0xBC == K28.5)
+    #   [15:8]  kchar    = K-char decode count (8b, wraps; TX/decode alive?)
+    #   [19]    klane    = byte lane of that K char (0=low, 1=high)
+    #   [20]    kbvalid  = a K char was captured
+    #   [21]    commaever= GT ever decoded a comma char (sticky)
+    #   [22]    byteali  = GT RX byte-aligned
+    #   [23]    rcv_algn = ACLK_RCV comma-aligned
+    #   [31:24] gen      = generator frame count (8b, wraps; TX alive?)
+    # kbyte==0xBC -> K28.5 on the wire -> comma-detect config; else wrong byte K-flagged.
     dbg = rd(DEBUG)
-    gen = dbg & 0x3FF
-    comma = (dbg >> 10) & 0x3FF
-    kchar = (dbg >> 20) & 0x3FF
-    byteali = (dbg >> 30) & 1
-    rcv_algn = (dbg >> 31) & 1
-    return ("[stats] EVT=%d NULL=%d ERR=%d FILT=%d | gen=%d kchar=%d comma=%d byteali=%d "
-            "rcv_aligned=%d | dbg=0x%08X hb=%d lock=%d") % (
-        rd(EVENT_COUNT), rd(NULL_COUNT), rd(ERROR_COUNT), rd(FILTERED_COUNT),
-        gen, kchar, comma, byteali, rcv_algn,
-        dbg, rd(HEARTBEAT), rd(LOCK) & 1)
+    kbyte = dbg & 0xFF
+    kchar = (dbg >> 8) & 0xFF
+    klane = (dbg >> 19) & 1
+    kbvalid = (dbg >> 20) & 1
+    commaever = (dbg >> 21) & 1
+    byteali = (dbg >> 22) & 1
+    rcv_algn = (dbg >> 23) & 1
+    gen = (dbg >> 24) & 0xFF
+    return ("[stats] EVT=%d ERR=%d | gen=%d kchar=%d kbyte=0x%02X klane=%d kbvalid=%d "
+            "commaever=%d byteali=%d rcv_aligned=%d | dbg=0x%08X lock=%d") % (
+        rd(EVENT_COUNT), rd(ERROR_COUNT),
+        gen, kchar, kbyte, klane, kbvalid, commaever, byteali, rcv_algn,
+        dbg, rd(LOCK) & 1)
 
 def probe():
     """One-time startup read of each register, announced BEFORE each access, then a

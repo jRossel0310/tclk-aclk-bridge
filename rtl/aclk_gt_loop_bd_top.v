@@ -249,51 +249,75 @@ module aclk_gt_loop_bd_top (
     wire link_ready = tx_done & rx_done;
 
     // -------------------------------------------------------------------------
-    // 5b. Bring-up DEBUG word (-> readout 0xA0), formed here and synchronized into
-    //     the AXI (s_axi_aclk) domain. Round 2: gen runs + lock=1 but commadet=0,
-    //     so look one layer deeper at the GT 8b10b decode:
-    //       [9:0]   marker_dst    = frames the generator has emitted (TX alive?)
-    //       [19:10] commachar_dst = bytes the GT RX decoded as a comma char (rxctrl2)
-    //       [29:20] kchar_dst     = bytes the GT RX decoded as a K char    (rxctrl0)
-    //       [30]    byteali_s     = GT RX byte-aligned
-    //       [31]    algn_s        = ACLK_RCV comma-aligned (decoder locked?)
-    //   kchar=0          -> no K char ever decoded -> K not transmitted (TX K-bit/byte map)
-    //   kchar>0,comma=0  -> K decoded but not as comma -> comma value/config
-    //   comma>0,algn=0   -> comma chars reach ACLK_RCV -> data/CRC/byte-order in decoder
+    // 5b. Bring-up DEBUG word (-> readout 0xA0). Round 3: kchar climbs but comma=0,
+    //     so SNAPSHOT the actual decoded K-char byte to learn if K28.5 (0xBC) is
+    //     really being transmitted, or some other byte is being K-flagged.
+    //       [7:0]   kbyte    = value of the first K char the GT RX decoded
+    //       [15:8]  kchar8   = K-char decode count (rxctrl0; TX/decode alive?)
+    //       [16]    (0)
+    //       [17]    (0)
+    //       [18]    (0)
+    //       [19]    klane    = byte lane of the captured K char (0=low,1=high)
+    //       [20]    kbvalid  = a K char was captured
+    //       [21]    commaever= GT ever decoded a comma char (rxctrl2)  [sticky]
+    //       [22]    byteali  = GT RX byte-aligned
+    //       [23]    rcv_algn = ACLK_RCV comma-aligned
+    //       [31:24] gen8     = generator frame count (TX alive?)
+    //   kbyte==0xBC -> K28.5 IS on the wire -> comma-detect config is the issue
+    //   kbyte!=0xBC -> wrong byte is K-flagged -> TX K-bit/byte mapping (kbyte/klane say what)
     // -------------------------------------------------------------------------
     wire rx_aligned_w;
 
-    wire [9:0] marker_dst;
-    cdc_gray_count #(.W(10)) u_cnt_marker (
-        .src_clk(tx_usrclk2), .src_rstn(gen_rstn), .incr(gen_marker),
-        .dst_clk(s_axi_aclk), .count_dst(marker_dst));
-
-    // GT 8b10b decode activity (rx_usrclk2 domain): any K char / any comma char this cycle
-    wire kchar_pulse    = |rxctrl0_w[1:0];
+    wire kchar_pulse     = |rxctrl0_w[1:0];
     wire commachar_pulse = |rxctrl2[1:0];
 
-    wire [9:0] kchar_dst;
-    cdc_gray_count #(.W(10)) u_cnt_kchar (
+    wire [7:0] gen8;
+    cdc_gray_count #(.W(8)) u_cnt_marker (
+        .src_clk(tx_usrclk2), .src_rstn(gen_rstn), .incr(gen_marker),
+        .dst_clk(s_axi_aclk), .count_dst(gen8));
+
+    wire [7:0] kchar8;
+    cdc_gray_count #(.W(8)) u_cnt_kchar (
         .src_clk(rx_usrclk2), .src_rstn(ro_rstn), .incr(kchar_pulse),
-        .dst_clk(s_axi_aclk), .count_dst(kchar_dst));
+        .dst_clk(s_axi_aclk), .count_dst(kchar8));
 
-    wire [9:0] commachar_dst;
-    cdc_gray_count #(.W(10)) u_cnt_commachar (
-        .src_clk(rx_usrclk2), .src_rstn(ro_rstn), .incr(commachar_pulse),
-        .dst_clk(s_axi_aclk), .count_dst(commachar_dst));
-
-    reg byteali_m = 1'b0, byteali_s = 1'b0;
-    reg algn_m = 1'b0, algn_s = 1'b0;
-    always @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
-        if (!s_axi_aresetn) begin
-            byteali_m <= 1'b0; byteali_s <= 1'b0;
-            algn_m    <= 1'b0; algn_s    <= 1'b0;
+    // Capture and HOLD the first decoded K-char byte (stable -> clean CDC), plus a
+    // sticky "comma ever decoded" flag. rx_usrclk2 domain.
+    reg [7:0] kbyte_r = 8'h00;
+    reg       klane_r = 1'b0, kbvalid_r = 1'b0, commaever_r = 1'b0;
+    always @(posedge rx_usrclk2 or negedge ro_rstn) begin
+        if (!ro_rstn) begin
+            kbyte_r <= 8'h00; klane_r <= 1'b0; kbvalid_r <= 1'b0; commaever_r <= 1'b0;
         end else begin
-            byteali_m <= rx_byteali; byteali_s <= byteali_m;
-            algn_m    <= rx_aligned_w; algn_s  <= algn_m;
+            if (commachar_pulse) commaever_r <= 1'b1;
+            if (!kbvalid_r) begin
+                if (rxctrl0_w[0]) begin
+                    kbyte_r <= rx_data16[7:0];  klane_r <= 1'b0; kbvalid_r <= 1'b1;
+                end else if (rxctrl0_w[1]) begin
+                    kbyte_r <= rx_data16[15:8]; klane_r <= 1'b1; kbvalid_r <= 1'b1;
+                end
+            end
         end
     end
-    wire [31:0] dbg_word = {algn_s, byteali_s, kchar_dst, commachar_dst, marker_dst};
+
+    // Synchronize the (now-stable) captured values + level flags into the AXI domain.
+    reg [7:0] kbyte_m = 0, kbyte_s = 0;
+    reg klane_m=0, klane_s=0, kbv_m=0, kbv_s=0, ce_m=0, ce_s=0;
+    reg byteali_m=0, byteali_s=0, algn_m=0, algn_s=0;
+    always @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
+        if (!s_axi_aresetn) begin
+            kbyte_m<=0; kbyte_s<=0; klane_m<=0; klane_s<=0; kbv_m<=0; kbv_s<=0;
+            ce_m<=0; ce_s<=0; byteali_m<=0; byteali_s<=0; algn_m<=0; algn_s<=0;
+        end else begin
+            kbyte_m<=kbyte_r;   kbyte_s<=kbyte_m;
+            klane_m<=klane_r;   klane_s<=klane_m;
+            kbv_m<=kbvalid_r;   kbv_s<=kbv_m;
+            ce_m<=commaever_r;  ce_s<=ce_m;
+            byteali_m<=rx_byteali; byteali_s<=byteali_m;
+            algn_m<=rx_aligned_w;  algn_s<=algn_m;
+        end
+    end
+    wire [31:0] dbg_word = {gen8, algn_s, byteali_s, ce_s, kbv_s, klane_s, 3'b000, kchar8, kbyte_s};
 
     // -------------------------------------------------------------------------
     // 6. GT readout top (RX domain + AXI pass-through)
