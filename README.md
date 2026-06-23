@@ -1,171 +1,154 @@
-# sv-sim-skeleton, SystemVerilog + cocotb simulation starter
+# kria-2-hardware: Fermilab TCLK / ACLK-Lite timing readout on the KR260
 
-A reusable starting point for SystemVerilog projects: write RTL, test it in
-Python with [cocotb](https://www.cocotb.org/), and view waveforms all locally,
-no Vivado or hardware required. Clone it, run `setup`, and you have a passing
-smoke test in under a minute.
+RTL, simulations, and Vivado bitstreams for receiving Fermilab accelerator timing
+events on a **Xilinx Kria KR260** (Zynq UltraScale+, part `xck26-sfvc784-2LV-c`).
+The board decodes the lab's **TCLK** and the new PIP-II **ACLK-Lite** event streams,
+timestamps each event, and hands them to the PS over AXI4-Lite for software to read.
 
-> Simulation is the fast inner loop and needs no Vivado or hardware. A scripted
-> **Vivado bitstream flow** for the **Xilinx Kria KR260 (Zynq UltraScale+)** also
-> lives here,  see [Hardware: KR260 bitstream](#hardware-kr260-bitstream) below.
+A second KR260 can act as an **ACLK-Lite signal generator** for board-to-board
+testing. Everything is developed in simulation first (cocotb + Icarus, no Vivado or
+hardware needed) and then built to a bitstream with Vivado.
+
+> New here? Read **[docs/PROJECT.md](docs/PROJECT.md)** for the full architecture,
+> the build-target map, and exactly what is hardware-verified vs. simulation-only.
+
+## What it does (signal chain)
+
+```
+timing line (TCLK or ACLK-Lite, biphase-mark Manchester, on Pmod pin H12)
+  -> serdec4_9MHz        recover the bit stream (80 MHz oversample)
+  -> clk_byte_framer     length-aware byte framing -> event[15:0] (+ 64-bit data)
+  -> aclk_readout_axi    hardware timestamp + async FIFO + AXI4-Lite register block
+  -> PS (Linux, UIO)     deploy/clk_read.py drains and prints events
+```
+
+The unified decoder (`clk_rcv` = `serdec4_9MHz` + `clk_byte_framer`) reads **both**
+TCLK (8-bit events) and ACLK-Lite (16-bit events + 64-bit data) from one line,
+auto-detecting frame length per the ISD framing. The on-wire framing is documented
+authoritatively in **[docs/aclk-lite-framing.md](docs/aclk-lite-framing.md)**.
+
+## Status (current)
+
+- **Unified TCLK/ACLK receiver** (`vivado/build_clk.tcl`): built, sim-validated,
+  and **HW-verified** - decodes the real lab TCLK line, and decodes the generator
+  board's ACLK-Lite stream board-to-board.
+- **ACLK-Lite generator** (`vivado/build_aclkgen.tcl`): built and **HW-verified**
+  board-to-board against the receiver.
+- Earlier single-protocol builds (`build_tclk`, `build_aclk`) are kept but
+  superseded by `build_clk`. See [docs/PROJECT.md](docs/PROJECT.md) for the full map
+  and history.
 
 ## Prerequisites
-
-Install these once, per machine:
 
 | Tool | Notes |
 |------|-------|
 | Python 3.12+ | `python` on PATH; the venv is created from it |
-| [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build) | provides Icarus Verilog (`iverilog`/`vvp`), GTKWave, and Verilator |
+| [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build) | Icarus Verilog (`iverilog`/`vvp`), GTKWave, Verilator - for simulation |
+| [AMD Vivado 2024.2](https://www.xilinx.com/support/download.html) | only for building bitstreams; the free ML Standard Edition supports the KR260 |
 
-Make the OSS CAD Suite tools resolvable in **one** of two ways:
+Make the OSS CAD Suite resolvable in **one** of two ways: add its `bin/` (and
+`lib/`) to PATH, or set `OSS_CAD_SUITE` to its root (e.g. `$env:OSS_CAD_SUITE =
+"C:\Users\<you>\tools\oss-cad-suite"`). Python/cocotb versions are pinned in
+[requirements.txt](requirements.txt).
 
-- add its `bin/` (and `lib/`) to your PATH, **or**
-- set `OSS_CAD_SUITE` to its root, e.g.
-  `export OSS_CAD_SUITE=/c/Users/<you>/tools/oss-cad-suite` (bash) /
-  `$env:OSS_CAD_SUITE = "C:\Users\<you>\tools\oss-cad-suite"` (PowerShell).
-
-The `sim` wrappers auto-detect either and put `bin`+`lib` on PATH for the sim
-process. Python/cocotb versions are pinned in [requirements.txt](requirements.txt).
-
-## Quick start
+## Simulate (the fast inner loop)
 
 ```bash
-# git bash / MSYS
-./sim.sh setup        # create .venv + install requirements (run once)
-./sim.sh run          # build + simulate the example module (Icarus)
-./sim.sh test         # run, then open the waveform in GTKWave
+./sim.sh setup              # create .venv + install requirements (run once)
+./sim.sh run -m clk_rcv     # simulate a module (Icarus); -m <module>
+./sim.sh test -m clk_rcv    # run, then open the waveform in GTKWave
+./sim.sh list               # list all testbench modules
 ```
 
 ```powershell
-# PowerShell
 .\sim.ps1 setup
-.\sim.ps1 run
-.\sim.ps1 test
+.\sim.ps1 run -Module clk_rcv
+.\sim.ps1 list
 ```
 
-Expect `TESTS=1 PASS=1 FAIL=0` and an FST at `sim_build/counter/counter.fst`.
+Each module under `tb/<module>/` has a cocotb `test_<module>.py` + a `runner.py`.
+Tests emit a matplotlib plot under `sim_build/<module>/plots/` on completion. Key
+timing testbenches: `clk_rcv`, `clk_readout`, `aclk_lite_encoder`,
+`aclk_lite_gen_loopback`, `tclk_rcv`, `aclk_rcv`, `aclk_readout_axi`.
 
-## Layout
+## Build a bitstream (Vivado)
 
+```powershell
+.\hw.ps1 build -Tcl vivado\build_clk.tcl -Name clk        # the unified receiver
+.\hw.ps1 build -Tcl vivado\build_aclkgen.tcl -Name aclkgen # the ACLK-Lite generator
 ```
-.
-  rtl/                 # synthesizable RTL, one file per module
-    counter.sv         # example module (proves the toolchain)
-    uart_echo_top.sv   # KR260 bring-up top: RX -> FIFO -> TX echo
-  tb/                  # testbenches, one folder per module
-    counter/
-      test_counter.py  # cocotb tests
-      runner.py        # cocotb Python runner (SIM switch lives here)
-  constraints/         # hardware pin/timing constraints (.xdc),  not used by sim
-    kr260.xdc          # KR260 PMOD pin map for uart_echo_top
-  vivado/              # scripted Vivado RTL -> bitstream flow (KR260)
-    build.tcl          # block design + synth/impl/bitstream
-  sim_build/           # generated build + waveforms (git-ignored)
-  .venv/               # Python venv (git-ignored; created by `setup`)
-  requirements.txt     # pinned Python deps
-  sim.sh / sim.ps1     # simulation task wrappers (bash / PowerShell)
-  hw.sh  / hw.ps1      # hardware build wrappers (bash / PowerShell)
-```
-
-## Add a new module
-
 ```bash
-./sim.sh new fifo          # scaffolds rtl/fifo.sv + tb/fifo/{runner.py,test_fifo.py}
-./sim.sh run -m fifo       # the stub passes immediately; edit from there
+./hw.sh build -Tcl vivado/build_clk.tcl -Name clk
 ```
 
-(`\.sim.ps1 new fifo` in PowerShell.) The scaffold is a minimal reset-to-zero
-module + cocotb smoke test, so a freshly scaffolded module passes out of the box
-,  replace the body of each with your real logic and checks.
+`hw.ps1` runs Vivado in batch (with an antivirus-flake retry loop), then packages
+the bitstream with `bootgen` into `uart_echo_bd_wrapper.bit.bin` and prints its MD5.
+Output lands under `build/kria/<Name>/<Name>.runs/impl_1/`. Point the wrapper at
+Vivado if it is not on PATH: `-Vivado "C:\Xilinx\Vivado\2024.2\bin\vivado.bat"`.
+All build targets are listed in [docs/PROJECT.md](docs/PROJECT.md).
+
+## Deploy + run on the board
+
+```powershell
+.\hw.ps1 deploy -Name clk -DeployHost ubuntu@<board>   # scp the bin + clk_read.py + tclk_filter.py
+```
+Then on the board (md5-check first - all builds share the bitstream filename):
+```bash
+md5sum ~/uart_echo_bd_wrapper.bit.bin
+sudo xmutil unloadapp
+sudo fpgautil -b ~/uart_echo_bd_wrapper.bit.bin -o uart_echo.dtbo
+sudo python3 -u clk_read.py /dev/uio4                  # add --drop 07 to filter an event
+```
+Per-build runbooks: [deploy/clk.md](deploy/clk.md), [deploy/tclk.md](deploy/tclk.md),
+[deploy/aclk.md](deploy/aclk.md).
+
+## Repository layout
+
+```
+rtl/
+  aclk_lite/        the timing receiver + generator RTL
+    clk_byte_framer.sv, clk_rcv.sv, clk_readout_top.sv   unified TCLK/ACLK decoder (current)
+    aclk_lite_encoder.sv, aclk_lite_gen_timeline.sv      ACLK-Lite signal generator
+    tclk_readout_top.sv, aclk_lite_readout_top.sv        earlier single-protocol tops
+    aclk_lite_decoder.sv                                  clean-room Manchester decoder (legacy)
+  aclk_readout/     shared readout: aclk_readout_core.sv (timestamp + async FIFO) + aclk_readout_axi.sv
+  aclk_bridge/      inherited Fermilab/Evan RTL: serdec4_9MHz, TCLK_RCV, ACLK_RCV (GT), gearboxes, CRC
+  *_bd_top.v        plain-Verilog block-design wrappers for each build
+  async_fifo.sv, cdc_gray_count.sv, synchronizer.sv      CDC primitives
+  uart_echo_top.sv, counter.sv, fifo.sv, ...             earlier bring-up + reusable modules
+tb/                 cocotb testbenches, one folder per module (+ shared TX/BFM models)
+constraints/        per-build .xdc pin/timing files (kr260_clk.xdc, kr260_aclkgen.xdc, ...)
+vivado/             scripted RTL -> bitstream builds (build_clk.tcl, build_aclkgen.tcl, ...)
+deploy/             board-side Python readers + per-build runbooks (.md)
+docs/               PROJECT.md (status/architecture), aclk-lite-framing.md (authoritative framing),
+                    superpowers/ (per-feature specs + plans)
+resources/          Fermilab timing docs: Aclk/ (ACLK-Lite spec, PIP-II ISD), Tclk/ (TCLK docs)
+sim.sh / sim.ps1    simulation wrappers (bash / PowerShell)
+hw.sh  / hw.ps1     Vivado build + deploy wrappers
+```
 
 ## Wrapper commands
 
-| Command | Does |
-|---------|------|
+| `sim` | Does |
+|-------|------|
 | `setup` | create `.venv` and install `requirements.txt` |
 | `run`   | build + simulate (`-m <module>`, `-s icarus\|verilator`) |
-| `wave`  | open the latest waveform in GTKWave |
-| `test`  | `run`, then `wave` |
+| `wave` / `test` | open the latest waveform / run then open |
 | `new <name>` | scaffold a new module + testbench |
-| `clean` | delete `sim_build/` |
-| `list`  | list testbench modules |
+| `list` / `clean` | list testbench modules / delete `sim_build/` |
 
-bash uses `-m`/`-s`; PowerShell uses `-Module`/`-Sim`. If PowerShell blocks the
-script, run once `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or invoke
-as `powershell -ExecutionPolicy Bypass -File .\sim.ps1 run`.
+| `hw` | Does |
+|------|------|
+| `build` | RTL -> bitstream -> bootgen `.bit.bin` + MD5 (`-Tcl <file> -Name <name>`) |
+| `deploy` | scp the `.bit.bin` + mapped Python readers to a board (`-DeployHost`) |
+| `gui` / `clean` | open the project in Vivado / delete the build dir |
 
-In **VS Code**: `Ctrl+Shift+B` runs the sim; `Terminal > Run Task...` lists
-setup / run / run+waveform / open waveform / clean.
+bash uses `-m`/`-s`/`-Tcl`/`-Name`; PowerShell uses `-Module`/`-Sim`/`-Tcl`/`-Name`.
+If PowerShell blocks the script: `powershell -ExecutionPolicy Bypass -File .\sim.ps1 ...`.
 
-### Manual equivalent (what the wrapper does)
+## Origin
 
-```bash
-# git bash,  note: source Scripts/activate (not bin/) on Windows
-source .venv/Scripts/activate
-cd tb/counter
-python runner.py
-gtkwave ../../sim_build/counter/counter.fst
-```
-
-## Switch simulators (one line)
-
-In a module's `runner.py`, change `SIM = os.getenv("SIM", "icarus")`, or set the
-env var without editing code,  the wrappers expose `-s`/`-Sim`:
-
-```bash
-SIM=verilator python runner.py      # or: ./sim.sh run -s verilator
-```
-
-> **Verilator on Windows note:** Verilator is bundled with OSS CAD Suite, but
-> running it natively on Windows (and cocotb+Verilator specifically) is finicky
->,  it shells out to a C++ compiler and a Perl wrapper. If Icarus chokes on real
-> SystemVerilog and you need Verilator, the smoothest path is WSL2 + Ubuntu
-> (`sudo apt install verilator`). The `SIM` switch is wired up regardless.
-
-## Hardware: KR260 bitstream
-
-The same RTL also builds to a bitstream for the **Kria KR260** (Zynq UltraScale+,
-part `xck26-sfvc784-2LV-c`). UltraScale+ has no open-source bitstream path, so
-this stage needs **AMD Vivado**,  the free **ML Standard Edition** supports the
-KR260. The first hardware target is [`rtl/uart_echo_top.sv`](rtl/uart_echo_top.sv):
-a UART loopback (`uart_receiver` → `fifo` → `uart_transmitter`),  type into a
-serial terminal and the characters echo back.
-
-The clock and reset come from the Zynq PS inside a Vivado block design
-(`pl_clk0` at 100 MHz, an active-high reset from `pl_resetn`),  Kria has no
-free-running user oscillator wired to general PL logic, so this is the standard
-flow. The build is fully scripted in [`vivado/build.tcl`](vivado/build.tcl).
-
-```powershell
-.\hw.ps1 build      # RTL -> bitstream (PowerShell)
-```
-```bash
-./hw.sh build       # RTL -> bitstream (git bash)
-```
-
-Point the wrapper at Vivado if it isn't on PATH: `-Vivado "C:\Xilinx\Vivado\<ver>\bin\vivado.bat"`
-(PS) or `export VIVADO=...` (bash). Output bitstream lands under
-`vivado/build/uart_echo.runs/impl_1/`.
-
-**Before the first hardware run:** install the KR260 board file (Vivado Store →
-Boards → Kria KR260), and **verify the PMOD pins** in
-[`constraints/kr260.xdc`](constraints/kr260.xdc) against the official KR260 master
-XDC. See [`vivado/README.md`](vivado/README.md) for details. Simulate the echo
-first,  `./sim.sh run -m uart_echo_top`,  before spending Vivado time.
-
-> Loading the bitstream onto the board (JTAG Hardware Manager, `fpgautil`, or the
-> Kria `xmutil loadapp` app flow) is done on the board itself and is not scripted
-> here.
-
-## GTKWave fails to open ("libpixbufloader-svg.dll" / Gtk bail out)
-
-GTKWave is a native GTK app and needs the OSS CAD Suite's GTK runtime
-environment (normally set by the suite's `environment.bat`). Launched bare, it
-crashes with `Unable to load image-loading module ...libpixbufloader-svg.dll`
-because the shipped `loaders.cache` lists an svg loader that isn't on disk.
-
-Both wrappers handle this automatically before launching GTKWave: they export
-`GTK_EXE_PREFIX`/`GTK_DATA_PREFIX`/`GDK_PIXBUF_MODULE_FILE` and rebuild the loader
-cache with `gdk-pixbuf-query-loaders.exe --update-cache`. The cache rebuild is
-permanent. If you reinstall OSS CAD Suite, just run `wave` once to repair it.
+This repo started from a SystemVerilog + cocotb simulation skeleton (the `counter`
+module and the `sim`/`hw` wrappers are its legacy). It has since become the Fermilab
+PIP-II timing readout above. The simulation-first workflow and the scripted Vivado
+flow carried over unchanged.
