@@ -26,6 +26,7 @@ module aclk_gt_readout_top #(
     input  logic [1:0]  k_from_xcvr,
     input  logic        mmcm_locked,       // GT/MMCM locked (async) -> AXI 0xC0 LOCK
     output logic        rx_aligned,         // ACLK_RCV comma alignment (debug/bring-up)
+    output logic        dbg_event_valid,    // decoder valid pulse (debug/plot)
     output logic        dbg_hb,
     output logic        dropped_null,
 
@@ -69,6 +70,8 @@ module aclk_gt_readout_top #(
         .RX_ALIGNED_OUT (rx_aligned),
         .DIAG           (diag)
     );
+
+    assign dbg_event_valid = aclk_valid;
 
     // ---- GT/decoder link-health diagnostic word (-> AXI 0xA0 DEBUG) ----
     // {is_aligned, comma(diag[1]), 0, frame_count[28:0]} synced into the AXI domain.

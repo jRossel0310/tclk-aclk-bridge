@@ -61,6 +61,8 @@ async def _rx_monitor(dut, acct):
         await Timer(1, unit="ns")
         if _b(dut.dropped_null) == 1:
             acct["nulls"] += 1
+        if _b(dut.aclk_valid) == 1:
+            acct["w"] += 1
 
 
 async def _sampler(dut, acct, series, interval_ns=80):
@@ -98,7 +100,7 @@ async def test_gt_readout_chain(dut):
     await ClockCycles(dut.s_axi_aclk, 6)
 
     assert int(dut.rx_aligned.value) == 1, "RX never aligned"
-    assert (await axi_read(dut, STATUS)) >> 1 & 1 == 0, "overflow: events dropped"
+    assert ((await axi_read(dut, STATUS)) >> 1) & 1 == 0, "overflow: events dropped"
 
     collected = []
     while True:

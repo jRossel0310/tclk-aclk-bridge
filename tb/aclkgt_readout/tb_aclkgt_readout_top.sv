@@ -7,6 +7,7 @@ module tb_aclkgt_readout_top (
     input  wire [1:0]  K_FROM_XCVR,
     input  wire        mmcm_locked,
     output wire        rx_aligned,
+    output wire        aclk_valid,
     output wire        dropped_null,
     input  wire        s_axi_aclk,
     input  wire        s_axi_aresetn,
@@ -19,7 +20,8 @@ module tb_aclkgt_readout_top (
     aclk_gt_readout_top #(.ADDR_WIDTH(6), .AXI_ADDR_W(8)) dut (
         .rx_clk(CLK1), .rx_rstn(rx_rstn), .pps(pps),
         .data_from_xcvr(DATA_FROM_XCVR), .k_from_xcvr(K_FROM_XCVR),
-        .mmcm_locked(mmcm_locked), .rx_aligned(rx_aligned), .dbg_hb(), .dropped_null(dropped_null),
+        .mmcm_locked(mmcm_locked), .rx_aligned(rx_aligned),
+        .dbg_event_valid(aclk_valid), .dbg_hb(), .dropped_null(dropped_null),
         .s_axi_aclk(s_axi_aclk), .s_axi_aresetn(s_axi_aresetn),
         .s_axi_awaddr(s_axi_awaddr), .s_axi_awvalid(s_axi_awvalid), .s_axi_awready(s_axi_awready),
         .s_axi_wdata(s_axi_wdata), .s_axi_wstrb(s_axi_wstrb), .s_axi_wvalid(s_axi_wvalid), .s_axi_wready(s_axi_wready),
