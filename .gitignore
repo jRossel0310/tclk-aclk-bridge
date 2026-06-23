@@ -30,3 +30,10 @@ project_1/
 *.dtbo
 *.bit.bin
 *.bit
+
+# GT Wizard IP generated synthesis XML (large); keep .xci + .veo
+vivado/ip/**/*.xml
+vivado/ip/*.log
+vivado/ip/*.jou
+vivado_*.backup.jou
+vivado_*.backup.log
