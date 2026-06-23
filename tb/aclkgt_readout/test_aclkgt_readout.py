@@ -143,3 +143,43 @@ async def test_gt_readout_chain(dut):
         dut._log.info(f"GT readout plot written to {plot_path}")
 
     dut._log.info(f"gt readout OK: {len(collected)} events in order, flags+ts correct")
+
+
+@cocotb.test()
+async def test_gt_readout_bad_crc(dut):
+    """A single corrupted frame raises exactly one ERROR_COUNT and is never read
+    out as an event; clean frames around it still decode."""
+    cocotb.start_soon(Clock(dut.CLK1, RX_PERIOD_NS, unit="ns").start())
+    cocotb.start_soon(Clock(dut.s_axi_aclk, AXI_PERIOD_NS, unit="ns").start())
+    await _reset(dut)
+
+    good = (0x0042, 0xDEADBEEFCAFEF00D)
+    # Stream alignment frames and the corrupt batch as one continuous burst so the
+    # gearbox word stream never has a multi-cycle gap. corrupt_at=21 = the 22nd frame
+    # (0-indexed): 0-20 good, 21 corrupt (bad CRC), 22-23 good.
+    await stream_frames(dut, [good], repeat=24, corrupt_at=21)
+    stop = {"done": False}
+    cocotb.start_soon(_idle_carrier(dut, stop))
+    # Use only AXI cycles for settle: the idle carrier takes the very next CLK1 edge
+    # (at most 1 CLK1 gap, seq_ctr 5->6, no VALID), preventing stale-frame garbage.
+    # 20 AXI cycles = 200 ns >> 2*16 ns (CRC pipe) + 3*10 ns (CDC) so ERROR_COUNT is stable.
+    await ClockCycles(dut.s_axi_aclk, 20)
+
+    assert int(dut.rx_aligned.value) == 1, "RX never aligned"
+    err0 = await axi_read(dut, ERROR_COUNT)
+
+    # drain
+    collected = []
+    while True:
+        if (await axi_read(dut, STATUS)) & 0x1:
+            break
+        collected.append(await axi_read_event(dut))
+    stop["done"] = True
+
+    err1 = await axi_read(dut, ERROR_COUNT)
+    # err0 is the stable total after all frames; the idle carrier adds no new errors.
+    assert err0 == 1, f"expected exactly 1 bad-CRC error total, got {err0}"
+    assert err1 - err0 == 0, f"unexpected errors after drain: {err1 - err0}"
+    for ev, fl, da, ts in collected:
+        assert (ev, da) == good, f"corrupt frame leaked as event: 0x{ev:04X}"
+    dut._log.info(f"bad-CRC path OK: ERROR_COUNT=1, {len(collected)} clean events read")
