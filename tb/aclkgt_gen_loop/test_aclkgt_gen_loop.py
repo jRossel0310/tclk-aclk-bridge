@@ -8,6 +8,7 @@ from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from plot_util import save_cumulative_plot  # noqa: E402
 
 TIMELINE = [(0x0001, 0x1111222233334444), (0x00A5, 0xAAAABBBBCCCCDDDD),
             (0x1000, 0x0123456789ABCDEF)]
@@ -53,38 +54,10 @@ async def test_gen_to_rcv(dut):
     dut._log.info(f"gen<->rcv agree: {len(captured)} events decoded in order, 0 errors")
 
     # Save the loopback agreement plot.
-    _plot_loopback(times_ns, cumulative_decoded, align_time_ns,
-                   out_dir=Path(__file__).resolve().parents[2]
-                   / "sim_build" / "aclkgt_gen_loop" / "plots")
-
-
-def _plot_loopback(times_ns, cumulative_decoded, align_time_ns, out_dir):
-    """Save a plot of cumulative decoded events vs sim time, marking alignment."""
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except Exception as exc:                            # noqa: BLE001
-        import warnings
-        warnings.warn(f"matplotlib unavailable, skipping plot: {exc}")
-        return
-
-    fig, ax = plt.subplots(figsize=(11, 5))
-    ax.plot(times_ns, cumulative_decoded, color="tab:blue", lw=1.6,
-            label="cumulative decoded events")
-    if align_time_ns is not None:
-        ax.axvline(align_time_ns, color="tab:red", lw=1.2, linestyle="--",
-                   label=f"RX_ALIGNED at {align_time_ns} ns")
-    ax.set_xlabel("sim time (ns)")
-    ax.set_ylabel("cumulative events decoded")
-    ax.set_title("aclk_gt_frame_gen -> ACLK_RCV loopback: decoded events vs time")
-    ax.legend(loc="upper left")
-    ax.grid(True, alpha=0.3)
-
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "aclkgt_gen_loop_events.png"
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=120)
-    plt.close(fig)
-    cocotb.log.info(f"plot saved to {out_path}")
+    out_path = (Path(__file__).resolve().parents[2]
+                / "sim_build" / "aclkgt_gen_loop" / "plots"
+                / "aclkgt_gen_loop_events.png")
+    result = save_cumulative_plot(times_ns, cumulative_decoded,
+                                  align_time_ns, out_path)
+    if result:
+        cocotb.log.info(f"plot saved to {result}")

@@ -52,3 +52,96 @@ def save_fifo_plot(series, n_events, title, out_path):
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
     return out_path
+
+
+def save_word_stream_plot(words, out_path):
+    """Write a two-panel DATA16 value + K_OUT flag vs sample index plot.
+
+    Parameters
+    ----------
+    words    : list of (word16, k2) samples captured from the generator
+    out_path : Path (or str) -- destination .png file; parent dirs are created
+
+    Comma positions (K=01, low byte 0xBC) are marked with vertical lines.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:                        # noqa: BLE001
+        warnings.warn(f"matplotlib unavailable, skipping plot: {exc}")
+        return None
+
+    indices = list(range(len(words)))
+    values  = [w for w, _k in words]
+    kflags  = [k for _w, k in words]
+    commas  = [i for i, (w, k) in enumerate(words)
+               if k == 0b01 and (w & 0xFF) == 0xBC]
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
+
+    ax1.step(indices, values, where="post", color="tab:blue", lw=1.4)
+    for c in commas:
+        ax1.axvline(c, color="tab:red", lw=0.8, alpha=0.7, linestyle="--")
+    ax1.set_ylabel("DATA16 (hex)")
+    ax1.yaxis.set_major_formatter(
+        plt.FuncFormatter(lambda v, _: f"0x{int(v):04X}"))
+    ax1.set_title(
+        "aclk_gt_frame_gen word stream (red = comma word boundary)")
+    ax1.grid(True, alpha=0.3)
+
+    ax2.step(indices, kflags, where="post", color="tab:orange", lw=1.4)
+    for c in commas:
+        ax2.axvline(c, color="tab:red", lw=0.8, alpha=0.7, linestyle="--")
+    ax2.set_ylabel("K_OUT")
+    ax2.set_xlabel("sample index (clock cycle)")
+    ax2.set_ylim(-0.1, 1.1)
+    ax2.grid(True, alpha=0.3)
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+    return out_path
+
+
+def save_cumulative_plot(times_ns, cumulative_decoded, align_time_ns,
+                         out_path):
+    """Write a cumulative-decoded-events vs sim-time plot.
+
+    Parameters
+    ----------
+    times_ns           : list of sim timestamps in nanoseconds
+    cumulative_decoded : list of cumulative event counts (same length)
+    align_time_ns      : sim time (ns) when RX first aligned, or None
+    out_path           : Path (or str) -- destination .png file; parent dirs
+                         are created
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:                        # noqa: BLE001
+        warnings.warn(f"matplotlib unavailable, skipping plot: {exc}")
+        return None
+
+    fig, ax = plt.subplots(figsize=(11, 5))
+    ax.plot(times_ns, cumulative_decoded, color="tab:blue", lw=1.6,
+            label="cumulative decoded events")
+    if align_time_ns is not None:
+        ax.axvline(align_time_ns, color="tab:red", lw=1.2, linestyle="--",
+                   label=f"RX_ALIGNED at {align_time_ns} ns")
+    ax.set_xlabel("sim time (ns)")
+    ax.set_ylabel("cumulative events decoded")
+    ax.set_title(
+        "aclk_gt_frame_gen -> ACLK_RCV loopback: decoded events vs time")
+    ax.legend(loc="upper left")
+    ax.grid(True, alpha=0.3)
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+    return out_path

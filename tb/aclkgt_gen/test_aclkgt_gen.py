@@ -11,6 +11,7 @@ from cocotb.triggers import RisingEdge, ClockCycles, Timer
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from aclk_tx_model import build_frame, frame_to_words  # noqa: E402
+from plot_util import save_word_stream_plot              # noqa: E402
 
 # Must match the RTL generator's compiled-in timeline (Step 3).
 TIMELINE = [(0x0001, 0x1111222233334444), (0x00A5, 0xAAAABBBBCCCCDDDD),
@@ -47,51 +48,10 @@ async def test_frame_gen_matches_model(dut):
     dut._log.info(f"frame_gen matches model over {len(EXPECTED_WORDS)} words")
 
     # Emit a word-stream plot (word value + K flag vs sample index).
-    _plot_word_stream(got[:s + len(EXPECTED_WORDS) + 6], s, out_dir=Path(__file__).resolve().parents[2]
-                      / "sim_build" / "aclkgt_gen" / "plots")
-
-
-def _plot_word_stream(words, comma_start, out_dir):
-    """Save a two-panel plot: DATA16 value and K_OUT flag vs sample index.
-    Comma positions (K=01, low byte 0xBC) are marked with vertical lines."""
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except Exception as exc:                            # noqa: BLE001
-        import warnings
-        warnings.warn(f"matplotlib unavailable, skipping plot: {exc}")
-        return
-
-    # Delegate to the shared utility if it has a word-stream helper,
-    # otherwise draw inline (no duplication in plot_util.py needed).
-    indices = list(range(len(words)))
-    values  = [w for w, _k in words]
-    kflags  = [k for _w, k in words]
-    commas  = [i for i, (w, k) in enumerate(words) if k == 0b01 and (w & 0xFF) == 0xBC]
-
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 6), sharex=True)
-
-    ax1.step(indices, values, where="post", color="tab:blue", lw=1.4)
-    for c in commas:
-        ax1.axvline(c, color="tab:red", lw=0.8, alpha=0.7, linestyle="--")
-    ax1.set_ylabel("DATA16 (hex)")
-    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"0x{int(v):04X}"))
-    ax1.set_title("aclk_gt_frame_gen word stream (red = comma word boundary)")
-    ax1.grid(True, alpha=0.3)
-
-    ax2.step(indices, kflags, where="post", color="tab:orange", lw=1.4)
-    for c in commas:
-        ax2.axvline(c, color="tab:red", lw=0.8, alpha=0.7, linestyle="--")
-    ax2.set_ylabel("K_OUT")
-    ax2.set_xlabel("sample index (clock cycle)")
-    ax2.set_ylim(-0.1, 1.1)
-    ax2.grid(True, alpha=0.3)
-
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "aclkgt_gen_word_stream.png"
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=120)
-    plt.close(fig)
-    cocotb.log.info(f"plot saved to {out_path}")
+    plot_words = got[:s + len(EXPECTED_WORDS) + 6]
+    out_path = (Path(__file__).resolve().parents[2]
+                / "sim_build" / "aclkgt_gen" / "plots"
+                / "aclkgt_gen_word_stream.png")
+    result = save_word_stream_plot(plot_words, out_path)
+    if result:
+        cocotb.log.info(f"plot saved to {result}")

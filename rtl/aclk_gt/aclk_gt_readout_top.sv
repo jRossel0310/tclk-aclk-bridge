@@ -74,12 +74,7 @@ module aclk_gt_readout_top #(
     assign dbg_event_valid = aclk_valid;
 
     // ---- GT/decoder link-health diagnostic word (-> AXI 0xA0 DEBUG) ----
-    // {is_aligned, comma(diag[1]), 0, frame_count[28:0]} synced into the AXI domain.
-    logic [28:0] frame_count;
-    always_ff @(posedge rx_clk or negedge rx_rstn) begin
-        if (!rx_rstn) frame_count <= '0;
-        else if (aclk_valid) frame_count <= frame_count + 1'b1;
-    end
+    // {algn_s (bit31), 1'b0 (bit30), frame_count_dst[29:0]} synced into the AXI domain.
     wire [29:0] frame_count_dst;
     cdc_gray_count #(.W(30)) u_cnt_frames (
         .src_clk(rx_clk), .src_rstn(rx_rstn), .incr(aclk_valid),

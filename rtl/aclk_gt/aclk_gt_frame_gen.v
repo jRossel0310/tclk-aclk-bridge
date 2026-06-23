@@ -40,7 +40,14 @@ module aclk_gt_frame_gen #(
     output wire [1:0]  K_OUT,
     output reg         MARKER          // high for one cycle per DATA96_VALID
 );
+    // Guard: ev_rom/da_rom are hardcoded to 3 entries; N_EVENTS must equal 3.
+    generate
+        if (N_EVENTS != 3)
+            $error("aclk_gt_frame_gen: ev_rom/da_rom hardcoded to 3 entries; N_EVENTS must be 3");
+    endgenerate
+
     // ---- compiled-in timeline (MUST match tb/aclkgt_gen/test_aclkgt_gen.py TIMELINE) ----
+    // NOTE: this initial block must track N_EVENTS; update entries if N_EVENTS changes.
     reg [15:0] ev_rom [0:N_EVENTS-1];
     reg [63:0] da_rom [0:N_EVENTS-1];
     initial begin
