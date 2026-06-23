@@ -1,0 +1,215 @@
+// rtl/aclk_gt_rx_bd_top.v
+//
+// Milestone-1 RECEIVER BD-top: the GT transceiver in normal mode (loopback_in=000)
+// receiving a real gigabit-ACLK 8b10b stream off the SFP+ cage, decoded by ACLK_RCV
+// and read by the PS over AXI4-Lite. This is the M0 loopback top with the on-board
+// generator removed, loopback disabled, and the real SFP RX/TX pins exposed.
+//
+// The GT is duplex; its TX is driven idle (D0.0) and routed to the SFP TX pins (so
+// the far end can lock its CDR if desired), but carries no data. Data flows in on
+// the SFP RX pins -> GTH 8b10b decode + K28.5 comma align -> ACLK_RCV -> readout.
+//
+// Reset: ro_rstn = 2-FF sync-deassert in rx_usrclk2, gated on rstn & rx_active.
+// DEBUG word (0xA0): { rx_aligned[31], byteali[30], comma_seen[29], commadet_cnt[28:0] }
+//   - commadet_cnt climbs whenever the GT RX detects a comma -> live signal present.
+//   - byteali=1 -> GT byte-aligned; rx_aligned=1 -> ACLK_RCV locked; EVENT_COUNT = events.
+
+`timescale 1ns / 1ps
+
+module aclk_gt_rx_bd_top (
+    // GT reference clock differential pair (Y6/Y5, MGTREFCLK0_224, 156.25 MHz)
+    input  wire        gt_refclk_p,
+    input  wire        gt_refclk_n,
+
+    // GT serial - real SFP+ cage (RX = data in; TX = idle out)
+    input  wire        gt_rxp,
+    input  wire        gt_rxn,
+    output wire        gt_txp,
+    output wire        gt_txn,
+
+    // 50 MHz free-running clock for the GT reset controller (BD clk_wiz)
+    input  wire        freerun_50,
+
+    // PL reset (active-low, peripheral_aresetn, pl_clk0 domain)
+    input  wire        rstn,
+
+    output wire        dbg_hb,
+
+    // AXI4-Lite slave (PS clock)
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 s_axi_aclk CLK" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S_AXI, ASSOCIATED_RESET s_axi_aresetn" *)
+    input  wire        s_axi_aclk,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 s_axi_aresetn RST" *)
+    (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
+    input  wire        s_axi_aresetn,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI AWADDR" *)
+    input  wire [7:0]  s_axi_awaddr,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI AWVALID" *)
+    input  wire        s_axi_awvalid,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI AWREADY" *)
+    output wire        s_axi_awready,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI WDATA" *)
+    input  wire [31:0] s_axi_wdata,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI WSTRB" *)
+    input  wire [3:0]  s_axi_wstrb,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI WVALID" *)
+    input  wire        s_axi_wvalid,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI WREADY" *)
+    output wire        s_axi_wready,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI BRESP" *)
+    output wire [1:0]  s_axi_bresp,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI BVALID" *)
+    output wire        s_axi_bvalid,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI BREADY" *)
+    input  wire        s_axi_bready,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI ARADDR" *)
+    input  wire [7:0]  s_axi_araddr,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI ARVALID" *)
+    input  wire        s_axi_arvalid,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI ARREADY" *)
+    output wire        s_axi_arready,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI RDATA" *)
+    output wire [31:0] s_axi_rdata,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI RRESP" *)
+    output wire [1:0]  s_axi_rresp,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI RVALID" *)
+    output wire        s_axi_rvalid,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI RREADY" *)
+    input  wire        s_axi_rready
+);
+
+    // ---- GT refclk buffer ----
+    wire gt_refclk;
+    IBUFDS_GTE4 #(.REFCLK_HROW_CK_SEL(2'b00)) u_ibufds_refclk (
+        .I(gt_refclk_p), .IB(gt_refclk_n), .CEB(1'b0), .O(gt_refclk), .ODIV2());
+
+    // ---- GT transceiver (normal mode, real SFP RX) ----
+    wire        rx_usrclk2;
+    wire        rx_active, tx_active;
+    wire        tx_done, rx_done;
+    wire [15:0] rx_data16;
+    wire [7:0]  rxctrl2;
+    wire        rx_commadet, rx_byteali;
+
+    aclkgt_gt u_gt (
+        .gtwiz_userclk_tx_reset_in          (1'b0),
+        .gtwiz_userclk_rx_reset_in          (1'b0),
+        .gtwiz_userclk_tx_srcclk_out        (),
+        .gtwiz_userclk_tx_usrclk_out        (),
+        .gtwiz_userclk_tx_usrclk2_out       (),
+        .gtwiz_userclk_tx_active_out        (tx_active),
+        .gtwiz_userclk_rx_srcclk_out        (),
+        .gtwiz_userclk_rx_usrclk_out        (),
+        .gtwiz_userclk_rx_usrclk2_out       (rx_usrclk2),
+        .gtwiz_userclk_rx_active_out        (rx_active),
+        .gtwiz_reset_clk_freerun_in         (freerun_50),
+        .gtwiz_reset_all_in                 (~rstn),
+        .gtwiz_reset_tx_pll_and_datapath_in (1'b0),
+        .gtwiz_reset_tx_datapath_in         (1'b0),
+        .gtwiz_reset_rx_pll_and_datapath_in (1'b0),
+        .gtwiz_reset_rx_datapath_in         (1'b0),
+        .gtwiz_reset_rx_cdr_stable_out      (),
+        .gtwiz_reset_tx_done_out            (tx_done),
+        .gtwiz_reset_rx_done_out            (rx_done),
+        .gtwiz_userdata_tx_in               (16'h0000),    // TX idle (no data on this board)
+        .gtwiz_userdata_rx_out              (rx_data16),
+        .gtrefclk00_in                      (gt_refclk),
+        .qpll0outclk_out                    (),
+        .qpll0outrefclk_out                 (),
+        .gthrxn_in                          (gt_rxn),      // real SFP RX
+        .gthrxp_in                          (gt_rxp),
+        .gthtxn_out                         (gt_txn),      // SFP TX (idle)
+        .gthtxp_out                         (gt_txp),
+        .loopback_in                        (3'b000),      // normal (no loopback)
+        .tx8b10ben_in                       (1'b1),
+        .rx8b10ben_in                       (1'b1),
+        .rxcommadeten_in                    (1'b1),
+        .rxmcommaalignen_in                 (1'b1),
+        .rxpcommaalignen_in                 (1'b1),
+        .txctrl0_in                         (16'b0),
+        .txctrl1_in                         (16'b0),
+        .txctrl2_in                         (8'b0),
+        .rxctrl0_out                        (),
+        .rxctrl1_out                        (),
+        .rxctrl2_out                        (rxctrl2),
+        .rxctrl3_out                        (),
+        .gtpowergood_out                    (),
+        .rxbyteisaligned_out                (rx_byteali),
+        .rxbyterealign_out                  (),
+        .rxcommadet_out                     (rx_commadet),
+        .rxpmaresetdone_out                 (),
+        .txpmaresetdone_out                 ()
+    );
+
+    // ---- RX-domain reset (async-assert, sync-deassert; gated on rstn & rx_active) ----
+    reg rx_rstn_ff1 = 1'b0, rx_rstn_ff2 = 1'b0;
+    wire ro_rstn_pre = rstn & rx_active;
+    always @(posedge rx_usrclk2 or negedge ro_rstn_pre) begin
+        if (!ro_rstn_pre) begin rx_rstn_ff1 <= 1'b0; rx_rstn_ff2 <= 1'b0; end
+        else begin rx_rstn_ff1 <= 1'b1; rx_rstn_ff2 <= rx_rstn_ff1; end
+    end
+    wire ro_rstn = rx_rstn_ff2;
+
+    wire rx_aligned_w;
+    wire link_ready = tx_done & rx_done;
+
+    // ---- GT-health DEBUG word (-> readout 0xA0), synchronized into the AXI domain ----
+    //   { rx_aligned[31], byteali[30], comma_seen[29], commadet_cnt[28:0] }
+    wire [28:0] commadet_cnt;
+    cdc_gray_count #(.W(29)) u_cnt_commadet (
+        .src_clk(rx_usrclk2), .src_rstn(ro_rstn), .incr(rx_commadet),
+        .dst_clk(s_axi_aclk), .count_dst(commadet_cnt));
+
+    reg commaever_r = 1'b0;
+    always @(posedge rx_usrclk2 or negedge ro_rstn) begin
+        if (!ro_rstn) commaever_r <= 1'b0;
+        else if (rx_commadet) commaever_r <= 1'b1;
+    end
+
+    reg ba_m=0, ba_s=0, al_m=0, al_s=0, ce_m=0, ce_s=0;
+    always @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
+        if (!s_axi_aresetn) begin
+            ba_m<=0; ba_s<=0; al_m<=0; al_s<=0; ce_m<=0; ce_s<=0;
+        end else begin
+            ba_m<=rx_byteali;   ba_s<=ba_m;
+            al_m<=rx_aligned_w; al_s<=al_m;
+            ce_m<=commaever_r;  ce_s<=ce_m;
+        end
+    end
+    wire [31:0] dbg_word = {al_s, ba_s, ce_s, commadet_cnt};
+
+    // ---- readout (RX domain + AXI) ----
+    aclk_gt_readout_top #(.ADDR_WIDTH(6), .AXI_ADDR_W(8)) u_ro (
+        .rx_clk         (rx_usrclk2),
+        .rx_rstn        (ro_rstn),
+        .pps            (1'b0),
+        .data_from_xcvr (rx_data16),
+        .k_from_xcvr    (rxctrl2[1:0]),
+        .mmcm_locked    (link_ready),
+        .dbg_word_in    (dbg_word),
+        .rx_aligned     (rx_aligned_w),
+        .dbg_event_valid(),
+        .dbg_hb         (dbg_hb),
+        .dropped_null   (),
+        .s_axi_aclk    (s_axi_aclk),
+        .s_axi_aresetn (s_axi_aresetn),
+        .s_axi_awaddr  (s_axi_awaddr),
+        .s_axi_awvalid (s_axi_awvalid),
+        .s_axi_awready (s_axi_awready),
+        .s_axi_wdata   (s_axi_wdata),
+        .s_axi_wstrb   (s_axi_wstrb),
+        .s_axi_wvalid  (s_axi_wvalid),
+        .s_axi_wready  (s_axi_wready),
+        .s_axi_bresp   (s_axi_bresp),
+        .s_axi_bvalid  (s_axi_bvalid),
+        .s_axi_bready  (s_axi_bready),
+        .s_axi_araddr  (s_axi_araddr),
+        .s_axi_arvalid (s_axi_arvalid),
+        .s_axi_arready (s_axi_arready),
+        .s_axi_rdata   (s_axi_rdata),
+        .s_axi_rresp   (s_axi_rresp),
+        .s_axi_rvalid  (s_axi_rvalid),
+        .s_axi_rready  (s_axi_rready)
+    );
+
+endmodule

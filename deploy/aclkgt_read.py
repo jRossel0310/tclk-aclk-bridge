@@ -100,30 +100,22 @@ def read_event():
     return event, flags, data, ts
 
 def stats_line():
-    # M0 bring-up DEBUG word (0xA0), round 3 - SNAPSHOT the decoded K-char byte:
-    #   [7:0]   kbyte    = value of the first K char the GT RX decoded (0xBC == K28.5)
-    #   [15:8]  kchar    = K-char decode count (8b, wraps; TX/decode alive?)
-    #   [19]    klane    = byte lane of that K char (0=low, 1=high)
-    #   [20]    kbvalid  = a K char was captured
-    #   [21]    commaever= GT ever decoded a comma char (sticky)
-    #   [22]    byteali  = GT RX byte-aligned
-    #   [23]    rcv_algn = ACLK_RCV comma-aligned
-    #   [31:24] gen      = generator frame count (8b, wraps; TX alive?)
-    # kbyte==0xBC -> K28.5 on the wire -> comma-detect config; else wrong byte K-flagged.
+    # GT-link health DEBUG word (0xA0), receiver build:
+    #   [28:0]  commadet = GT RX comma-detect count (climbs => live aligned signal)
+    #   [29]    commaever= GT ever detected a comma (sticky)
+    #   [30]    byteali  = GT RX byte-aligned
+    #   [31]    rcv_algn = ACLK_RCV comma-aligned (decoder locked)
+    # EVENT_COUNT (separate reg) is the decoded-event count; ERROR_COUNT = bad-CRC frames.
     dbg = rd(DEBUG)
-    kbyte = dbg & 0xFF
-    kchar = (dbg >> 8) & 0xFF
-    klane = (dbg >> 19) & 1
-    kbvalid = (dbg >> 20) & 1
-    commaever = (dbg >> 21) & 1
-    byteali = (dbg >> 22) & 1
-    rcv_algn = (dbg >> 23) & 1
-    gen = (dbg >> 24) & 0xFF
-    return ("[stats] EVT=%d ERR=%d | gen=%d kchar=%d kbyte=0x%02X klane=%d kbvalid=%d "
-            "commaever=%d byteali=%d rcv_aligned=%d | dbg=0x%08X lock=%d") % (
-        rd(EVENT_COUNT), rd(ERROR_COUNT),
-        gen, kchar, kbyte, klane, kbvalid, commaever, byteali, rcv_algn,
-        dbg, rd(LOCK) & 1)
+    commadet = dbg & 0x1FFFFFFF
+    commaever = (dbg >> 29) & 1
+    byteali = (dbg >> 30) & 1
+    rcv_algn = (dbg >> 31) & 1
+    return ("[stats] EVT=%d NULL=%d ERR=%d FILT=%d | commadet=%d commaever=%d byteali=%d "
+            "rcv_aligned=%d | dbg=0x%08X hb=%d lock=%d") % (
+        rd(EVENT_COUNT), rd(NULL_COUNT), rd(ERROR_COUNT), rd(FILTERED_COUNT),
+        commadet, commaever, byteali, rcv_algn,
+        dbg, rd(HEARTBEAT), rd(LOCK) & 1)
 
 def probe():
     """One-time startup read of each register, announced BEFORE each access, then a
