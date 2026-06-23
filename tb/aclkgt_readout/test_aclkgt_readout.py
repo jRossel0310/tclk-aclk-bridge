@@ -157,7 +157,7 @@ async def test_gt_readout_bad_crc(dut):
     # Stream alignment frames and the corrupt batch as one continuous burst so the
     # gearbox word stream never has a multi-cycle gap. corrupt_at=21 = the 22nd frame
     # (0-indexed): 0-20 good, 21 corrupt (bad CRC), 22-23 good.
-    await stream_frames(dut, [good], repeat=24, corrupt_at=21)
+    await stream_frames(dut, [good], repeat=24, corrupt_at=21)  # frame 21 is past the 5-frame alignment window, so the error is counted not suppressed
     stop = {"done": False}
     cocotb.start_soon(_idle_carrier(dut, stop))
     # Use only AXI cycles for settle: the idle carrier takes the very next CLK1 edge
@@ -174,6 +174,10 @@ async def test_gt_readout_bad_crc(dut):
         if (await axi_read(dut, STATUS)) & 0x1:
             break
         collected.append(await axi_read_event(dut))
+    # 16 aligned clean events (frames 5-20) + 2 post-corrupt clean events (frames 22-23) = 18.
+    # Frames 0-4 build ACLK_RCV's 5-good-frame alignment window (no VALID until aligned);
+    # frame 21 is the injected corrupt frame and is dropped (counted in ERROR_COUNT, never an event).
+    assert len(collected) == 18, f"expected 18 decoded clean frames, got {len(collected)}"
     stop["done"] = True
 
     err1 = await axi_read(dut, ERROR_COUNT)
