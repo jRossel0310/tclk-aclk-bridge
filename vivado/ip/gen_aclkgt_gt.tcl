@@ -60,6 +60,31 @@ puts "=== verify stage 2 ==="
 expect_cfg $ip_name LOCATE_TX_USER_CLOCKING CORE
 expect_cfg $ip_name LOCATE_RX_USER_CLOCKING CORE
 
+# --- Stage 2b: ENABLE K28.5 comma detection + alignment ---
+# Without this the IP defaults comma detect to OFF (P/M_ENABLE=false, MASK=0), so the
+# RX never detects the 0xBC (K28.5) comma, never byte-aligns, and decodes garbage.
+# Values 0101111100 / 1010000011 are the standard UltraScale K28.5 P/M comma codes.
+set_property -dict [list \
+    CONFIG.RX_COMMA_P_ENABLE      {true} \
+    CONFIG.RX_COMMA_M_ENABLE      {true} \
+    CONFIG.RX_COMMA_P_VAL         {0101111100} \
+    CONFIG.RX_COMMA_M_VAL         {1010000011} \
+    CONFIG.RX_COMMA_MASK          {1111111111} \
+    CONFIG.RX_COMMA_DOUBLE_ENABLE {false} \
+    CONFIG.RX_COMMA_ALIGN_WORD    {1} \
+] [get_ips $ip_name]
+puts "=== verify stage 2b (comma) ==="
+expect_cfg $ip_name RX_COMMA_P_ENABLE true
+expect_cfg $ip_name RX_COMMA_M_ENABLE true
+# the EFFECTIVE generated enable must be 1 (the .xci's C_* value is what the core uses)
+set cpe [get_property CONFIG.C_RX_COMMA_P_ENABLE [get_ips $ip_name]]
+set cme [get_property CONFIG.C_RX_COMMA_M_ENABLE [get_ips $ip_name]]
+if {$cpe ne "1" || $cme ne "1"} {
+    puts "FATAL: comma detect NOT effectively enabled (C_RX_COMMA_P_ENABLE=$cpe C_RX_COMMA_M_ENABLE=$cme)"
+    exit 1
+}
+puts "  OK C_RX_COMMA_P_ENABLE=$cpe C_RX_COMMA_M_ENABLE=$cme"
+
 # --- Stage 3: optional ports (loopback + 8b10b enables + comma + status) ---
 # ctrl0/1/2/3 are auto-exposed by 8B10B; we enable loopback, the enable strobes,
 # the comma-align enables, the byte-alignment/comma-detect status, and powergood.
