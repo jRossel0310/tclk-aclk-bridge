@@ -25,6 +25,7 @@ module aclk_gt_readout_top #(
     input  logic [15:0] data_from_xcvr,
     input  logic [1:0]  k_from_xcvr,
     input  logic        mmcm_locked,       // GT/MMCM locked (async) -> AXI 0xC0 LOCK
+    input  logic [31:0] dbg_word_in,        // caller-formed DEBUG word (0xA0), AXI-domain
     output logic        rx_aligned,         // ACLK_RCV comma alignment (debug/bring-up)
     output logic        dbg_event_valid,    // decoder valid pulse (debug/plot)
     output logic        dbg_hb,
@@ -73,18 +74,10 @@ module aclk_gt_readout_top #(
 
     assign dbg_event_valid = aclk_valid;
 
-    // ---- GT/decoder link-health diagnostic word (-> AXI 0xA0 DEBUG) ----
-    // {algn_s (bit31), 1'b0 (bit30), frame_count_dst[29:0]} synced into the AXI domain.
-    wire [29:0] frame_count_dst;
-    cdc_gray_count #(.W(30)) u_cnt_frames (
-        .src_clk(rx_clk), .src_rstn(rx_rstn), .incr(aclk_valid),
-        .dst_clk(s_axi_aclk), .count_dst(frame_count_dst));
-    logic algn_m, algn_s;
-    always_ff @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
-        if (!s_axi_aresetn) begin algn_m <= 1'b0; algn_s <= 1'b0; end
-        else begin algn_m <= rx_aligned; algn_s <= algn_m; end
-    end
-    wire [31:0] aclkgt_dbg_word = {algn_s, 1'b0, frame_count_dst};
+    // ---- DEBUG word (AXI 0xA0) is formed by the caller. The GT integration top
+    // owns the GT RX status (comma-detect, byte-aligned) and the TX-domain
+    // generator marker, so it packs the diagnostic word and passes it in already
+    // synchronized to the AXI clock domain. ----
 
     // ---- adapter: every packet carries 64-bit data ----
     wire [15:0] adapt_flags = 16'h0001;   // bit0 has_data=1, bit1 is_tclk=0
@@ -103,7 +96,7 @@ module aclk_gt_readout_top #(
         .flags         (adapt_flags),
         .aclk_error    (aclk_error),
         .dropped_null  (dropped_null),
-        .dbg_word      (aclkgt_dbg_word),
+        .dbg_word      (dbg_word_in),
         .mmcm_locked   (mmcm_locked),
         .dbg_hb        (dbg_hb),
         .s_axi_aclk    (s_axi_aclk),

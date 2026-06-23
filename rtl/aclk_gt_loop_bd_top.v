@@ -127,6 +127,10 @@ module aclk_gt_loop_bd_top (
     wire [15:0] rx_data16;
     wire [7:0]  rxctrl2;
 
+    // GT RX status (rx_usrclk2 domain): comma-detect pulse + byte-aligned level
+    wire rx_commadet;
+    wire rx_byteali;
+
     aclkgt_gt u_gt (
         // clocking helper resets (tie 0 - shared-logic-in-core handles internally)
         .gtwiz_userclk_tx_reset_in              (1'b0),
@@ -181,11 +185,11 @@ module aclk_gt_loop_bd_top (
         .rxctrl1_out                            (),
         .rxctrl2_out                            (rxctrl2),
         .rxctrl3_out                            (),
-        // status outputs (unused in M0)
+        // status outputs (diagnostics surfaced into the DEBUG word)
         .gtpowergood_out                        (),
-        .rxbyteisaligned_out                    (),
+        .rxbyteisaligned_out                    (rx_byteali),
         .rxbyterealign_out                      (),
-        .rxcommadet_out                         (),
+        .rxcommadet_out                         (rx_commadet),
         .rxpmaresetdone_out                     (),
         .txpmaresetdone_out                     ()
     );
@@ -229,18 +233,52 @@ module aclk_gt_loop_bd_top (
     // -------------------------------------------------------------------------
     // 4. Frame generator (TX domain)
     // -------------------------------------------------------------------------
+    wire gen_marker;   // one pulse per emitted frame (tx_usrclk2 domain)
     aclk_gt_frame_gen #(.N_EVENTS(3)) u_gen (
         .CLK1    (tx_usrclk2),
         .RESETn  (gen_rstn),
         .DATA16  (gen_data16),
         .K_OUT   (gen_k),
-        .MARKER  ()
+        .MARKER  (gen_marker)
     );
 
     // -------------------------------------------------------------------------
     // 5. Link-ready (TX & RX done, used as mmcm_locked proxy for the readout)
     // -------------------------------------------------------------------------
     wire link_ready = tx_done & rx_done;
+
+    // -------------------------------------------------------------------------
+    // 5b. Bring-up DEBUG word (-> readout 0xA0), formed here and synchronized into
+    //     the AXI (s_axi_aclk) domain. Localizes where the chain stalls:
+    //       [14:0]  marker_dst    = frames the generator has emitted (TX alive?)
+    //       [29:15] commadet_dst  = commas the GT RX has detected (loopback+8b10b ok?)
+    //       [30]    byteali_s     = GT RX byte-aligned
+    //       [31]    algn_s        = ACLK_RCV comma-aligned (decoder locked?)
+    // -------------------------------------------------------------------------
+    wire rx_aligned_w;
+
+    wire [14:0] marker_dst;
+    cdc_gray_count #(.W(15)) u_cnt_marker (
+        .src_clk(tx_usrclk2), .src_rstn(gen_rstn), .incr(gen_marker),
+        .dst_clk(s_axi_aclk), .count_dst(marker_dst));
+
+    wire [14:0] commadet_dst;
+    cdc_gray_count #(.W(15)) u_cnt_commadet (
+        .src_clk(rx_usrclk2), .src_rstn(ro_rstn), .incr(rx_commadet),
+        .dst_clk(s_axi_aclk), .count_dst(commadet_dst));
+
+    reg byteali_m = 1'b0, byteali_s = 1'b0;
+    reg algn_m = 1'b0, algn_s = 1'b0;
+    always @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
+        if (!s_axi_aresetn) begin
+            byteali_m <= 1'b0; byteali_s <= 1'b0;
+            algn_m    <= 1'b0; algn_s    <= 1'b0;
+        end else begin
+            byteali_m <= rx_byteali; byteali_s <= byteali_m;
+            algn_m    <= rx_aligned_w; algn_s  <= algn_m;
+        end
+    end
+    wire [31:0] dbg_word = {algn_s, byteali_s, commadet_dst, marker_dst};
 
     // -------------------------------------------------------------------------
     // 6. GT readout top (RX domain + AXI pass-through)
@@ -255,7 +293,8 @@ module aclk_gt_loop_bd_top (
         .data_from_xcvr (rx_data16),
         .k_from_xcvr    (rxctrl2[1:0]),
         .mmcm_locked    (link_ready),
-        .rx_aligned     (),
+        .dbg_word_in    (dbg_word),
+        .rx_aligned     (rx_aligned_w),
         .dbg_event_valid(),
         .dbg_hb         (dbg_hb),
         .dropped_null   (),

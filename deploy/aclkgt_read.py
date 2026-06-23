@@ -100,11 +100,21 @@ def read_event():
     return event, flags, data, ts
 
 def stats_line():
+    # M0 bring-up DEBUG word (0xA0), formed by the GT BD-top and synced to AXI:
+    #   [14:0]  gen      = frames the on-board generator has emitted (TX alive?)
+    #   [29:15] commadet = commas the GT RX has detected (loopback + 8b10b ok?)
+    #   [30]    byteali  = GT RX byte-aligned
+    #   [31]    rcv_algn = ACLK_RCV comma-aligned (decoder locked?)
     dbg = rd(DEBUG)
-    return "[stats] EVT=%d NULL=%d ERR=%d FILT=%d | line_edges=%d level=%d | hb=%d lock=%d" % (
+    gen = dbg & 0x7FFF
+    commadet = (dbg >> 15) & 0x7FFF
+    byteali = (dbg >> 30) & 1
+    rcv_algn = (dbg >> 31) & 1
+    return ("[stats] EVT=%d NULL=%d ERR=%d FILT=%d | gen=%d commadet=%d byteali=%d "
+            "rcv_aligned=%d | dbg=0x%08X hb=%d lock=%d") % (
         rd(EVENT_COUNT), rd(NULL_COUNT), rd(ERROR_COUNT), rd(FILTERED_COUNT),
-        dbg & 0x3FFFFFFF, (dbg >> 30) & 1,
-        rd(HEARTBEAT), rd(LOCK) & 1)
+        gen, commadet, byteali, rcv_algn,
+        dbg, rd(HEARTBEAT), rd(LOCK) & 1)
 
 def probe():
     """One-time startup read of each register, announced BEFORE each access, then a
