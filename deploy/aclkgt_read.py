@@ -100,20 +100,24 @@ def read_event():
     return event, flags, data, ts
 
 def stats_line():
-    # M0 bring-up DEBUG word (0xA0), formed by the GT BD-top and synced to AXI:
-    #   [14:0]  gen      = frames the on-board generator has emitted (TX alive?)
-    #   [29:15] commadet = commas the GT RX has detected (loopback + 8b10b ok?)
+    # M0 bring-up DEBUG word (0xA0), round 2 - look inside the GT 8b10b decode:
+    #   [9:0]   gen      = frames the on-board generator has emitted (TX alive?)
+    #   [19:10] comma    = bytes the GT RX decoded as a comma char (rxctrl2)
+    #   [29:20] kchar    = bytes the GT RX decoded as a K char (rxctrl0)
     #   [30]    byteali  = GT RX byte-aligned
     #   [31]    rcv_algn = ACLK_RCV comma-aligned (decoder locked?)
+    # kchar=0 -> K never decoded (K not transmitted); kchar>0,comma=0 -> comma cfg;
+    # comma>0,rcv_aligned=0 -> data/CRC/byte-order into ACLK_RCV. (counters are 10-bit, wrap.)
     dbg = rd(DEBUG)
-    gen = dbg & 0x7FFF
-    commadet = (dbg >> 15) & 0x7FFF
+    gen = dbg & 0x3FF
+    comma = (dbg >> 10) & 0x3FF
+    kchar = (dbg >> 20) & 0x3FF
     byteali = (dbg >> 30) & 1
     rcv_algn = (dbg >> 31) & 1
-    return ("[stats] EVT=%d NULL=%d ERR=%d FILT=%d | gen=%d commadet=%d byteali=%d "
+    return ("[stats] EVT=%d NULL=%d ERR=%d FILT=%d | gen=%d kchar=%d comma=%d byteali=%d "
             "rcv_aligned=%d | dbg=0x%08X hb=%d lock=%d") % (
         rd(EVENT_COUNT), rd(NULL_COUNT), rd(ERROR_COUNT), rd(FILTERED_COUNT),
-        gen, commadet, byteali, rcv_algn,
+        gen, kchar, comma, byteali, rcv_algn,
         dbg, rd(HEARTBEAT), rd(LOCK) & 1)
 
 def probe():

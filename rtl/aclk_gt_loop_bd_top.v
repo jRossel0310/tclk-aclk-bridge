@@ -130,6 +130,7 @@ module aclk_gt_loop_bd_top (
     // GT RX status (rx_usrclk2 domain): comma-detect pulse + byte-aligned level
     wire rx_commadet;
     wire rx_byteali;
+    wire [15:0] rxctrl0_w;   // rxcharisk: GT 8b10b K-char indicator per byte
 
     aclkgt_gt u_gt (
         // clocking helper resets (tie 0 - shared-logic-in-core handles internally)
@@ -181,9 +182,9 @@ module aclk_gt_loop_bd_top (
         .txctrl1_in                             (16'b0),
         .txctrl2_in                             ({6'b0, gen_k}),
         // RX ctrl outputs
-        .rxctrl0_out                            (),
+        .rxctrl0_out                            (rxctrl0_w),   // rxcharisk (K-char per byte)
         .rxctrl1_out                            (),
-        .rxctrl2_out                            (rxctrl2),
+        .rxctrl2_out                            (rxctrl2),     // rxchariscomma (comma per byte)
         .rxctrl3_out                            (),
         // status outputs (diagnostics surfaced into the DEBUG word)
         .gtpowergood_out                        (),
@@ -249,23 +250,37 @@ module aclk_gt_loop_bd_top (
 
     // -------------------------------------------------------------------------
     // 5b. Bring-up DEBUG word (-> readout 0xA0), formed here and synchronized into
-    //     the AXI (s_axi_aclk) domain. Localizes where the chain stalls:
-    //       [14:0]  marker_dst    = frames the generator has emitted (TX alive?)
-    //       [29:15] commadet_dst  = commas the GT RX has detected (loopback+8b10b ok?)
+    //     the AXI (s_axi_aclk) domain. Round 2: gen runs + lock=1 but commadet=0,
+    //     so look one layer deeper at the GT 8b10b decode:
+    //       [9:0]   marker_dst    = frames the generator has emitted (TX alive?)
+    //       [19:10] commachar_dst = bytes the GT RX decoded as a comma char (rxctrl2)
+    //       [29:20] kchar_dst     = bytes the GT RX decoded as a K char    (rxctrl0)
     //       [30]    byteali_s     = GT RX byte-aligned
     //       [31]    algn_s        = ACLK_RCV comma-aligned (decoder locked?)
+    //   kchar=0          -> no K char ever decoded -> K not transmitted (TX K-bit/byte map)
+    //   kchar>0,comma=0  -> K decoded but not as comma -> comma value/config
+    //   comma>0,algn=0   -> comma chars reach ACLK_RCV -> data/CRC/byte-order in decoder
     // -------------------------------------------------------------------------
     wire rx_aligned_w;
 
-    wire [14:0] marker_dst;
-    cdc_gray_count #(.W(15)) u_cnt_marker (
+    wire [9:0] marker_dst;
+    cdc_gray_count #(.W(10)) u_cnt_marker (
         .src_clk(tx_usrclk2), .src_rstn(gen_rstn), .incr(gen_marker),
         .dst_clk(s_axi_aclk), .count_dst(marker_dst));
 
-    wire [14:0] commadet_dst;
-    cdc_gray_count #(.W(15)) u_cnt_commadet (
-        .src_clk(rx_usrclk2), .src_rstn(ro_rstn), .incr(rx_commadet),
-        .dst_clk(s_axi_aclk), .count_dst(commadet_dst));
+    // GT 8b10b decode activity (rx_usrclk2 domain): any K char / any comma char this cycle
+    wire kchar_pulse    = |rxctrl0_w[1:0];
+    wire commachar_pulse = |rxctrl2[1:0];
+
+    wire [9:0] kchar_dst;
+    cdc_gray_count #(.W(10)) u_cnt_kchar (
+        .src_clk(rx_usrclk2), .src_rstn(ro_rstn), .incr(kchar_pulse),
+        .dst_clk(s_axi_aclk), .count_dst(kchar_dst));
+
+    wire [9:0] commachar_dst;
+    cdc_gray_count #(.W(10)) u_cnt_commachar (
+        .src_clk(rx_usrclk2), .src_rstn(ro_rstn), .incr(commachar_pulse),
+        .dst_clk(s_axi_aclk), .count_dst(commachar_dst));
 
     reg byteali_m = 1'b0, byteali_s = 1'b0;
     reg algn_m = 1'b0, algn_s = 1'b0;
@@ -278,7 +293,7 @@ module aclk_gt_loop_bd_top (
             algn_m    <= rx_aligned_w; algn_s  <= algn_m;
         end
     end
-    wire [31:0] dbg_word = {algn_s, byteali_s, commadet_dst, marker_dst};
+    wire [31:0] dbg_word = {algn_s, byteali_s, kchar_dst, commachar_dst, marker_dst};
 
     // -------------------------------------------------------------------------
     // 6. GT readout top (RX domain + AXI pass-through)
