@@ -37,3 +37,8 @@ vivado/ip/*.log
 vivado/ip/*.jou
 vivado_*.backup.jou
 vivado_*.backup.log
+vivado/ip/aclkgt_gt/aclkgt_gt.bmj
+vivado/ip/aclkgt_gt/aclkgt_gt.vho
+vivado/ip/aclkgt_gt/aclkgt_gt_bmstub.v
+vivado/ip/aclkgt_gt/hdl/
+vivado/ip/aclkgt_gt/synth/
