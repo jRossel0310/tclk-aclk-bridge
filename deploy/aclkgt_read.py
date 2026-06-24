@@ -100,26 +100,26 @@ def read_event():
     return event, flags, data, ts
 
 def stats_line():
-    # GT-link health DEBUG word (0xA0), receiver build:
+    # GT-link health DEBUG word (0xA0), receiver build (RX buffer-bypass):
     #   [13:0]  commadet  = GT RX comma-detect count (14b, wraps)
     #   [27:14] disperr   = GT 8b10b disparity-error count (14b, wraps)
-    #   [28]    commalane = byte the comma lands in (0=low like loopback, 1=high)
-    #   [29]    commaever = GT ever detected a comma (sticky)
+    #   [28]    bb_error  = RX buffer-bypass phase-align ERRORED
+    #   [29]    bb_done   = RX buffer-bypass phase-align completed
     #   [30]    byteali   = GT RX byte-aligned
     #   [31]    rcv_algn  = ACLK_RCV comma-aligned (decoder locked)
-    # disperr ~ commadet rate -> constant corruption (signal/buffer); disperr<<commadet
-    # -> occasional slips; disperr~0 + commalane=1 -> frame-assembly (comma in high byte).
+    # With buffer bypass the RX runs on the recovered clock: disperr should now stay ~FLAT
+    # (no elastic-buffer slip). Want bb_done=1, bb_error=0, byteali=1, then rcv_aligned=1.
     dbg = rd(DEBUG)
     commadet = dbg & 0x3FFF
     disperr = (dbg >> 14) & 0x3FFF
-    commalane = (dbg >> 28) & 1
-    commaever = (dbg >> 29) & 1
+    bb_error = (dbg >> 28) & 1
+    bb_done = (dbg >> 29) & 1
     byteali = (dbg >> 30) & 1
     rcv_algn = (dbg >> 31) & 1
-    return ("[stats] EVT=%d NULL=%d ERR=%d FILT=%d | commadet=%d disperr=%d commalane=%d "
-            "commaever=%d byteali=%d rcv_aligned=%d | dbg=0x%08X lock=%d") % (
+    return ("[stats] EVT=%d NULL=%d ERR=%d FILT=%d | commadet=%d disperr=%d bb_done=%d "
+            "bb_error=%d byteali=%d rcv_aligned=%d | dbg=0x%08X lock=%d") % (
         rd(EVENT_COUNT), rd(NULL_COUNT), rd(ERROR_COUNT), rd(FILTERED_COUNT),
-        commadet, disperr, commalane, commaever, byteali, rcv_algn,
+        commadet, disperr, bb_done, bb_error, byteali, rcv_algn,
         dbg, rd(LOCK) & 1)
 
 def probe():

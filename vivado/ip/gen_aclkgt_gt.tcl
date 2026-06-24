@@ -60,6 +60,21 @@ puts "=== verify stage 2 ==="
 expect_cfg $ip_name LOCATE_TX_USER_CLOCKING CORE
 expect_cfg $ip_name LOCATE_RX_USER_CLOCKING CORE
 
+# --- Stage 2c: RX buffer BYPASS ---
+# The continuous gigabit-ACLK stream is received from a board with an INDEPENDENT
+# 156.25 MHz oscillator (no idle to clock-correct on). With the RX elastic buffer
+# (RX_BUFFER_MODE=1) it slips on the ppm offset -> disparity errors every frame.
+# Bypass it (RX_BUFFER_MODE=0) so the RX user logic runs on the recovered clock;
+# the in-core single-lane bypass controller does the phase-align + auto-retry.
+set_property CONFIG.RX_BUFFER_MODE {0} [get_ips $ip_name]
+set_property CONFIG.LOCATE_RX_BUFFER_BYPASS_CONTROLLER {CORE} [get_ips $ip_name]
+puts "=== verify stage 2c (rx buffer bypass) ==="
+expect_cfg $ip_name RX_BUFFER_MODE 0
+# RX_BUFFER_BYPASS_MODE stays MULTI for a single channel (IP-managed, not TCL-settable);
+# with one lane the bypass controller self-masters that channel.
+puts "  RX_BUFFER_BYPASS_MODE = [get_property CONFIG.RX_BUFFER_BYPASS_MODE [get_ips $ip_name]] (IP-managed)"
+expect_cfg $ip_name LOCATE_RX_BUFFER_BYPASS_CONTROLLER CORE
+
 # --- Stage 2b: ENABLE K28.5 comma detection + alignment ---
 # Without this the IP defaults comma detect to OFF (P/M_ENABLE=false, MASK=0), so the
 # RX never detects the 0xBC (K28.5) comma, never byte-aligns, and decodes garbage.
