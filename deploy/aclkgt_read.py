@@ -40,7 +40,7 @@ while _i < len(_args):
         _pos.append(_args[_i]); _i += 1
 DEV = _pos[0] if _pos else "/dev/uio4"
 DROP_CODES = parse_drop_codes(_drop_spec)
-GTCTRL = int(_gtctrl_spec, 0) if _gtctrl_spec is not None else None
+GTCTRL = int(_gtctrl_spec, 0) if _gtctrl_spec is not None else 0x00  # default: known normal state
 OFF = 0 if "uio" in DEV else 0x8000_0000
 
 # Registers spaced 16 BYTES apart (the hand-written AXI4-Lite slave only returns correct
@@ -104,7 +104,7 @@ def set_gt_ctrl(val):
     wr(GT_CTRL, val & ~0x100 & 0xFFFFFFFF)     # release: RX re-inits & re-aligns under new config
     time.sleep(0.10)
     rb = rd(GT_CTRL)
-    say("# GT_CTRL <- 0x%03X (rxpol=%d txpol=%d loopback=0b%03b), readback=0x%08X" % (
+    say("# GT_CTRL <- 0x%03X (rxpol=%d txpol=%d loopback=%d), readback=0x%08X" % (
         val, val & 1, (val >> 1) & 1, (val >> 2) & 7, rb))
 
 def read_event():
@@ -173,8 +173,7 @@ for _c in DROP_CODES:
     wr(FILTER_CFG, filter_cfg_word(_c))
 if DROP_CODES:
     say("# drop-mask: suppressing " + ", ".join("0x%02X" % c for c in DROP_CODES))
-if GTCTRL is not None:
-    set_gt_ctrl(GTCTRL)
+set_gt_ctrl(GTCTRL)   # always apply a known config (default 0x00 = normal) so a prior run can't bleed in
 
 say("# streaming gigabit ACLK / GT events from %s (offset 0x%x). Ctrl-C to stop." % (DEV, OFF))
 probe()
