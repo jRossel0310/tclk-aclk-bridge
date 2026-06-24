@@ -127,8 +127,8 @@ module aclk_gt_rx_bd_top (
         .tx8b10ben_in                       (1'b1),
         .rx8b10ben_in                       (1'b1),
         .rxcommadeten_in                    (1'b1),
-        .rxmcommaalignen_in                 (1'b1),
-        .rxpcommaalignen_in                 (1'b1),
+        .rxmcommaalignen_in                 (~rx_byteali), // align once then hold
+        .rxpcommaalignen_in                 (~rx_byteali),
         .txctrl0_in                         (16'b0),
         .txctrl1_in                         (16'b0),
         .txctrl2_in                         (8'b0),
