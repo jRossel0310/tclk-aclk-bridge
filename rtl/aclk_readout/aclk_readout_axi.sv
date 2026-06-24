@@ -53,6 +53,8 @@ module aclk_readout_axi #(
     input  logic [31:0]  dbg_word,         // RO debug word -> 0x28 (AXI-domain, caller-synced)
     input  logic         mmcm_locked,      // async MMCM locked; synced + read at 0x30
     output logic         dbg_hb,           // rx_heartbeat[12] -> pin: raw deep-cdc value probe
+    output logic [31:0]  gt_ctrl,          // RW GT control (0xF0): caller wires to GT static
+                                           // inputs ([0]=rxpolarity [1]=txpolarity [4:2]=loopback)
 
     // ---- AXI4-Lite slave (PS clock) ----
     input  logic                   s_axi_aclk,
@@ -209,6 +211,7 @@ module aclk_readout_axi #(
                 'd11: rdata_r <= rx_heartbeat;        // 0xB0: free-running clk_40m heartbeat
                 'd12: rdata_r <= {31'b0, lock_sync[1]}; // 0xC0: MMCM locked (synced)
                 'd14: rdata_r <= filtered_count;        // 0xE0: events dropped by the mask
+                'd15: rdata_r <= gt_ctrl_reg;           // 0xF0: GT control (RW, reads back)
                 default: rdata_r <= 32'b0;
             endcase
         end else if (rvalid_r && s_axi_rready) begin
@@ -234,6 +237,7 @@ module aclk_readout_axi #(
     logic awready_r, wready_r, bvalid_r;
     logic [AXI_ADDR_W-5:0] waddr_q;          // latched write reg-address (16-byte stride)
     logic [31:0] wdata_q;                    // latched write data (W may precede/follow AW)
+    logic [31:0] gt_ctrl_reg;                // GT static-control register (0xF0); set-and-leave
 
     always_ff @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
         if (!s_axi_aresetn) begin
@@ -244,6 +248,7 @@ module aclk_readout_axi #(
             waddr_q   <= '0;
             drop_mask <= '0;
             wdata_q   <= '0;
+            gt_ctrl_reg <= '0;
         end else begin
             pop <= 1'b0;
             if (s_axi_awvalid && awready_r) begin
@@ -260,6 +265,8 @@ module aclk_readout_axi #(
                     pop <= 1'b1;                       // POP @ 0x60
                 if (waddr_q == 'd13)
                     drop_mask[wdata_q[7:0]] <= wdata_q[8];  // FILTER_CFG @ 0xD0
+                if (waddr_q == 'd15)
+                    gt_ctrl_reg <= wdata_q;                 // GT_CTRL @ 0xF0
             end
             if (bvalid_r && s_axi_bready) begin
                 bvalid_r  <= 1'b0;
@@ -273,5 +280,6 @@ module aclk_readout_axi #(
     assign s_axi_wready  = wready_r;
     assign s_axi_bvalid  = bvalid_r;
     assign s_axi_bresp   = 2'b00;            // OKAY
+    assign gt_ctrl       = gt_ctrl_reg;
 
 endmodule

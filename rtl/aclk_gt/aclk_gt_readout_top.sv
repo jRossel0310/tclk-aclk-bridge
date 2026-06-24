@@ -30,6 +30,7 @@ module aclk_gt_readout_top #(
     output logic        dbg_event_valid,    // decoder valid pulse (debug/plot)
     output logic        dbg_hb,
     output logic        dropped_null,
+    output logic [31:0] gt_ctrl,            // GT static-control (0xF0) -> GT top (rxpol/loopback)
 
     // ---- AXI4-Lite slave (PS clock) ----
     input  logic                   s_axi_aclk,
@@ -99,6 +100,7 @@ module aclk_gt_readout_top #(
         .dbg_word      (dbg_word_in),
         .mmcm_locked   (mmcm_locked),
         .dbg_hb        (dbg_hb),
+        .gt_ctrl       (gt_ctrl),
         .s_axi_aclk    (s_axi_aclk),
         .s_axi_aresetn (s_axi_aresetn),
         .s_axi_awaddr  (s_axi_awaddr),

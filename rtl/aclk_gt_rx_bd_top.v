@@ -100,6 +100,8 @@ module aclk_gt_rx_bd_top (
     wire        rx_commadet, rx_byteali;
     wire        align_en;      // comma-align enable: on until first aligned, then latched off
     wire        bb_done, bb_error;   // RX buffer-bypass phase-align: done / errored
+    wire [31:0] gt_ctrl;             // runtime GT static-control (readout 0xF0):
+                                     //   [0]=rxpolarity [1]=txpolarity [4:2]=loopback_in [8]=rx re-init
 
     aclkgt_gt u_gt (
         .gtwiz_userclk_tx_reset_in          (1'b0),
@@ -117,7 +119,7 @@ module aclk_gt_rx_bd_top (
         .gtwiz_reset_tx_pll_and_datapath_in (1'b0),
         .gtwiz_reset_tx_datapath_in         (1'b0),
         .gtwiz_reset_rx_pll_and_datapath_in (1'b0),
-        .gtwiz_reset_rx_datapath_in         (1'b0),
+        .gtwiz_reset_rx_datapath_in         (gt_ctrl[8]),  // runtime RX re-init (apply pol)
         .gtwiz_reset_rx_cdr_stable_out      (),
         .gtwiz_reset_tx_done_out            (tx_done),
         .gtwiz_reset_rx_done_out            (rx_done),
@@ -134,9 +136,9 @@ module aclk_gt_rx_bd_top (
         .gthrxp_in                          (gt_rxp),
         .gthtxn_out                         (gt_txn),      // SFP TX (idle)
         .gthtxp_out                         (gt_txp),
-        .loopback_in                        (3'b000),      // normal (no loopback)
-        .rxpolarity_in                      (1'b0),        // no RX invert (polarity not the cause)
-        .txpolarity_in                      (1'b0),
+        .loopback_in                        (gt_ctrl[4:2]),// 000=normal, 010=near-end PMA loopback
+        .rxpolarity_in                      (gt_ctrl[0]),  // runtime RX P/N invert (cage-swap test)
+        .txpolarity_in                      (gt_ctrl[1]),
         .tx8b10ben_in                       (1'b1),
         .rx8b10ben_in                       (1'b1),
         .rxcommadeten_in                    (1'b1),
@@ -236,6 +238,7 @@ module aclk_gt_rx_bd_top (
         .dbg_event_valid(),
         .dbg_hb         (dbg_hb),
         .dropped_null   (),
+        .gt_ctrl        (gt_ctrl),
         .s_axi_aclk    (s_axi_aclk),
         .s_axi_aresetn (s_axi_aresetn),
         .s_axi_awaddr  (s_axi_awaddr),

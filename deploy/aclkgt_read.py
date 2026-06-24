@@ -28,15 +28,19 @@ def say(msg):
 
 _args = sys.argv[1:]
 _drop_spec = ""
+_gtctrl_spec = None
 _pos = []
 _i = 0
 while _i < len(_args):
     if _args[_i] == "--drop" and _i + 1 < len(_args):
         _drop_spec = _args[_i + 1]; _i += 2
+    elif _args[_i] == "--gtctrl" and _i + 1 < len(_args):
+        _gtctrl_spec = _args[_i + 1]; _i += 2     # e.g. 0x01 (rxpol), 0x08 (loopback), 0x00 (normal)
     else:
         _pos.append(_args[_i]); _i += 1
 DEV = _pos[0] if _pos else "/dev/uio4"
 DROP_CODES = parse_drop_codes(_drop_spec)
+GTCTRL = int(_gtctrl_spec, 0) if _gtctrl_spec is not None else None
 OFF = 0 if "uio" in DEV else 0x8000_0000
 
 # Registers spaced 16 BYTES apart (the hand-written AXI4-Lite slave only returns correct
@@ -46,13 +50,14 @@ STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP, EVENT_COUNT, NULL_COUNT, ERR
 )
 HEARTBEAT, LOCK = 0xB0, 0xC0
 FILTER_CFG, FILTERED_COUNT = 0xD0, 0xE0
+GT_CTRL = 0xF0   # RW: [0]=rxpolarity [1]=txpolarity [4:2]=loopback_in [8]=RX re-init pulse
 TICK_NS = 1000.0 / 62.5  # GT RX usrclk2 = 62.5 MHz (1.25 Gbps / 20 for 16-bit 8b10b) => 16.0 ns/tick
 
 NAME = {STATUS: "STATUS", EVENT: "EVENT", DATA_HI: "DATA_HI", DATA_LO: "DATA_LO",
         TS_HI: "TS_HI", TS_LO: "TS_LO", POP: "POP", EVENT_COUNT: "EVENT_COUNT",
         NULL_COUNT: "NULL_COUNT", ERROR_COUNT: "ERROR_COUNT", DEBUG: "DEBUG",
         HEARTBEAT: "HEARTBEAT", LOCK: "LOCK",
-        FILTER_CFG: "FILTER_CFG", FILTERED_COUNT: "FILTERED_COUNT"}
+        FILTER_CFG: "FILTER_CFG", FILTERED_COUNT: "FILTERED_COUNT", GT_CTRL: "GT_CTRL"}
 
 _watch = {"label": None, "t": 0.0}
 
@@ -89,6 +94,18 @@ def wr(o, v=0):
     _enter("write %s (0x%02X)" % (NAME.get(o, "?"), o))
     m[o:o + 4] = struct.pack("<I", v & 0xFFFFFFFF)
     _leave()
+
+def set_gt_ctrl(val):
+    """Write GT_CTRL with an RX re-init pulse so a new rxpolarity/loopback actually takes
+    effect: assert bit8 (gtwiz_reset_rx_datapath) WITH the config bits, then release it so
+    the RX re-inits and re-aligns under the new config. val: [0]=rxpol [1]=txpol [4:2]=loopback."""
+    wr(GT_CTRL, (val | 0x100) & 0xFFFFFFFF)   # config + RX re-init asserted
+    time.sleep(0.02)
+    wr(GT_CTRL, val & ~0x100 & 0xFFFFFFFF)     # release: RX re-inits & re-aligns under new config
+    time.sleep(0.10)
+    rb = rd(GT_CTRL)
+    say("# GT_CTRL <- 0x%03X (rxpol=%d txpol=%d loopback=0b%03b), readback=0x%08X" % (
+        val, val & 1, (val >> 1) & 1, (val >> 2) & 7, rb))
 
 def read_event():
     ev = rd(EVENT)
@@ -156,6 +173,8 @@ for _c in DROP_CODES:
     wr(FILTER_CFG, filter_cfg_word(_c))
 if DROP_CODES:
     say("# drop-mask: suppressing " + ", ".join("0x%02X" % c for c in DROP_CODES))
+if GTCTRL is not None:
+    set_gt_ctrl(GTCTRL)
 
 say("# streaming gigabit ACLK / GT events from %s (offset 0x%x). Ctrl-C to stop." % (DEV, OFF))
 probe()
