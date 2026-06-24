@@ -91,6 +91,7 @@ module aclk_gt_rx_bd_top (
     wire [7:0]  rxctrl2;
     wire [15:0] rxdisperr_w;   // rxdisperr: GT 8b10b disparity error per byte
     wire        rx_commadet, rx_byteali;
+    wire        align_en;      // comma-align enable: on until first aligned, then latched off
 
     aclkgt_gt u_gt (
         .gtwiz_userclk_tx_reset_in          (1'b0),
@@ -127,8 +128,8 @@ module aclk_gt_rx_bd_top (
         .tx8b10ben_in                       (1'b1),
         .rx8b10ben_in                       (1'b1),
         .rxcommadeten_in                    (1'b1),
-        .rxmcommaalignen_in                 (~rx_byteali), // align once then hold
-        .rxpcommaalignen_in                 (~rx_byteali),
+        .rxmcommaalignen_in                 (align_en),    // align once then LATCH-hold
+        .rxpcommaalignen_in                 (align_en),
         .txctrl0_in                         (16'b0),
         .txctrl1_in                         (16'b0),
         .txctrl2_in                         (8'b0),
@@ -152,6 +153,18 @@ module aclk_gt_rx_bd_top (
         else begin rx_rstn_ff1 <= 1'b1; rx_rstn_ff2 <= rx_rstn_ff1; end
     end
     wire ro_rstn = rx_rstn_ff2;
+
+    // Align-once latch: enable comma alignment until the first rxbyteisaligned, then
+    // latch it off and HOLD. Holding the align enables high continuously makes the GT
+    // re-attempt alignment on every comma; over a real (jittery) fiber each re-align
+    // disrupts the 8b10b running disparity (one disparity error per frame). A plain
+    // combinational ~rxbyteisaligned oscillates, so the aligned state is latched.
+    reg aligned_latch = 1'b0;
+    always @(posedge rx_usrclk2 or negedge ro_rstn) begin
+        if (!ro_rstn)        aligned_latch <= 1'b0;
+        else if (rx_byteali) aligned_latch <= 1'b1;
+    end
+    assign align_en = ~aligned_latch;
 
     wire rx_aligned_w;
     wire link_ready = tx_done & rx_done;
