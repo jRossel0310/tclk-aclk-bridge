@@ -89,7 +89,7 @@ puts "  OK C_RX_COMMA_P_ENABLE=$cpe C_RX_COMMA_M_ENABLE=$cme"
 # ctrl0/1/2/3 are auto-exposed by 8B10B; we enable loopback, the enable strobes,
 # the comma-align enables, the byte-alignment/comma-detect status, and powergood.
 set_property CONFIG.ENABLE_OPTIONAL_PORTS \
-    {loopback_in tx8b10ben_in rx8b10ben_in rxcommadeten_in rxmcommaalignen_in rxpcommaalignen_in rxbyteisaligned_out rxbyterealign_out rxcommadet_out gtpowergood_out gtwiz_reset_rx_cdr_stable_out rxpmaresetdone_out txpmaresetdone_out} \
+    {loopback_in tx8b10ben_in rx8b10ben_in rxcommadeten_in rxmcommaalignen_in rxpcommaalignen_in rxbyteisaligned_out rxbyterealign_out rxcommadet_out gtpowergood_out gtwiz_reset_rx_cdr_stable_out rxpmaresetdone_out txpmaresetdone_out rxpolarity_in txpolarity_in} \
     [get_ips $ip_name]
 puts "=== verify stage 3 ==="
 set opt [get_property CONFIG.ENABLE_OPTIONAL_PORTS [get_ips $ip_name]]

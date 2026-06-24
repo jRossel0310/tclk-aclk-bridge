@@ -101,20 +101,23 @@ def read_event():
 
 def stats_line():
     # GT-link health DEBUG word (0xA0), receiver build:
-    #   [28:0]  commadet = GT RX comma-detect count (climbs => live aligned signal)
+    #   [27:0]  commadet = GT RX comma-detect count (climbs => live aligned signal)
+    #   [28]    disperr  = GT 8b10b disparity error ever seen (sticky; polarity/signal)
     #   [29]    commaever= GT ever detected a comma (sticky)
     #   [30]    byteali  = GT RX byte-aligned
     #   [31]    rcv_algn = ACLK_RCV comma-aligned (decoder locked)
-    # EVENT_COUNT (separate reg) is the decoded-event count; ERROR_COUNT = bad-CRC frames.
+    # disperr=1 + rcv_aligned=0 -> data corruption (polarity/signal); disperr=0 +
+    # rcv_aligned=0 -> clean 8b10b but CRC/framing. EVENT_COUNT = decoded events.
     dbg = rd(DEBUG)
-    commadet = dbg & 0x1FFFFFFF
+    commadet = dbg & 0x0FFFFFFF
+    disperr = (dbg >> 28) & 1
     commaever = (dbg >> 29) & 1
     byteali = (dbg >> 30) & 1
     rcv_algn = (dbg >> 31) & 1
-    return ("[stats] EVT=%d NULL=%d ERR=%d FILT=%d | commadet=%d commaever=%d byteali=%d "
-            "rcv_aligned=%d | dbg=0x%08X hb=%d lock=%d") % (
+    return ("[stats] EVT=%d NULL=%d ERR=%d FILT=%d | commadet=%d commaever=%d disperr=%d "
+            "byteali=%d rcv_aligned=%d | dbg=0x%08X hb=%d lock=%d") % (
         rd(EVENT_COUNT), rd(NULL_COUNT), rd(ERROR_COUNT), rd(FILTERED_COUNT),
-        commadet, commaever, byteali, rcv_algn,
+        commadet, commaever, disperr, byteali, rcv_algn,
         dbg, rd(HEARTBEAT), rd(LOCK) & 1)
 
 def probe():

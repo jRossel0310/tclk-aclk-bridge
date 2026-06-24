@@ -86,10 +86,12 @@ aclkgt_gt your_instance_name (
   .rxcommadeten_in(rxcommadeten_in),                                        // input wire [0 : 0] rxcommadeten_in
   .rxmcommaalignen_in(rxmcommaalignen_in),                                  // input wire [0 : 0] rxmcommaalignen_in
   .rxpcommaalignen_in(rxpcommaalignen_in),                                  // input wire [0 : 0] rxpcommaalignen_in
+  .rxpolarity_in(rxpolarity_in),                                            // input wire [0 : 0] rxpolarity_in
   .tx8b10ben_in(tx8b10ben_in),                                              // input wire [0 : 0] tx8b10ben_in
   .txctrl0_in(txctrl0_in),                                                  // input wire [15 : 0] txctrl0_in
   .txctrl1_in(txctrl1_in),                                                  // input wire [15 : 0] txctrl1_in
   .txctrl2_in(txctrl2_in),                                                  // input wire [7 : 0] txctrl2_in
+  .txpolarity_in(txpolarity_in),                                            // input wire [0 : 0] txpolarity_in
   .gthtxn_out(gthtxn_out),                                                  // output wire [0 : 0] gthtxn_out
   .gthtxp_out(gthtxp_out),                                                  // output wire [0 : 0] gthtxp_out
   .gtpowergood_out(gtpowergood_out),                                        // output wire [0 : 0] gtpowergood_out

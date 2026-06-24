@@ -89,6 +89,7 @@ module aclk_gt_rx_bd_top (
     wire        tx_done, rx_done;
     wire [15:0] rx_data16;
     wire [7:0]  rxctrl2;
+    wire [15:0] rxdisperr_w;   // rxdisperr: GT 8b10b disparity error per byte
     wire        rx_commadet, rx_byteali;
 
     aclkgt_gt u_gt (
@@ -121,6 +122,8 @@ module aclk_gt_rx_bd_top (
         .gthtxn_out                         (gt_txn),      // SFP TX (idle)
         .gthtxp_out                         (gt_txp),
         .loopback_in                        (3'b000),      // normal (no loopback)
+        .rxpolarity_in                      (1'b1),        // invert RX (cancel SFP P/N swap)
+        .txpolarity_in                      (1'b0),
         .tx8b10ben_in                       (1'b1),
         .rx8b10ben_in                       (1'b1),
         .rxcommadeten_in                    (1'b1),
@@ -130,7 +133,7 @@ module aclk_gt_rx_bd_top (
         .txctrl1_in                         (16'b0),
         .txctrl2_in                         (8'b0),
         .rxctrl0_out                        (),
-        .rxctrl1_out                        (),
+        .rxctrl1_out                        (rxdisperr_w), // rxdisperr (8b10b disparity error/byte)
         .rxctrl2_out                        (rxctrl2),
         .rxctrl3_out                        (),
         .gtpowergood_out                    (),
@@ -154,29 +157,35 @@ module aclk_gt_rx_bd_top (
     wire link_ready = tx_done & rx_done;
 
     // ---- GT-health DEBUG word (-> readout 0xA0), synchronized into the AXI domain ----
-    //   { rx_aligned[31], byteali[30], comma_seen[29], commadet_cnt[28:0] }
-    wire [28:0] commadet_cnt;
-    cdc_gray_count #(.W(29)) u_cnt_commadet (
+    //   { rx_aligned[31], byteali[30], comma_seen[29], disperr_seen[28], commadet_cnt[27:0] }
+    // disperr_seen distinguishes a polarity/signal problem (8b10b disparity errors,
+    // disperr_seen=1) from a clean-8b10b-but-CRC/framing problem (disperr_seen=0).
+    wire [27:0] commadet_cnt;
+    cdc_gray_count #(.W(28)) u_cnt_commadet (
         .src_clk(rx_usrclk2), .src_rstn(ro_rstn), .incr(rx_commadet),
         .dst_clk(s_axi_aclk), .count_dst(commadet_cnt));
 
-    reg commaever_r = 1'b0;
+    reg commaever_r = 1'b0, disperr_r = 1'b0;
     always @(posedge rx_usrclk2 or negedge ro_rstn) begin
-        if (!ro_rstn) commaever_r <= 1'b0;
-        else if (rx_commadet) commaever_r <= 1'b1;
+        if (!ro_rstn) begin commaever_r <= 1'b0; disperr_r <= 1'b0; end
+        else begin
+            if (rx_commadet)         commaever_r <= 1'b1;
+            if (|rxdisperr_w[1:0])   disperr_r   <= 1'b1;   // sticky: any disparity error
+        end
     end
 
-    reg ba_m=0, ba_s=0, al_m=0, al_s=0, ce_m=0, ce_s=0;
+    reg ba_m=0, ba_s=0, al_m=0, al_s=0, ce_m=0, ce_s=0, de_m=0, de_s=0;
     always @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
         if (!s_axi_aresetn) begin
-            ba_m<=0; ba_s<=0; al_m<=0; al_s<=0; ce_m<=0; ce_s<=0;
+            ba_m<=0; ba_s<=0; al_m<=0; al_s<=0; ce_m<=0; ce_s<=0; de_m<=0; de_s<=0;
         end else begin
             ba_m<=rx_byteali;   ba_s<=ba_m;
             al_m<=rx_aligned_w; al_s<=al_m;
             ce_m<=commaever_r;  ce_s<=ce_m;
+            de_m<=disperr_r;    de_s<=de_m;
         end
     end
-    wire [31:0] dbg_word = {al_s, ba_s, ce_s, commadet_cnt};
+    wire [31:0] dbg_word = {al_s, ba_s, ce_s, de_s, commadet_cnt};
 
     // ---- readout (RX domain + AXI) ----
     aclk_gt_readout_top #(.ADDR_WIDTH(6), .AXI_ADDR_W(8)) u_ro (
