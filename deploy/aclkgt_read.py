@@ -29,6 +29,8 @@ def say(msg):
 _args = sys.argv[1:]
 _drop_spec = ""
 _gtctrl_spec = None
+_txdiff = _txpost = _txpre = None     # TX driver sweep fields (None => use HW default)
+_gtreset = False                      # --gtreset: also pulse GT_CTRL[24] (full RX PLL+CDR relock)
 _pos = []
 _i = 0
 while _i < len(_args):
@@ -36,11 +38,26 @@ while _i < len(_args):
         _drop_spec = _args[_i + 1]; _i += 2
     elif _args[_i] == "--gtctrl" and _i + 1 < len(_args):
         _gtctrl_spec = _args[_i + 1]; _i += 2     # e.g. 0x01 (rxpol), 0x08 (loopback), 0x00 (normal)
+    elif _args[_i] == "--txdiff" and _i + 1 < len(_args):
+        _txdiff = int(_args[_i + 1], 0) & 0x1F; _i += 2   # TXDIFFCTRL 0..31 (0 => HW default 0x18)
+    elif _args[_i] == "--txpost" and _i + 1 < len(_args):
+        _txpost = int(_args[_i + 1], 0) & 0x1F; _i += 2   # TXPOSTCURSOR 0..31 (0 = no emphasis)
+    elif _args[_i] == "--txpre" and _i + 1 < len(_args):
+        _txpre = int(_args[_i + 1], 0) & 0x1F; _i += 2    # TXPRECURSOR 0..31 (0 = no emphasis)
+    elif _args[_i] == "--gtreset":
+        _gtreset = True; _i += 1   # pulse GT_CTRL[24]: full RX PLL+CDR relock (use after a runtime
+                                   # loopback/source switch; datapath-only [8] does NOT relock the CDR)
     else:
         _pos.append(_args[_i]); _i += 1
 DEV = _pos[0] if _pos else "/dev/uio4"
 DROP_CODES = parse_drop_codes(_drop_spec)
 GTCTRL = int(_gtctrl_spec, 0) if _gtctrl_spec is not None else 0x00  # default: known normal state
+# TX driver sweep fields live in GT_CTRL[23:9]: [13:9]=txdiffctrl [18:14]=txpostcursor
+# [23:19]=txprecursor. The PL uses 0x18 when the txdiffctrl field is 0, so leaving --txdiff
+# unset keeps the proven default swing. Sweep these live to find a TX eye the SFP link locks on.
+GTCTRL |= ((_txdiff or 0) & 0x1F) << 9
+GTCTRL |= ((_txpost or 0) & 0x1F) << 14
+GTCTRL |= ((_txpre  or 0) & 0x1F) << 19
 OFF = 0 if "uio" in DEV else 0x8000_0000
 
 # Registers spaced 16 BYTES apart (the hand-written AXI4-Lite slave only returns correct
@@ -50,7 +67,9 @@ STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP, EVENT_COUNT, NULL_COUNT, ERR
 )
 HEARTBEAT, LOCK = 0xB0, 0xC0
 FILTER_CFG, FILTERED_COUNT = 0xD0, 0xE0
-GT_CTRL = 0xF0   # RW: [0]=rxpolarity [1]=txpolarity [4:2]=loopback_in [8]=RX re-init pulse
+GT_CTRL = 0xF0   # RW: [0]=rxpolarity [1]=txpolarity [4:2]=loopback_in [8]=RX datapath re-init pulse
+                 #     [13:9]=TXDIFFCTRL (0=>PL default 0x18) [18:14]=TXPOSTCURSOR [23:19]=TXPRECURSOR
+                 #     [24]=full RX PLL+datapath reset pulse (true CDR relock; --gtreset)
 TICK_NS = 1000.0 / 62.5  # GT RX usrclk2 = 62.5 MHz (1.25 Gbps / 20 for 16-bit 8b10b) => 16.0 ns/tick
 
 NAME = {STATUS: "STATUS", EVENT: "EVENT", DATA_HI: "DATA_HI", DATA_LO: "DATA_LO",
@@ -95,17 +114,30 @@ def wr(o, v=0):
     m[o:o + 4] = struct.pack("<I", v & 0xFFFFFFFF)
     _leave()
 
-def set_gt_ctrl(val):
+def set_gt_ctrl(val, full=False):
     """Write GT_CTRL with an RX re-init pulse so a new rxpolarity/loopback actually takes
-    effect: assert bit8 (gtwiz_reset_rx_datapath) WITH the config bits, then release it so
-    the RX re-inits and re-aligns under the new config. val: [0]=rxpol [1]=txpol [4:2]=loopback."""
-    wr(GT_CTRL, (val | 0x100) & 0xFFFFFFFF)   # config + RX re-init asserted
-    time.sleep(0.02)
-    wr(GT_CTRL, val & ~0x100 & 0xFFFFFFFF)     # release: RX re-inits & re-aligns under new config
-    time.sleep(0.10)
+    effect: assert bit8 (gtwiz_reset_rx_datapath) WITH the config bits, then release. With
+    full=True also pulse bit24 (gtwiz_reset_rx_pll_and_datapath) for a TRUE CDR/PLL relock --
+    needed when SWITCHING loopback/source at runtime (datapath-only does NOT relock the CDR to
+    a new source). On the shared-QPLL self-test a full reset also blips TX briefly, then recovers.
+    val: [0]=rxpol [1]=txpol [4:2]=loopback [13:9]=txdiff [18:14]=txpost [23:19]=txpre."""
+    # Assert exactly ONE reset input: asserting rx_datapath ([8]) and rx_pll_and_datapath ([24])
+    # together can wedge the gtwizard reset FSM (rx_done never re-asserts -> lock stays 0).
+    # full => pll+datapath ([24], a superset that also resets the datapath); else datapath ([8]).
+    reinit = 0x1000000 if full else 0x100
+    wr(GT_CTRL, (val | reinit) & 0xFFFFFFFF)   # config + RX re-init asserted
+    time.sleep(0.05 if full else 0.02)
+    wr(GT_CTRL, val & ~reinit & 0xFFFFFFFF)     # release: RX re-inits & re-aligns under new config
+    time.sleep(0.20 if full else 0.10)
     rb = rd(GT_CTRL)
-    say("# GT_CTRL <- 0x%03X (rxpol=%d txpol=%d loopback=%d), readback=0x%08X" % (
-        val, val & 1, (val >> 1) & 1, (val >> 2) & 7, rb))
+    _td = (val >> 9) & 0x1F
+    want = val & ~reinit & 0xFFFFFF             # config bits only (the re-init pulses self-release to 0)
+    if (rb & 0xFFFFFF) != want:
+        say("# !! WARNING: GT_CTRL readback 0x%08X != written 0x%06X (masked) -- AXI write may "
+            "have failed (wrong stride / wedged write channel); the GT config did NOT change." % (rb, want))
+    say("# GT_CTRL <- 0x%06X (rxpol=%d txpol=%d loopback=%d | txdiff=%s txpost=%d txpre=%d | full_reset=%d), readback=0x%08X" % (
+        val, val & 1, (val >> 1) & 1, (val >> 2) & 7,
+        ("0x18(dflt)" if _td == 0 else "0x%02X" % _td), (val >> 14) & 0x1F, (val >> 19) & 0x1F, int(full), rb))
 
 def read_event():
     ev = rd(EVENT)
@@ -117,26 +149,28 @@ def read_event():
     return event, flags, data, ts
 
 def stats_line():
-    # GT-link health DEBUG word (0xA0), receiver build (RX buffer-bypass):
-    #   [13:0]  commadet  = GT RX comma-detect count (14b, wraps)
+    # GT-link health DEBUG word (0xA0), buffer-ENABLED build:
+    #   [13:0]  commadet  = GT RX comma-detect count (14b, wraps at 16384)
     #   [27:14] disperr   = GT 8b10b disparity-error count (14b, wraps)
-    #   [28]    bb_error  = RX buffer-bypass phase-align ERRORED
-    #   [29]    bb_done   = RX buffer-bypass phase-align completed
+    #   [28]    notintbl  = STICKY: an 8b10b not-in-table (invalid-code) symbol was seen
+    #   [29]    bufslip   = STICKY: RX elastic buffer over/underflowed (a real word slip)
     #   [30]    byteali   = GT RX byte-aligned
     #   [31]    rcv_algn  = ACLK_RCV comma-aligned (decoder locked)
-    # With buffer bypass the RX runs on the recovered clock: disperr should now stay ~FLAT
-    # (no elastic-buffer slip). Want bb_done=1, bb_error=0, byteali=1, then rcv_aligned=1.
+    # Read counters by "climbing into thousands" vs "near 0 / frozen", not a single value (wraps).
+    # bufslip stays 0 on the mesochronous self-test (the buffer cannot slip on a shared refclk); a
+    # set bufslip on a two-board link is the smoking gun for a clock/ppm slip. notintbl set while
+    # disperr climbs = real invalid symbols (bad eye); disperr-only = a running-disparity break.
     dbg = rd(DEBUG)
     commadet = dbg & 0x3FFF
     disperr = (dbg >> 14) & 0x3FFF
-    bb_error = (dbg >> 28) & 1
-    bb_done = (dbg >> 29) & 1
+    notintbl = (dbg >> 28) & 1
+    bufslip = (dbg >> 29) & 1
     byteali = (dbg >> 30) & 1
     rcv_algn = (dbg >> 31) & 1
-    return ("[stats] EVT=%d NULL=%d ERR=%d FILT=%d | commadet=%d disperr=%d bb_done=%d "
-            "bb_error=%d byteali=%d rcv_aligned=%d | dbg=0x%08X lock=%d") % (
+    return ("[stats] EVT=%d NULL=%d ERR=%d FILT=%d | commadet=%d disperr=%d bufslip=%d "
+            "notintbl=%d byteali=%d rcv_aligned=%d | dbg=0x%08X lock=%d") % (
         rd(EVENT_COUNT), rd(NULL_COUNT), rd(ERROR_COUNT), rd(FILTERED_COUNT),
-        commadet, disperr, bb_done, bb_error, byteali, rcv_algn,
+        commadet, disperr, bufslip, notintbl, byteali, rcv_algn,
         dbg, rd(LOCK) & 1)
 
 def probe():
@@ -173,7 +207,7 @@ for _c in DROP_CODES:
     wr(FILTER_CFG, filter_cfg_word(_c))
 if DROP_CODES:
     say("# drop-mask: suppressing " + ", ".join("0x%02X" % c for c in DROP_CODES))
-set_gt_ctrl(GTCTRL)   # always apply a known config (default 0x00 = normal) so a prior run can't bleed in
+set_gt_ctrl(GTCTRL, full=_gtreset)   # apply a known config (default 0x00 = normal) so a prior run can't bleed in
 
 say("# streaming gigabit ACLK / GT events from %s (offset 0x%x). Ctrl-C to stop." % (DEV, OFF))
 probe()

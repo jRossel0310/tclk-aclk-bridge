@@ -91,10 +91,14 @@ aclkgt_gt your_instance_name (
   .txctrl0_in(txctrl0_in),                                                  // input wire [15 : 0] txctrl0_in
   .txctrl1_in(txctrl1_in),                                                  // input wire [15 : 0] txctrl1_in
   .txctrl2_in(txctrl2_in),                                                  // input wire [7 : 0] txctrl2_in
+  .txdiffctrl_in(txdiffctrl_in),                                            // input wire [4 : 0] txdiffctrl_in
   .txpolarity_in(txpolarity_in),                                            // input wire [0 : 0] txpolarity_in
+  .txpostcursor_in(txpostcursor_in),                                        // input wire [4 : 0] txpostcursor_in
+  .txprecursor_in(txprecursor_in),                                          // input wire [4 : 0] txprecursor_in
   .gthtxn_out(gthtxn_out),                                                  // output wire [0 : 0] gthtxn_out
   .gthtxp_out(gthtxp_out),                                                  // output wire [0 : 0] gthtxp_out
   .gtpowergood_out(gtpowergood_out),                                        // output wire [0 : 0] gtpowergood_out
+  .rxbufstatus_out(rxbufstatus_out),                                        // output wire [2 : 0] rxbufstatus_out
   .rxbyteisaligned_out(rxbyteisaligned_out),                                // output wire [0 : 0] rxbyteisaligned_out
   .rxbyterealign_out(rxbyterealign_out),                                    // output wire [0 : 0] rxbyterealign_out
   .rxcommadet_out(rxcommadet_out),                                          // output wire [0 : 0] rxcommadet_out

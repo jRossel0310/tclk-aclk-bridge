@@ -37,6 +37,11 @@ set gt_xci [file join $root_dir vivado ip aclkgt_gt aclkgt_gt.xci]
 read_ip $gt_xci
 generate_target all [get_ips aclkgt_gt]
 
+# ---- ILA debug IP (GT RX cluster, viewed over JTAG) ----
+set ila_xci [file join $root_dir vivado ip ila_gt ila_gt.xci]
+read_ip $ila_xci
+generate_target all [get_ips ila_gt]
+
 # ---- RTL sources (RX decode path + on-board generator for the self-loop TX) ----
 add_files -norecurse [list \
     [file join $rtl_dir aclk_bridge crc8_calc.v] \

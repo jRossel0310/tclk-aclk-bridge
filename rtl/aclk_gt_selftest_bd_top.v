@@ -15,11 +15,15 @@
 // RX elastic buffer ENABLED (the M0-proven config; buffer bypass broke comma alignment).
 //
 // Reset: ro_rstn = 2-FF sync-deassert in rx_usrclk2, gated on rstn & rx_active.
-// DEBUG word (0xA0): { rx_aligned[31], byteali[30], 2'b00, disperr_cnt[27:14],
-//                      commadet_cnt[13:0] }
+// DEBUG word (0xA0): { rx_aligned[31], byteali[30], bufslip[29], notintbl[28],
+//                      disperr_cnt[27:14], commadet_cnt[13:0] }
 //   - commadet_cnt climbs whenever the GT RX detects a comma -> live signal present.
 //   - disperr_cnt = 8b10b disparity-error count; byteali=1 -> GT byte-aligned;
-//     rx_aligned=1 -> ACLK_RCV locked. (bits [29:28] read 0.)
+//     rx_aligned=1 -> ACLK_RCV locked.
+//   - bufslip[29]  (STICKY) = RX elastic buffer over/underflowed (a real word slip). Stays
+//     0 on the mesochronous self-test; set => clock/ppm slip on a two-board link.
+//   - notintbl[28] (STICKY) = an 8b10b not-in-table (invalid-code) symbol was seen
+//     (separates invalid-symbol errors from pure running-disparity errors).
 
 `timescale 1ns / 1ps
 
@@ -97,10 +101,21 @@ module aclk_gt_selftest_bd_top (
     wire [15:0] rx_data16;
     wire [7:0]  rxctrl2;
     wire [15:0] rxdisperr_w;   // rxdisperr: GT 8b10b disparity error per byte
+    wire [7:0]  rxnotintbl_w;  // rxnotintable: 8b10b invalid-code (not-in-table) error per byte
+    wire [2:0]  rxbufstatus_w; // RX elastic-buffer status (101=underflow,110=overflow => slip)
     wire        rx_commadet, rx_byteali;
     wire        align_en;      // comma-align enable: on until first aligned, then latched off
     wire [31:0] gt_ctrl;             // runtime GT static-control (readout 0xF0):
                                      //   [0]=rxpolarity [1]=txpolarity [4:2]=loopback_in [8]=rx re-init
+                                     //   [13:9]=TXDIFFCTRL [18:14]=TXPOSTCURSOR [23:19]=TXPRECURSOR
+                                     //   [24]=full RX PLL+datapath reset pulse (true CDR relock)
+    // Runtime TX-driver sweep: hunt a TX eye the real SFP link can lock on (the failure is
+    // equalizer- and power-independent -> points at the TX-into-SFP drive, which near-end PMA
+    // loopback never exercises). txdiffctrl field == 0 keeps the proven default 5'h18, so
+    // power-up and any run WITHOUT the sweep flags behaves exactly like the prior bitstream.
+    wire [4:0] tx_diffctrl   = (gt_ctrl[13:9] == 5'd0) ? 5'h18 : gt_ctrl[13:9];
+    wire [4:0] tx_postcursor = gt_ctrl[18:14];
+    wire [4:0] tx_precursor  = gt_ctrl[23:19];
     wire        tx_usrclk2;          // GT TX user clock (drives the on-board generator)
     wire [15:0] gen_data16;          // generator 16-bit word -> GT TX
     wire [1:0]  gen_k;               // generator K-char flags -> GT TX
@@ -120,7 +135,11 @@ module aclk_gt_selftest_bd_top (
         .gtwiz_reset_all_in                 (~rstn),
         .gtwiz_reset_tx_pll_and_datapath_in (1'b0),
         .gtwiz_reset_tx_datapath_in         (1'b0),
-        .gtwiz_reset_rx_pll_and_datapath_in (1'b0),
+        .gtwiz_reset_rx_pll_and_datapath_in (gt_ctrl[24]), // runtime FULL RX relock (PLL+CDR);
+                                                           // datapath-only ([8]) does not relock
+                                                           // the CDR to a switched source. Opt-in
+                                                           // (default 0); on the shared-QPLL self-
+                                                           // test it also blips TX, then recovers.
         .gtwiz_reset_rx_datapath_in         (gt_ctrl[8]),  // runtime RX re-init (apply pol)
         .gtwiz_reset_rx_cdr_stable_out      (),
         .gtwiz_reset_tx_done_out            (tx_done),
@@ -137,6 +156,9 @@ module aclk_gt_selftest_bd_top (
         .loopback_in                        (gt_ctrl[4:2]),// 000=normal, 010=near-end PMA loopback
         .rxpolarity_in                      (gt_ctrl[0]),  // runtime RX P/N invert (cage-swap test)
         .txpolarity_in                      (gt_ctrl[1]),
+        .txdiffctrl_in                      (tx_diffctrl),    // TX swing sweep    (GT_CTRL[13:9])
+        .txpostcursor_in                    (tx_postcursor),  // TX post-emphasis  (GT_CTRL[18:14])
+        .txprecursor_in                     (tx_precursor),   // TX pre-emphasis   (GT_CTRL[23:19])
         .tx8b10ben_in                       (1'b1),
         .rx8b10ben_in                       (1'b1),
         .rxcommadeten_in                    (1'b1),
@@ -148,11 +170,12 @@ module aclk_gt_selftest_bd_top (
         .rxctrl0_out                        (),
         .rxctrl1_out                        (rxdisperr_w), // rxdisperr (8b10b disparity error/byte)
         .rxctrl2_out                        (rxctrl2),
-        .rxctrl3_out                        (),
+        .rxctrl3_out                        (rxnotintbl_w),// rxnotintable (8b10b invalid-code/byte)
         .gtpowergood_out                    (),
         .rxbyteisaligned_out                (rx_byteali),
         .rxbyterealign_out                  (),
         .rxcommadet_out                     (rx_commadet),
+        .rxbufstatus_out                    (rxbufstatus_w),// RX elastic-buffer over/underflow
         .rxpmaresetdone_out                 (),
         .txpmaresetdone_out                 ()
     );
@@ -211,17 +234,36 @@ module aclk_gt_selftest_bd_top (
         .src_clk(rx_usrclk2), .src_rstn(ro_rstn), .incr(disperr_pulse),
         .dst_clk(s_axi_aclk), .count_dst(disperr_cnt));
 
-    // sync GT-health bits into the AXI domain (bits [29:28] reserved/0 since buffer revert)
-    reg ba_m=0, ba_s=0, al_m=0, al_s=0;
-    always @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
-        if (!s_axi_aresetn) begin
-            ba_m<=0; ba_s<=0; al_m<=0; al_s<=0;
+    // ---- error/slip STICKIES (rx_usrclk2 domain, latch-and-hold, cleared by ro_rstn) ----
+    // notintbl: an 8b10b NOT-IN-TABLE (invalid code) was seen -> separates invalid-symbol
+    //   errors from pure running-disparity errors (different signatures on a marginal eye).
+    // bufslip: the RX elastic buffer reported over/underflow (3'b101/3'b110) -> a real word
+    //   slip occurred. Stays 0 on the mesochronous self-test (shared refclk); a set bit on a
+    //   two-board link is the smoking gun for a clock-correction / ppm slip.
+    reg notintbl_sticky = 1'b0, bufslip_sticky = 1'b0;
+    always @(posedge rx_usrclk2 or negedge ro_rstn) begin
+        if (!ro_rstn) begin
+            notintbl_sticky <= 1'b0;
+            bufslip_sticky  <= 1'b0;
         end else begin
-            ba_m<=rx_byteali;   ba_s<=ba_m;
-            al_m<=rx_aligned_w; al_s<=al_m;
+            if (|rxnotintbl_w[1:0])                                  notintbl_sticky <= 1'b1;
+            if (rxbufstatus_w == 3'b101 || rxbufstatus_w == 3'b110)  bufslip_sticky  <= 1'b1;
         end
     end
-    wire [31:0] dbg_word = {al_s, ba_s, 2'b00, disperr_cnt, commadet_cnt};
+
+    // sync GT-health bits into the AXI domain. [29]=bufslip sticky, [28]=notintbl sticky.
+    reg ba_m=0, ba_s=0, al_m=0, al_s=0, ni_m=0, ni_s=0, bs_m=0, bs_s=0;
+    always @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
+        if (!s_axi_aresetn) begin
+            ba_m<=0; ba_s<=0; al_m<=0; al_s<=0; ni_m<=0; ni_s<=0; bs_m<=0; bs_s<=0;
+        end else begin
+            ba_m<=rx_byteali;       ba_s<=ba_m;
+            al_m<=rx_aligned_w;     al_s<=al_m;
+            ni_m<=notintbl_sticky;  ni_s<=ni_m;
+            bs_m<=bufslip_sticky;   bs_s<=bs_m;
+        end
+    end
+    wire [31:0] dbg_word = {al_s, ba_s, bs_s, ni_s, disperr_cnt, commadet_cnt};
 
     // ---- readout (RX domain + AXI) ----
     aclk_gt_readout_top #(.ADDR_WIDTH(6), .AXI_ADDR_W(8)) u_ro (
@@ -256,6 +298,22 @@ module aclk_gt_selftest_bd_top (
         .s_axi_rresp   (s_axi_rresp),
         .s_axi_rvalid  (s_axi_rvalid),
         .s_axi_rready  (s_axi_rready)
+    );
+
+    // ---- DEBUG ILA on the GT RX cluster (synthesis-only; viewed over JTAG) ----
+    // Clocked by the recovered rx_usrclk2 so it samples the RX symbols coherently.
+    // probe0=rx_data16, probe1=K, probe2=disperr, probe3=notintbl, probe4=bufstatus,
+    // probe5=byteali, probe6=commadet, probe7=rcv_aligned.
+    ila_gt u_ila_gt (
+        .clk    (rx_usrclk2),
+        .probe0 (rx_data16),
+        .probe1 (rxctrl2[1:0]),
+        .probe2 (rxdisperr_w[1:0]),
+        .probe3 (rxnotintbl_w[1:0]),
+        .probe4 (rxbufstatus_w),
+        .probe5 (rx_byteali),
+        .probe6 (rx_commadet),
+        .probe7 (rx_aligned_w)
     );
 
 endmodule
