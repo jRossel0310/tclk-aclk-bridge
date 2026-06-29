@@ -42,3 +42,6 @@ vivado/ip/aclkgt_gt/aclkgt_gt.vho
 vivado/ip/aclkgt_gt/aclkgt_gt_bmstub.v
 vivado/ip/aclkgt_gt/hdl/
 vivado/ip/aclkgt_gt/synth/
+
+# Superpowers SDD scratch (task briefs, reports, progress ledger): on-disk only, not part of the repo
+.superpowers/
