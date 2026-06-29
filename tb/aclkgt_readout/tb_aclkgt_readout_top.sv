@@ -18,7 +18,7 @@ module tb_aclkgt_readout_top (
     output wire [31:0] s_axi_rdata,   output wire [1:0] s_axi_rresp, output wire s_axi_rvalid, input wire s_axi_rready
 );
     aclk_gt_readout_top #(.ADDR_WIDTH(6), .AXI_ADDR_W(8)) dut (
-        .rx_clk(CLK1), .rx_rstn(rx_rstn), .pps(pps),
+        .rx_clk(CLK1), .rx_rstn(rx_rstn), .dec_rstn(rx_rstn), .pps(pps),
         .data_from_xcvr(DATA_FROM_XCVR), .k_from_xcvr(K_FROM_XCVR),
         .mmcm_locked(mmcm_locked), .dbg_word_in(32'b0), .rx_aligned(rx_aligned),
         .dbg_event_valid(aclk_valid), .dbg_hb(), .dropped_null(dropped_null),
