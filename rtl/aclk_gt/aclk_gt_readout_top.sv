@@ -16,7 +16,8 @@
 
 module aclk_gt_readout_top #(
     parameter int ADDR_WIDTH = 6,
-    parameter int AXI_ADDR_W = 8
+    parameter int AXI_ADDR_W = 8,
+    parameter bit USE_EXT_TS = 1'b0        // 0 = internal ts counter (default); 1 = use ts_ext
 ) (
     // ---- recovered-RX (GT user) domain ----
     input  logic        rx_clk,
@@ -89,7 +90,7 @@ module aclk_gt_readout_top #(
         .ADDR_WIDTH  (ADDR_WIDTH),
         .AXI_ADDR_W  (AXI_ADDR_W),
         .DROP_NULL   (1'b1),
-        .USE_EXT_TS  (1'b1)
+        .USE_EXT_TS  (USE_EXT_TS)
     ) u_axi (
         .rx_clk        (rx_clk),
         .rx_rstn       (rx_rstn),
