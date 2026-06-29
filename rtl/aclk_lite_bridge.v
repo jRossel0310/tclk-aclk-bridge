@@ -39,9 +39,9 @@ module aclk_lite_bridge (
         else if (is_real && full) dropped_count <= dropped_count + 16'd1;
     end
 
-    // enc_clk dispatch FSM: pop -> latch -> start -> wait busy high then low
-    localparam [1:0] S_IDLE=2'd0, S_LATCH=2'd1, S_START=2'd2, S_WAIT=2'd3;
-    reg [1:0] st;
+    // enc_clk dispatch FSM: pop -> latch -> start -> wait busy HIGH -> wait busy LOW
+    localparam [2:0] S_IDLE=3'd0, S_LATCH=3'd1, S_START=3'd2, S_WAIT_BUSY=3'd3, S_WAIT_DONE=3'd4;
+    reg [2:0] st;
     always @(posedge enc_clk or negedge enc_rstn) begin
         if (!enc_rstn) begin
             st <= S_IDLE; rd_en <= 1'b0; enc_start <= 1'b0;
@@ -49,10 +49,12 @@ module aclk_lite_bridge (
         end else begin
             rd_en <= 1'b0; enc_start <= 1'b0;
             case (st)
-                S_IDLE:  if (!empty && !enc_busy) begin rd_en <= 1'b1; st <= S_LATCH; end
-                S_LATCH: begin enc_event_id <= rd_data[79:64]; enc_data <= rd_data[63:0]; st <= S_START; end
-                S_START: begin enc_start <= 1'b1; st <= S_WAIT; end
-                S_WAIT:  if (enc_busy == 1'b0 && enc_start == 1'b0) st <= S_IDLE;
+                S_IDLE:      if (!empty && !enc_busy) begin rd_en <= 1'b1; st <= S_LATCH; end
+                S_LATCH:     begin enc_event_id <= rd_data[79:64]; enc_data <= rd_data[63:0]; st <= S_START; end
+                S_START:     begin enc_start <= 1'b1; st <= S_WAIT_BUSY; end
+                S_WAIT_BUSY: if (enc_busy)  st <= S_WAIT_DONE;   // frame actually started
+                S_WAIT_DONE: if (!enc_busy) st <= S_IDLE;        // frame finished -> ready for next
+                default:     st <= S_IDLE;
             endcase
         end
     end

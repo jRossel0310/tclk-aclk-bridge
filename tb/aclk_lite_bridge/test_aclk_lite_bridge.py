@@ -200,3 +200,77 @@ async def test_null_event_suppressed(dut):
         "enc_start asserted for a null event (event[7:0]==0xFF) - bridge must suppress it"
     )
     dut._log.info("null-event suppression OK: enc_start stayed low for 300 cycles")
+
+
+@cocotb.test()
+async def test_back_to_back_events_both_recovered(dut):
+    """Two real ACLK events driven in quick succession (both queued in the FIFO before
+    the first frame finishes) must BOTH be recovered by clk_rcv in order.
+
+    This test FAILS against the old single-S_WAIT FSM (second start fires while the
+    encoder is about to become busy, so the encoder ignores it and the second event is
+    silently dropped). It PASSES with the busy-high-then-low handshake.
+    """
+    _start_clocks(dut)
+    await _reset(dut)
+
+    # Let serdec warm up
+    warmup_ns = WARMUP_CELLS * 8 * ENC_CLK_PS // 1000
+    await Timer(warmup_ns, unit="ns")
+
+    # Two distinct events driven back-to-back on the rx side (both enter FIFO before
+    # the encoder has finished the first frame).
+    EVT1_ID   = 0x1234
+    EVT1_DATA = 0xDEADBEEFCAFE0001
+    EVT2_ID   = 0x0042
+    EVT2_DATA = 0x1122334455667788
+
+    # Drive event 1
+    await RisingEdge(dut.rx_clk)
+    dut.aclk_event.value = EVT1_ID
+    dut.aclk_data.value  = EVT1_DATA
+    dut.aclk_valid.value = 1
+    await RisingEdge(dut.rx_clk)
+    dut.aclk_valid.value = 0
+
+    # Drive event 2 on the very next rx_clk cycle (both land in FIFO before first frame done)
+    await RisingEdge(dut.rx_clk)
+    dut.aclk_event.value = EVT2_ID
+    dut.aclk_data.value  = EVT2_DATA
+    dut.aclk_valid.value = 1
+    await RisingEdge(dut.rx_clk)
+    dut.aclk_valid.value = 0
+
+    # Collect first decoded event
+    result1 = await _collect_decoded(dut, timeout_40m_cycles=6000)
+    assert result1 is not None, "clk_rcv did not produce event_valid for first event"
+    ev_id1, dv1, data1 = result1
+    assert ev_id1 == EVT1_ID, (
+        f"first recovered event_id 0x{ev_id1:04X} != expected 0x{EVT1_ID:04X}"
+    )
+    assert dv1 == 1, f"data_valid not set for first 12-byte frame (got {dv1})"
+    assert data1 == EVT1_DATA, (
+        f"first recovered data 0x{data1:016X} != expected 0x{EVT1_DATA:016X}"
+    )
+    dut._log.info(
+        f"BACK-TO-BACK event 1 OK: event_id=0x{ev_id1:04X}  data=0x{data1:016X}"
+    )
+
+    # Collect second decoded event
+    result2 = await _collect_decoded(dut, timeout_40m_cycles=6000)
+    assert result2 is not None, (
+        "clk_rcv did not produce event_valid for second event - "
+        "back-to-back event was silently dropped (FSM bug)"
+    )
+    ev_id2, dv2, data2 = result2
+    assert ev_id2 == EVT2_ID, (
+        f"second recovered event_id 0x{ev_id2:04X} != expected 0x{EVT2_ID:04X}"
+    )
+    assert dv2 == 1, f"data_valid not set for second 12-byte frame (got {dv2})"
+    assert data2 == EVT2_DATA, (
+        f"second recovered data 0x{data2:016X} != expected 0x{EVT2_DATA:016X}"
+    )
+    dut._log.info(
+        f"BACK-TO-BACK event 2 OK: event_id=0x{ev_id2:04X}  data=0x{data2:016X}"
+    )
+    dut._log.info("BACK-TO-BACK: both events recovered in order - FSM handshake correct")
