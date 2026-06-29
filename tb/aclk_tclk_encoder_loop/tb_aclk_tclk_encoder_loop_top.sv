@@ -18,6 +18,7 @@ module tb_aclk_tclk_encoder_loop_top (
 
     aclk_tclk_encoder u_enc (
         .clk_tx   (clk_tx),
+        .clk_40m  (clk_40m),
         .rstn_tx  (rstn),
         .tclk_data(tclk_data),
         .tclk_davn(tclk_davn),

@@ -35,7 +35,7 @@ async def test_encoder_to_rcv(dut):
     await ClockCycles(dut.clk_tx, 10)
     await Timer(1, unit="ns")
     dut.rstn.value = 1
-    await ClockCycles(dut.clk_tx, 40)   # let the count RAM zeroing sweep finish
+    await ClockCycles(dut.clk_tx, 300)  # wait out the 256-cycle count-RAM zeroing sweep + RX alignment
 
     captured = []
     errors = 0

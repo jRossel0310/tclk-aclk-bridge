@@ -12,6 +12,7 @@
 module aclk_tclk_encoder (
     input  wire        clk_tx,     // ~62.5 MHz TX (and RX loopback) clock
     input  wire        rstn_tx,    // active-low reset, synchronous to clk_tx
+    input  wire        clk_40m,    // source domain clock for tclk_data/tclk_davn
 
     // TCLK event input (clk_40m domain, active-low strobe)
     input  wire [7:0]  tclk_data,  // event byte, valid when tclk_davn is low
@@ -56,46 +57,23 @@ module aclk_tclk_encoder (
 
     (* fsm_encoding = "user_encoding" *) reg  [7:0]  crnt_st_tclk_rcv, next_st_tclk_rcv;
 
-    // --------------------------------------------------------
-    // CDC: bring slow-domain DAVn strobe into clk_tx
-    //
-    // tclk_davn is a level signal (active-low) from the clk_40m domain.
-    // tclk_data is held stable while tclk_davn is low.
-    //
-    // Strategy: latch tclk_data into a clk_tx-domain holding register
-    // on the first clk_tx posedge that samples tclk_davn low, using a
-    // "was already low" flag to suppress repeated captures on a single
-    // strobe.  Then use a toggle synchronizer to generate a single-cycle
-    // pulse (DAVn_in_CLK1) 2 clk_tx cycles later, matching the FSM's
-    // expectation of a one-cycle strobe.
-    // --------------------------------------------------------
-
-    // Hold tclk_data and fire a toggle on the first cycle tclk_davn is seen low.
-    reg davn_seen_low;   // tracks whether we already fired for this strobe
-    reg davn_toggle;
-    reg [7:0] tclk_data_hold;
-    always @(posedge clk_tx or negedge rstn_tx) begin
-        if (!rstn_tx) begin
-            davn_seen_low  <= 1'b0;
-            davn_toggle    <= 1'b0;
-            tclk_data_hold <= 8'h00;
-        end else if (!tclk_davn && !davn_seen_low) begin
-            davn_seen_low  <= 1'b1;
-            davn_toggle    <= ~davn_toggle;
-            tclk_data_hold <= tclk_data;
-        end else if (tclk_davn) begin
-            davn_seen_low  <= 1'b0;
-        end
+    // ---- TCLK event CDC: toggle in the clk_40m (source) domain, sync into clk_tx ----
+    // tclk_data/tclk_davn are synchronous to clk_40m. Latch the event byte and flip a
+    // toggle bit there (tclk_davn is a clean 1-cycle strobe so the toggle fires once per
+    // event), then cross ONLY the single-bit toggle into clk_tx via a 2-FF synchronizer
+    // plus edge detect. This is the reference (ACLK_DATA_SOURCE) CDC topology.
+    reg       davn_toggle;
+    reg [7:0] TCLK_DATA_cdc;
+    always @(posedge clk_40m or negedge rstn_tx) begin
+        if (!rstn_tx) begin davn_toggle <= 1'b0; TCLK_DATA_cdc <= 8'h00; end
+        else if (!tclk_davn) begin davn_toggle <= ~davn_toggle; TCLK_DATA_cdc <= tclk_data; end
     end
-
-    // 2-FF synchronizer + edge detect on the toggle
-    reg t1, t2, t3;
+    reg toggle_sync1, toggle_sync2, toggle_sync2_d;
     always @(posedge clk_tx or negedge rstn_tx) begin
-        if (!rstn_tx) begin t1 <= 1'b0; t2 <= 1'b0; t3 <= 1'b0; end
-        else           begin t1 <= davn_toggle; t2 <= t1; t3 <= t2; end
+        if (!rstn_tx) begin toggle_sync1 <= 1'b0; toggle_sync2 <= 1'b0; toggle_sync2_d <= 1'b0; end
+        else begin toggle_sync1 <= davn_toggle; toggle_sync2 <= toggle_sync1; toggle_sync2_d <= toggle_sync2; end
     end
-    wire DAVn_in_CLK1 = t2 ^ t3;
-    wire [7:0] TCLK_DATA_cdc = tclk_data_hold;
+    wire DAVn_in_CLK1 = toggle_sync2 ^ toggle_sync2_d;
 
     // --------------------------------------------------------
     // LFSR advance counter (6-cycle cadence, drives CRC pipeline)
@@ -170,7 +148,7 @@ module aclk_tclk_encoder (
 
     always @(posedge clk_tx or negedge rstn_tx) begin
         if (!rstn_tx)
-            crnt_st_tclk_rcv <= 8'h10;  // skip zeroing sweep; RAM is initialised below
+            crnt_st_tclk_rcv <= 8'h00;  // always run the 256-cycle zeroing sweep on reset
         else
             crnt_st_tclk_rcv <= next_st_tclk_rcv;
     end
@@ -264,7 +242,7 @@ module aclk_tclk_encoder (
     always @(posedge clk_tx or negedge rstn_tx) begin
         if (!rstn_tx)
             tclk_packet <= 80'h0;
-        else if (tclk_count_store)
+        else if (tclk_count_store && tclk_store_sel)   // only real events; ignore zeroing sweep
             tclk_packet <= {8'h00, tclk_count_addr, 32'h00000000, tclk_count_d};
     end
 
