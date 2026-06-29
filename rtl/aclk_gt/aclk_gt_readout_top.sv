@@ -35,6 +35,12 @@ module aclk_gt_readout_top #(
     output logic        dropped_null,
     output logic [31:0] gt_ctrl,            // GT static-control (0xF0) -> GT top (rxpol/loopback)
 
+    // ---- decoded-ACLK tap (rx_clk domain) -> aclk_lite_bridge in the pipeline top ----
+    // Backward-compatible: existing instantiations leave these unconnected.
+    output logic [15:0] dbg_aclk_event,     // decoded ACLK event id
+    output logic [63:0] dbg_aclk_data,      // decoded ACLK 64-bit payload
+    output logic        dbg_aclk_valid,     // one-cycle decoder VALID strobe
+
     // ---- AXI4-Lite slave (PS clock) ----
     input  logic                   s_axi_aclk,
     input  logic                   s_axi_aresetn,
@@ -77,6 +83,12 @@ module aclk_gt_readout_top #(
     );
 
     assign dbg_event_valid = aclk_valid;
+
+    // ---- decoded-ACLK tap: expose the one decoder's output so the pipeline top's
+    // aclk_lite_bridge can mirror real events as ACLK-Lite (no second ACLK_RCV). ----
+    assign dbg_aclk_event = aclk_event;
+    assign dbg_aclk_data  = aclk_data;
+    assign dbg_aclk_valid = aclk_valid;
 
     // ---- DEBUG word (AXI 0xA0) is formed by the caller. The GT integration top
     // owns the GT RX status (comma-detect, byte-aligned) and the TX-domain
