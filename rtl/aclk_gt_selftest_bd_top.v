@@ -15,15 +15,15 @@
 // RX elastic buffer ENABLED (the M0-proven config; buffer bypass broke comma alignment).
 //
 // Reset: ro_rstn = 2-FF sync-deassert in rx_usrclk2, gated on rstn & rx_active.
-// DEBUG word (0xA0): { rx_aligned[31], byteali[30], bufslip[29], notintbl[28],
-//                      disperr_cnt[27:14], commadet_cnt[13:0] }
+// DEBUG word (0xA0): { rx_aligned[31], byteali[30], rx_los[29], notintbl[28],
+//                      disperr_cnt[27:14], tx_fault[13], mod_abs[12], commadet_cnt[11:0] }
 //   - commadet_cnt climbs whenever the GT RX detects a comma -> live signal present.
 //   - disperr_cnt = 8b10b disparity-error count; byteali=1 -> GT byte-aligned;
 //     rx_aligned=1 -> ACLK_RCV locked.
-//   - bufslip[29]  (STICKY) = RX elastic buffer over/underflowed (a real word slip). Stays
-//     0 on the mesochronous self-test; set => clock/ppm slip on a two-board link.
-//   - notintbl[28] (STICKY) = an 8b10b not-in-table (invalid-code) symbol was seen
-//     (separates invalid-symbol errors from pure running-disparity errors).
+//   - rx_los[29]   = SFP RX loss-of-signal (1 = NO optical input: laser disabled / no light /
+//     dead RX). The decisive "is there light reaching the receiver?" bit.
+//   - notintbl[28] (STICKY) = an 8b10b not-in-table (invalid-code) symbol was seen.
+//   - tx_fault[13] = SFP TX fault; mod_abs[12] = SFP module absent (1 = no module).
 
 `timescale 1ns / 1ps
 
@@ -45,6 +45,14 @@ module aclk_gt_selftest_bd_top (
     input  wire        rstn,
 
     output wire        dbg_hb,
+
+    // SFP+ sideband control/status (PL I/O on the KR260 carrier, LVCMOS33). The GT does NOT
+    // control TX_DISABLE; the Finisar module treats high/floating as LASER OFF, so we MUST
+    // drive it low to enable optical transmit. The 3 status inputs are monitored in DEBUG.
+    output wire        sfp_tx_disable,   // active-high: 0 = laser ENABLED
+    input  wire        sfp_tx_fault,     // 1 = module TX fault
+    input  wire        sfp_rx_los,       // 1 = module RX loss-of-signal (no light)
+    input  wire        sfp_mod_abs,      // 1 = module absent
 
     // AXI4-Lite slave (PS clock)
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 s_axi_aclk CLK" *)
@@ -93,6 +101,11 @@ module aclk_gt_selftest_bd_top (
     wire gt_refclk;
     IBUFDS_GTE4 #(.REFCLK_HROW_CK_SEL(2'b00)) u_ibufds_refclk (
         .I(gt_refclk_p), .IB(gt_refclk_n), .CEB(1'b0), .O(gt_refclk), .ODIV2());
+
+    // ---- SFP+ TX laser ENABLE: drive TX_DISABLE low (the GT never drives it; the module
+    // treats high/floating as laser OFF). This is the one external SFP control the gateware
+    // previously left unconnected -> the laser may have been disabled all along. ----
+    assign sfp_tx_disable = 1'b0;
 
     // ---- GT transceiver (normal mode, real SFP RX) ----
     wire        rx_usrclk2;
@@ -222,11 +235,13 @@ module aclk_gt_selftest_bd_top (
     wire link_ready = tx_done & rx_done;
 
     // ---- GT-health DEBUG word (-> readout 0xA0), synchronized into the AXI domain ----
-    //   { rx_aligned[31], byteali[30], 2'b00, disperr_cnt[27:14], commadet_cnt[13:0] }
-    // commadet_cnt = comma-detect count (live signal); disperr_cnt = 8b10b disparity errors;
-    // byteali=1 -> GT byte-aligned; rx_aligned=1 -> ACLK_RCV locked.
-    wire [13:0] commadet_cnt, disperr_cnt;
-    cdc_gray_count #(.W(14)) u_cnt_commadet (
+    //   { rx_aligned[31], byteali[30], rx_los[29], notintbl[28], disperr_cnt[27:14],
+    //     tx_fault[13], mod_abs[12], commadet_cnt[11:0] }
+    // commadet_cnt = comma-detect count; disperr_cnt = 8b10b disparity errors; byteali=1 -> GT
+    // byte-aligned; rx_aligned=1 -> ACLK_RCV locked. rx_los=1 -> the SFP RX sees no light.
+    wire [11:0] commadet_cnt;
+    wire [13:0] disperr_cnt;
+    cdc_gray_count #(.W(12)) u_cnt_commadet (
         .src_clk(rx_usrclk2), .src_rstn(ro_rstn), .incr(rx_commadet),
         .dst_clk(s_axi_aclk), .count_dst(commadet_cnt));
     wire disperr_pulse = |rxdisperr_w[1:0];
@@ -234,36 +249,33 @@ module aclk_gt_selftest_bd_top (
         .src_clk(rx_usrclk2), .src_rstn(ro_rstn), .incr(disperr_pulse),
         .dst_clk(s_axi_aclk), .count_dst(disperr_cnt));
 
-    // ---- error/slip STICKIES (rx_usrclk2 domain, latch-and-hold, cleared by ro_rstn) ----
-    // notintbl: an 8b10b NOT-IN-TABLE (invalid code) was seen -> separates invalid-symbol
-    //   errors from pure running-disparity errors (different signatures on a marginal eye).
-    // bufslip: the RX elastic buffer reported over/underflow (3'b101/3'b110) -> a real word
-    //   slip occurred. Stays 0 on the mesochronous self-test (shared refclk); a set bit on a
-    //   two-board link is the smoking gun for a clock-correction / ppm slip.
-    reg notintbl_sticky = 1'b0, bufslip_sticky = 1'b0;
+    // ---- notintbl STICKY (rx_usrclk2 domain, latch-and-hold, cleared by ro_rstn) ----
+    // an 8b10b NOT-IN-TABLE (invalid code) was seen -> separates invalid-symbol errors from
+    // pure running-disparity errors (different signatures on a marginal eye).
+    reg notintbl_sticky = 1'b0;
     always @(posedge rx_usrclk2 or negedge ro_rstn) begin
-        if (!ro_rstn) begin
-            notintbl_sticky <= 1'b0;
-            bufslip_sticky  <= 1'b0;
-        end else begin
-            if (|rxnotintbl_w[1:0])                                  notintbl_sticky <= 1'b1;
-            if (rxbufstatus_w == 3'b101 || rxbufstatus_w == 3'b110)  bufslip_sticky  <= 1'b1;
-        end
+        if (!ro_rstn)                notintbl_sticky <= 1'b0;
+        else if (|rxnotintbl_w[1:0]) notintbl_sticky <= 1'b1;
     end
 
-    // sync GT-health bits into the AXI domain. [29]=bufslip sticky, [28]=notintbl sticky.
-    reg ba_m=0, ba_s=0, al_m=0, al_s=0, ni_m=0, ni_s=0, bs_m=0, bs_s=0;
+    // sync GT-health + SFP sideband bits into the AXI domain. rx_los/tx_fault/mod_abs are slow
+    // async board signals (single-bit, 2-FF safe). rx_los=1 => the SFP RX sees no light.
+    reg ba_m=0, ba_s=0, al_m=0, al_s=0, ni_m=0, ni_s=0;
+    reg rl_m=0, rl_s=0, tf_m=0, tf_s=0, ma_m=0, ma_s=0;
     always @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
         if (!s_axi_aresetn) begin
-            ba_m<=0; ba_s<=0; al_m<=0; al_s<=0; ni_m<=0; ni_s<=0; bs_m<=0; bs_s<=0;
+            ba_m<=0; ba_s<=0; al_m<=0; al_s<=0; ni_m<=0; ni_s<=0;
+            rl_m<=0; rl_s<=0; tf_m<=0; tf_s<=0; ma_m<=0; ma_s<=0;
         end else begin
             ba_m<=rx_byteali;       ba_s<=ba_m;
             al_m<=rx_aligned_w;     al_s<=al_m;
             ni_m<=notintbl_sticky;  ni_s<=ni_m;
-            bs_m<=bufslip_sticky;   bs_s<=bs_m;
+            rl_m<=sfp_rx_los;       rl_s<=rl_m;
+            tf_m<=sfp_tx_fault;     tf_s<=tf_m;
+            ma_m<=sfp_mod_abs;      ma_s<=ma_m;
         end
     end
-    wire [31:0] dbg_word = {al_s, ba_s, bs_s, ni_s, disperr_cnt, commadet_cnt};
+    wire [31:0] dbg_word = {al_s, ba_s, rl_s, ni_s, disperr_cnt, tf_s, ma_s, commadet_cnt};
 
     // ---- readout (RX domain + AXI) ----
     aclk_gt_readout_top #(.ADDR_WIDTH(6), .AXI_ADDR_W(8)) u_ro (

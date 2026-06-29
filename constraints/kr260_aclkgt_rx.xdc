@@ -19,6 +19,14 @@ create_clock -period 6.400 -name gt_refclk [get_ports gt_refclk_p]
 ## Debug heartbeat to Pmod (PMOD1 pin 1 = H12, LVCMOS33).
 set_property -dict {PACKAGE_PIN H12 IOSTANDARD LVCMOS33} [get_ports dbg_hb]
 
+## SFP+ sideband control/status (KR260 carrier PL I/O, LVCMOS33).
+## !!! VERIFY these 4 LOCs against the KR260 carrier schematic (XTP743) / Vivado board file
+## before building. sfp_tx_disable is the load-bearing one: a wrong LOC leaves the laser off.
+set_property -dict {PACKAGE_PIN Y10 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8} [get_ports sfp_tx_disable]
+set_property -dict {PACKAGE_PIN A10 IOSTANDARD LVCMOS33} [get_ports sfp_tx_fault]
+set_property -dict {PACKAGE_PIN J12 IOSTANDARD LVCMOS33} [get_ports sfp_rx_los]
+set_property -dict {PACKAGE_PIN W10 IOSTANDARD LVCMOS33} [get_ports sfp_mod_abs]
+
 ## Async clock groups: ALL PL-domain clocks vs ALL GT-domain clocks.
 ## The PS<->GT data path crosses only through the async_fifo in aclk_readout_core
 ## (Gray-counter CDC-safe) plus the buffer-bypass reset 2-FF sync, so timing across

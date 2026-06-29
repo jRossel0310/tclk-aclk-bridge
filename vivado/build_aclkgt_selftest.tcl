@@ -120,6 +120,16 @@ connect_bd_net [get_bd_pins $rst_cell/peripheral_aresetn] [get_bd_pins u_aclkgt/
 create_bd_port -dir O dbg_hb
 connect_bd_net [get_bd_port dbg_hb] [get_bd_pins u_aclkgt/dbg_hb]
 
+# SFP+ sideband control/status (drive TX_DISABLE low to enable the laser; monitor the rest)
+create_bd_port -dir O sfp_tx_disable
+create_bd_port -dir I sfp_tx_fault
+create_bd_port -dir I sfp_rx_los
+create_bd_port -dir I sfp_mod_abs
+connect_bd_net [get_bd_port sfp_tx_disable] [get_bd_pins u_aclkgt/sfp_tx_disable]
+connect_bd_net [get_bd_port sfp_tx_fault]   [get_bd_pins u_aclkgt/sfp_tx_fault]
+connect_bd_net [get_bd_port sfp_rx_los]     [get_bd_pins u_aclkgt/sfp_rx_los]
+connect_bd_net [get_bd_port sfp_mod_abs]    [get_bd_pins u_aclkgt/sfp_mod_abs]
+
 # External GT refclk + SFP serial (RX in, TX idle out)
 create_bd_port -dir I gt_refclk_p
 create_bd_port -dir I gt_refclk_n
