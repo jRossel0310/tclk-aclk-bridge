@@ -1,0 +1,51 @@
+/dts-v1/;
+/plugin/;
+
+/* Device-tree overlay for the INTEGRATED TCLK -> ACLK -> ACLK-Lite pipeline.
+ *
+ * The design has TWO independent AXI4-Lite readouts, so this overlay exposes TWO
+ * generic-uio nodes:
+ *   - tclk_readout @ 0x8000_0000  (readout #1: TCLK-in events)
+ *   - aclk_readout @ 0x8001_0000  (readout #2: ACLK-back events, after the SFP loop)
+ * On the board these appear as two /dev/uioN devices (e.g. uio4 = TCLK, uio5 = ACLK);
+ * confirm the index with: cat /sys/class/uio/uio*/name  and  ls -l /dev/uio*.
+ *
+ * Compile:  dtc -@ -O dtb -o aclk_pipeline.dtbo aclk_pipeline.dts
+ * Load:     sudo xmutil unloadapp ; sudo fpgautil -b uart_echo_bd_wrapper.bit.bin -o aclk_pipeline.dtbo
+ *
+ * Readers:  sudo python3 tclk_read.py /dev/uioN   (TCLK readout, base 0x8000_0000)
+ *           sudo python3 aclk_read.py /dev/uioM    (ACLK readout, base 0x8001_0000)
+ *
+ * NOTE: the &fpga_full / &amba labels and the addresses must match your board's Linux
+ * image — verify against /proc/device-tree if it will not load.
+ */
+
+/ {
+    fragment@0 {
+        target = <&fpga_full>;
+        __overlay__ {
+            #address-cells = <2>;
+            #size-cells = <2>;
+            firmware-name = "uart_echo_bd_wrapper.bit.bin";
+            /* Release the four PL resets (pl_resetn0-3) after programming, same as the
+             * uart_echo overlay; without this the fpga-region holds the design in reset
+             * and every AXI access bus-errors. Indices 0x74-0x77 per the stock app. */
+            resets = <&zynqmp_reset 0x74>, <&zynqmp_reset 0x75>,
+                     <&zynqmp_reset 0x76>, <&zynqmp_reset 0x77>;
+        };
+    };
+
+    fragment@1 {
+        target = <&amba>;
+        __overlay__ {
+            tclk_readout_axi: tclk_readout@80000000 {
+                compatible = "generic-uio";
+                reg = <0x0 0x80000000 0x0 0x10000>;
+            };
+            aclk_readout_axi: aclk_readout@80010000 {
+                compatible = "generic-uio";
+                reg = <0x0 0x80010000 0x0 0x10000>;
+            };
+        };
+    };
+};
