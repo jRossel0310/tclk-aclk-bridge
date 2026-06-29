@@ -48,6 +48,15 @@ set_property PACKAGE_PIN T1 [get_ports gt_rxn]            ;# MGTHRXN2_224
 set_property PACKAGE_PIN Y6 [get_ports gt_refclk_p]       ;# MGTREFCLK0P_224
 set_property PACKAGE_PIN Y5 [get_ports gt_refclk_n]       ;# MGTREFCLK0N_224
 create_clock -period 6.400 -name gt_refclk [get_ports gt_refclk_p]
+
+# SFP+ sideband (PL I/O, LVCMOS33). TX_DISABLE MUST be driven LOW to enable the laser - the GT
+# does not control it, and a floating/high pin = laser OFF (this was the root cause of the dead
+# link). The 3 status pins are monitor-only. SFP I2C (SCL=AB11, SDA=AC11) is on PL fabric (not
+# the PS I2C bus), so DDM readout needs a PL AXI-IIC core.
+set_property -dict {PACKAGE_PIN Y10 IOSTANDARD LVCMOS33 SLEW SLOW DRIVE 8} [get_ports sfp_tx_disable]
+set_property -dict {PACKAGE_PIN A10 IOSTANDARD LVCMOS33} [get_ports sfp_tx_fault]
+set_property -dict {PACKAGE_PIN J12 IOSTANDARD LVCMOS33} [get_ports sfp_rx_los]
+set_property -dict {PACKAGE_PIN W10 IOSTANDARD LVCMOS33} [get_ports sfp_mod_abs]
 ```
 
 ## GT Wizard config (gtwizard_ultrascale, raw - NOT Aurora)
