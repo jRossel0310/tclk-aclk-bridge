@@ -36,9 +36,10 @@
 `timescale 1ns / 1ps
 
 module aclk_readout_axi #(
-    parameter int ADDR_WIDTH = 6,          // FIFO depth = 2**ADDR_WIDTH
-    parameter int AXI_ADDR_W = 8,          // byte-address width of the register space
-    parameter bit DROP_NULL  = 1'b1        // 1: drop 0xFF nulls (ACLK); 0: keep all (TCLK)
+    parameter int ADDR_WIDTH  = 6,          // FIFO depth = 2**ADDR_WIDTH
+    parameter int AXI_ADDR_W  = 8,          // byte-address width of the register space
+    parameter bit DROP_NULL   = 1'b1,       // 1: drop 0xFF nulls (ACLK); 0: keep all (TCLK)
+    parameter bit USE_EXT_TS  = 1'b0        // 1: use ts_ext as the packed timestamp
 ) (
     // ---- event input side (recovered-RX domain) ----
     input  logic         rx_clk,
@@ -48,6 +49,7 @@ module aclk_readout_axi #(
     input  logic [15:0]  aclk_event,
     input  logic [63:0]  aclk_data,
     input  logic [15:0]  flags,            // per-event metadata (bit0 has_data, bit1 is_tclk)
+    input  logic [63:0]  ts_ext,           // external shared timestamp (used when USE_EXT_TS=1)
     input  logic         aclk_error,
     output logic         dropped_null,     // debug passthrough
     input  logic [31:0]  dbg_word,         // RO debug word -> 0x28 (AXI-domain, caller-synced)
@@ -120,7 +122,11 @@ module aclk_readout_axi #(
     wire         overflow;
     logic        pop;
 
-    aclk_readout_core #(.ADDR_WIDTH(ADDR_WIDTH), .DROP_NULL(DROP_NULL)) u_core (
+    aclk_readout_core #(
+        .ADDR_WIDTH  (ADDR_WIDTH),
+        .DROP_NULL   (DROP_NULL),
+        .USE_EXT_TS  (USE_EXT_TS)
+    ) u_core (
         .rx_clk       (rx_clk),
         .rx_rstn      (rx_rstn),
         .pps          (pps),
@@ -128,6 +134,7 @@ module aclk_readout_axi #(
         .aclk_event   (aclk_event),
         .aclk_data    (aclk_data),
         .flags        (flags),
+        .ts_ext       (ts_ext),
         .rd_clk       (s_axi_aclk),
         .rd_rstn      (s_axi_aresetn),
         .rd_en        (pop),
@@ -187,6 +194,7 @@ module aclk_readout_axi #(
     // ---------------------------------------------------------------
     logic        arready_r, rvalid_r;
     logic [31:0] rdata_r;
+    logic [31:0] gt_ctrl_reg;                // GT static-control register (0xF0); set-and-leave
     wire [AXI_ADDR_W-5:0] rsel = s_axi_araddr[AXI_ADDR_W-1:4];
 
     always_ff @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
@@ -237,7 +245,6 @@ module aclk_readout_axi #(
     logic awready_r, wready_r, bvalid_r;
     logic [AXI_ADDR_W-5:0] waddr_q;          // latched write reg-address (16-byte stride)
     logic [31:0] wdata_q;                    // latched write data (W may precede/follow AW)
-    logic [31:0] gt_ctrl_reg;                // GT static-control register (0xF0); set-and-leave
 
     always_ff @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
         if (!s_axi_aresetn) begin

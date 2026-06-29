@@ -65,6 +65,9 @@ module tclk_readout_top #(
     output logic                   s_axi_rvalid,
     input  logic                   s_axi_rready,
 
+    // ---- external shared timestamp (from global_timebase, A2) ----
+    input  logic [63:0] ts_ext,            // shared 64-bit timebase; sampled at each event VALID
+
     // ---- debug (clk_40m domain) ----
     output logic        dbg_dav,           // ~DAVn: one strobe per decoded byte
     output logic [7:0]  dbg_data,          // decoded event byte
@@ -163,9 +166,10 @@ module tclk_readout_top #(
 
     // ---- readout + AXI-Lite slave (null-drop disabled for TCLK) ----
     aclk_readout_axi #(
-        .ADDR_WIDTH (ADDR_WIDTH),
-        .AXI_ADDR_W (AXI_ADDR_W),
-        .DROP_NULL  (1'b0)
+        .ADDR_WIDTH  (ADDR_WIDTH),
+        .AXI_ADDR_W  (AXI_ADDR_W),
+        .DROP_NULL   (1'b0),
+        .USE_EXT_TS  (1'b1)
     ) u_axi (
         .rx_clk        (clk_40m),
         .rx_rstn       (rstn),
@@ -174,6 +178,7 @@ module tclk_readout_top #(
         .aclk_event    (adapt_event),
         .aclk_data     (64'd0),
         .flags         (adapt_flags),
+        .ts_ext        (ts_ext),
         .aclk_error    (perr_pulse),
         .dropped_null  (dropped_null),
         .dbg_word      (tclk_dbg_word),

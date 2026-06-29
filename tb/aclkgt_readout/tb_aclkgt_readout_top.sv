@@ -17,10 +17,18 @@ module tb_aclkgt_readout_top (
     input  wire [7:0]  s_axi_araddr,  input wire s_axi_arvalid,  output wire s_axi_arready,
     output wire [31:0] s_axi_rdata,   output wire [1:0] s_axi_rresp, output wire s_axi_rvalid, input wire s_axi_rready
 );
+    // Free-running external timestamp counter (stands in for global_timebase in sim).
+    reg [63:0] ts_ext_r;
+    always @(posedge CLK1 or negedge rx_rstn) begin
+        if (!rx_rstn) ts_ext_r <= 64'b0;
+        else          ts_ext_r <= ts_ext_r + 1'b1;
+    end
+
     aclk_gt_readout_top #(.ADDR_WIDTH(6), .AXI_ADDR_W(8)) dut (
         .rx_clk(CLK1), .rx_rstn(rx_rstn), .dec_rstn(rx_rstn), .pps(pps),
         .data_from_xcvr(DATA_FROM_XCVR), .k_from_xcvr(K_FROM_XCVR),
-        .mmcm_locked(mmcm_locked), .dbg_word_in(32'b0), .rx_aligned(rx_aligned),
+        .mmcm_locked(mmcm_locked), .dbg_word_in(32'b0), .ts_ext(ts_ext_r),
+        .rx_aligned(rx_aligned),
         .dbg_event_valid(aclk_valid), .dbg_hb(), .dropped_null(dropped_null),
         .s_axi_aclk(s_axi_aclk), .s_axi_aresetn(s_axi_aresetn),
         .s_axi_awaddr(s_axi_awaddr), .s_axi_awvalid(s_axi_awvalid), .s_axi_awready(s_axi_awready),

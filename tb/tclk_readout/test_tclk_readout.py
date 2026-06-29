@@ -46,15 +46,28 @@ FLAG_HAS_DATA = 0x1
 FLAG_IS_TCLK = 0x2
 
 
+async def _ts_ext_driver(dut):
+    """Increment ts_ext every clk_40m cycle so timestamps are monotonic in sim.
+    This stands in for global_timebase (A2) which drives ts_ext on the real board."""
+    count = 0
+    dut.ts_ext.value = count
+    while True:
+        await RisingEdge(dut.clk_40m)
+        count += 1
+        dut.ts_ext.value = count
+
+
 def _start_clocks(dut):
     cocotb.start_soon(Clock(dut.clk_80m, CLK80_PERIOD_PS, unit="ps").start())
     cocotb.start_soon(Clock(dut.clk_40m, CLK40_PERIOD_PS, unit="ps").start())
     cocotb.start_soon(Clock(dut.s_axi_aclk, AXI_PERIOD_NS, unit="ns").start())
+    cocotb.start_soon(_ts_ext_driver(dut))
 
 
 async def reset_dut(dut):
     dut.tclk.value = 1                  # idle high
     dut.pps.value = 0
+    dut.ts_ext.value = 0
     dut.rstn.value = 0
     dut.s_axi_aresetn.value = 0
     dut.s_axi_awaddr.value = 0

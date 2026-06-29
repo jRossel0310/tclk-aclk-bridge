@@ -25,8 +25,9 @@
 `timescale 1ns / 1ps
 
 module aclk_readout_core #(
-    parameter int ADDR_WIDTH = 6,          // FIFO depth = 2**ADDR_WIDTH
-    parameter bit DROP_NULL  = 1'b1        // 1: drop 0xFF nulls (ACLK); 0: keep all (TCLK)
+    parameter int ADDR_WIDTH  = 6,          // FIFO depth = 2**ADDR_WIDTH
+    parameter bit DROP_NULL   = 1'b1,       // 1: drop 0xFF nulls (ACLK); 0: keep all (TCLK)
+    parameter bit USE_EXT_TS  = 1'b0        // 1: use ts_ext as the packed timestamp
 ) (
     // ---- rx_clk domain: decoded stream from ACLK_RCV ----
     input  logic         rx_clk,
@@ -36,6 +37,7 @@ module aclk_readout_core #(
     input  logic [15:0]  aclk_event,
     input  logic [63:0]  aclk_data,
     input  logic [15:0]  flags,            // per-event metadata (bit0 has_data, bit1 is_tclk)
+    input  logic [63:0]  ts_ext,           // external shared timestamp (used when USE_EXT_TS=1)
 
     // ---- rd_clk domain: PS-facing read side ----
     input  logic         rd_clk,
@@ -62,7 +64,8 @@ module aclk_readout_core #(
 
     assign dropped_null = aclk_valid && is_null;
 
-    wire [159:0] packed_word = {flags, ts, aclk_event, aclk_data};
+    wire [63:0]  ts_used     = USE_EXT_TS ? ts_ext : ts;
+    wire [159:0] packed_word = {flags, ts_used, aclk_event, aclk_data};
 
     async_fifo #(.WIDTH(160), .ADDR_WIDTH(ADDR_WIDTH)) u_fifo (
         .wr_clk   (rx_clk),

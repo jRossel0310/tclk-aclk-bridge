@@ -27,6 +27,7 @@ module aclk_gt_readout_top #(
     input  logic [1:0]  k_from_xcvr,
     input  logic        mmcm_locked,       // GT/MMCM locked (async) -> AXI 0xC0 LOCK
     input  logic [31:0] dbg_word_in,        // caller-formed DEBUG word (0xA0), AXI-domain
+    input  logic [63:0] ts_ext,             // external shared timestamp (from global_timebase, A2)
     output logic        rx_aligned,         // ACLK_RCV comma alignment (debug/bring-up)
     output logic        dbg_event_valid,    // decoder valid pulse (debug/plot)
     output logic        dbg_hb,
@@ -85,9 +86,10 @@ module aclk_gt_readout_top #(
     wire [15:0] adapt_flags = 16'h0001;   // bit0 has_data=1, bit1 is_tclk=0
 
     aclk_readout_axi #(
-        .ADDR_WIDTH (ADDR_WIDTH),
-        .AXI_ADDR_W (AXI_ADDR_W),
-        .DROP_NULL  (1'b1)
+        .ADDR_WIDTH  (ADDR_WIDTH),
+        .AXI_ADDR_W  (AXI_ADDR_W),
+        .DROP_NULL   (1'b1),
+        .USE_EXT_TS  (1'b1)
     ) u_axi (
         .rx_clk        (rx_clk),
         .rx_rstn       (rx_rstn),
@@ -96,6 +98,7 @@ module aclk_gt_readout_top #(
         .aclk_event    (aclk_event),
         .aclk_data     (aclk_data),
         .flags         (adapt_flags),
+        .ts_ext        (ts_ext),
         .aclk_error    (aclk_error),
         .dropped_null  (dropped_null),
         .dbg_word      (dbg_word_in),
