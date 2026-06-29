@@ -132,6 +132,7 @@ module aclk_gt_selftest_bd_top (
     wire        tx_usrclk2;          // GT TX user clock (drives the on-board generator)
     wire [15:0] gen_data16;          // generator 16-bit word -> GT TX
     wire [1:0]  gen_k;               // generator K-char flags -> GT TX
+    wire        recover_gt_reset;    // RX-recovery FSM -> pulse GT RX datapath reset (driven below)
 
     aclkgt_gt u_gt (
         .gtwiz_userclk_tx_reset_in          (1'b0),
@@ -153,7 +154,7 @@ module aclk_gt_selftest_bd_top (
                                                            // the CDR to a switched source. Opt-in
                                                            // (default 0); on the shared-QPLL self-
                                                            // test it also blips TX, then recovers.
-        .gtwiz_reset_rx_datapath_in         (gt_ctrl[8]),  // runtime RX re-init (apply pol)
+        .gtwiz_reset_rx_datapath_in (gt_ctrl[8] | recover_gt_reset), // re-init + FSM recover
         .gtwiz_reset_rx_cdr_stable_out      (),
         .gtwiz_reset_tx_done_out            (tx_done),
         .gtwiz_reset_rx_done_out            (rx_done),
@@ -219,31 +220,69 @@ module aclk_gt_selftest_bd_top (
         .MARKER  ()
     );
 
-    // Align-once latch: enable comma alignment until the first rxbyteisaligned, then
-    // latch it off and HOLD. Holding the align enables high continuously makes the GT
-    // re-attempt alignment on every comma; over a real (jittery) fiber each re-align
-    // disrupts the 8b10b running disparity (one disparity error per frame). A plain
-    // combinational ~rxbyteisaligned oscillates, so the aligned state is latched.
-    reg aligned_latch = 1'b0;
-    always @(posedge rx_usrclk2 or negedge ro_rstn) begin
-        if (!ro_rstn)        aligned_latch <= 1'b0;
-        else if (rx_byteali) aligned_latch <= 1'b1;
-    end
-    assign align_en = ~aligned_latch;
-
-    wire rx_aligned_w;
+    // ---- RX link-recovery FSM (rx_usrclk2) ----
+    // Replaces the old align-once latch (which could not recover: once byteali was lost on a
+    // marginal eye, comma align stayed off forever and the link froze after an initial burst).
+    // SEARCH: comma align ON, wait for the decoder to lock. LOCKED: align OFF, decode normally.
+    // On a sustained byteali loss -> RECOVER: clear decoder/lock state, re-enable align, optionally
+    // pulse the GT RX datapath reset, then re-search.
+    wire rx_aligned_w;                          // ACLK_RCV decode lock (>=5 consecutive good CRC)
     wire link_ready = tx_done & rx_done;
+
+    localparam integer LOSS_WINDOW      = 512;  // consecutive byteali-low cycles -> RECOVER (~8 us)
+    localparam integer RECOVER_LEN      = 512;  // cycles to hold the recovery reset
+    localparam         RECOVER_GT_RESET = 1'b0; // soft recovery (re-align). 1 = also GT RX reset
+
+    localparam [1:0] S_SEARCH = 2'd0, S_LOCKED = 2'd1, S_RECOVER = 2'd2;
+    reg  [1:0] rstate   = S_SEARCH;
+    reg  [9:0] loss_ctr = 10'd0;
+    reg  [9:0] rec_ctr  = 10'd0;
+    always @(posedge rx_usrclk2 or negedge ro_rstn) begin
+        if (!ro_rstn) begin
+            rstate <= S_SEARCH; loss_ctr <= 10'd0; rec_ctr <= 10'd0;
+        end else case (rstate)
+            S_SEARCH: begin
+                loss_ctr <= 10'd0; rec_ctr <= 10'd0;
+                if (rx_aligned_w) rstate <= S_LOCKED;
+            end
+            S_LOCKED: begin
+                loss_ctr <= rx_byteali ? 10'd0 : (loss_ctr + 10'd1);
+                if (!rx_byteali && loss_ctr >= LOSS_WINDOW[9:0]) begin
+                    rstate <= S_RECOVER; rec_ctr <= 10'd0;
+                end
+            end
+            S_RECOVER: begin
+                rec_ctr <= rec_ctr + 10'd1;
+                if (rec_ctr >= RECOVER_LEN[9:0]) rstate <= S_SEARCH;
+            end
+            default: rstate <= S_SEARCH;
+        endcase
+    end
+
+    wire recover_active     = (rstate == S_RECOVER);
+    assign align_en         = (rstate != S_LOCKED);  // ON in SEARCH/RECOVER, OFF in LOCKED
+    assign recover_gt_reset = recover_active & RECOVER_GT_RESET;
+    // local recovery reset for the decoder + lock + notintbl. NOT the async FIFO write pointer
+    // (a one-sided dual-clock-FIFO reset desyncs its gray pointers); holding the decoder in
+    // reset already stops pushes, so the FIFO quiesces and keeps its validated events.
+    wire ro_rstn_eff        = ro_rstn & ~recover_active;
+    wire recover_pulse      = recover_active && (rec_ctr == 10'd0);  // 1-cycle on entering RECOVER
 
     // ---- GT-health DEBUG word (-> readout 0xA0), synchronized into the AXI domain ----
     //   { rx_aligned[31], byteali[30], rx_los[29], notintbl[28], disperr_cnt[27:14],
-    //     tx_fault[13], mod_abs[12], commadet_cnt[11:0] }
-    // commadet_cnt = comma-detect count; disperr_cnt = 8b10b disparity errors; byteali=1 -> GT
-    // byte-aligned; rx_aligned=1 -> ACLK_RCV locked. rx_los=1 -> the SFP RX sees no light.
-    wire [11:0] commadet_cnt;
+    //     tx_fault[13], mod_abs[12], recover_cnt[11:8], commadet_cnt[7:0] }
+    // disperr_cnt = 8b10b disparity errors; commadet_cnt = comma-detect count; recover_cnt = RX
+    // recovery-FSM firings (want 0 / low); byteali=1 -> GT byte-aligned; rx_aligned=1 -> decoder
+    // locked; rx_los=1 -> the SFP RX sees no light.
+    wire [7:0]  commadet_cnt;
+    wire [3:0]  recover_cnt;
     wire [13:0] disperr_cnt;
-    cdc_gray_count #(.W(12)) u_cnt_commadet (
+    cdc_gray_count #(.W(8)) u_cnt_commadet (
         .src_clk(rx_usrclk2), .src_rstn(ro_rstn), .incr(rx_commadet),
         .dst_clk(s_axi_aclk), .count_dst(commadet_cnt));
+    cdc_gray_count #(.W(4)) u_cnt_recover (
+        .src_clk(rx_usrclk2), .src_rstn(ro_rstn), .incr(recover_pulse),
+        .dst_clk(s_axi_aclk), .count_dst(recover_cnt));
     wire disperr_pulse = |rxdisperr_w[1:0];
     cdc_gray_count #(.W(14)) u_cnt_disperr (
         .src_clk(rx_usrclk2), .src_rstn(ro_rstn), .incr(disperr_pulse),
@@ -253,8 +292,8 @@ module aclk_gt_selftest_bd_top (
     // an 8b10b NOT-IN-TABLE (invalid code) was seen -> separates invalid-symbol errors from
     // pure running-disparity errors (different signatures on a marginal eye).
     reg notintbl_sticky = 1'b0;
-    always @(posedge rx_usrclk2 or negedge ro_rstn) begin
-        if (!ro_rstn)                notintbl_sticky <= 1'b0;
+    always @(posedge rx_usrclk2 or negedge ro_rstn_eff) begin
+        if (!ro_rstn_eff)            notintbl_sticky <= 1'b0;
         else if (|rxnotintbl_w[1:0]) notintbl_sticky <= 1'b1;
     end
 
@@ -275,12 +314,14 @@ module aclk_gt_selftest_bd_top (
             ma_m<=sfp_mod_abs;      ma_s<=ma_m;
         end
     end
-    wire [31:0] dbg_word = {al_s, ba_s, rl_s, ni_s, disperr_cnt, tf_s, ma_s, commadet_cnt};
+    wire [31:0] dbg_word =
+        {al_s, ba_s, rl_s, ni_s, disperr_cnt, tf_s, ma_s, recover_cnt, commadet_cnt};
 
     // ---- readout (RX domain + AXI) ----
     aclk_gt_readout_top #(.ADDR_WIDTH(6), .AXI_ADDR_W(8)) u_ro (
         .rx_clk         (rx_usrclk2),
         .rx_rstn        (ro_rstn),
+        .dec_rstn       (ro_rstn_eff),  // recovery FSM resets the decoder, not the FIFO
         .pps            (1'b0),
         .data_from_xcvr (rx_data16),
         .k_from_xcvr    (rxctrl2[1:0]),

@@ -204,6 +204,7 @@ module aclk_gt_rx_bd_top (
     aclk_gt_readout_top #(.ADDR_WIDTH(6), .AXI_ADDR_W(8)) u_ro (
         .rx_clk         (rx_usrclk2),
         .rx_rstn        (ro_rstn),
+        .dec_rstn       (ro_rstn),     // no recovery FSM here; decoder shares the base reset
         .pps            (1'b0),
         .data_from_xcvr (rx_data16),
         .k_from_xcvr    (rxctrl2[1:0]),

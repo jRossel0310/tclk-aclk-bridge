@@ -150,19 +150,21 @@ def read_event():
 
 def stats_line():
     # GT-link health DEBUG word (0xA0):
-    #   [11:0]  commadet  = GT RX comma-detect count (12b, wraps)
+    #   [7:0]   commadet  = GT RX comma-detect count (8b, wraps)
+    #   [11:8]  recover   = RX link-recovery FSM firings (4b, wraps); 0/low = link holding lock
     #   [12]    mod_abs   = SFP module absent (1 = no module present)
     #   [13]    tx_fault  = SFP TX fault (1 = fault asserted)
     #   [27:14] disperr   = GT 8b10b disparity-error count (14b, wraps)
-    #   [28]    notintbl  = STICKY: an 8b10b not-in-table (invalid-code) symbol was seen
+    #   [28]    notintbl  = an 8b10b not-in-table (invalid-code) symbol seen this lock session
     #   [29]    rx_los    = SFP RX loss-of-signal (1 = NO optical input reaching the receiver)
     #   [30]    byteali   = GT RX byte-aligned
-    #   [31]    rcv_algn  = ACLK_RCV comma-aligned (decoder locked)
-    # rx_los is the decisive optical-presence bit: rx_los=1 => the SFP sees no light (laser
-    # disabled / no fiber / dead RX); with the laser enabled and a good loop it should read 0.
-    # Read the counters by "climbing" vs "near 0 / frozen", not a single value (they wrap).
+    #   [31]    rcv_algn  = ACLK_RCV decoder locked
+    # Healthy link: rx_los=0, byteali=1 and rcv_aligned=1 holding solid, EVT climbing every
+    # second, recover NOT climbing. recover climbing => the link keeps losing lock and the FSM is
+    # self-healing it (eye still marginal). Read counters by "climbing" vs "frozen" (they wrap).
     dbg = rd(DEBUG)
-    commadet = dbg & 0xFFF
+    commadet = dbg & 0xFF
+    recover  = (dbg >> 8) & 0xF
     mod_abs  = (dbg >> 12) & 1
     tx_fault = (dbg >> 13) & 1
     disperr  = (dbg >> 14) & 0x3FFF
@@ -170,10 +172,10 @@ def stats_line():
     rx_los   = (dbg >> 29) & 1
     byteali  = (dbg >> 30) & 1
     rcv_algn = (dbg >> 31) & 1
-    return ("[stats] EVT=%d NULL=%d ERR=%d FILT=%d | commadet=%d disperr=%d rx_los=%d "
+    return ("[stats] EVT=%d NULL=%d ERR=%d FILT=%d | commadet=%d disperr=%d recover=%d rx_los=%d "
             "tx_fault=%d mod_abs=%d notintbl=%d byteali=%d rcv_aligned=%d | dbg=0x%08X lock=%d") % (
         rd(EVENT_COUNT), rd(NULL_COUNT), rd(ERROR_COUNT), rd(FILTERED_COUNT),
-        commadet, disperr, rx_los, tx_fault, mod_abs, notintbl, byteali, rcv_algn,
+        commadet, disperr, recover, rx_los, tx_fault, mod_abs, notintbl, byteali, rcv_algn,
         dbg, rd(LOCK) & 1)
 
 def probe():

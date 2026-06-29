@@ -20,7 +20,8 @@ module aclk_gt_readout_top #(
 ) (
     // ---- recovered-RX (GT user) domain ----
     input  logic        rx_clk,
-    input  logic        rx_rstn,
+    input  logic        rx_rstn,         // FIFO / AXI-core RX reset (base; not pulsed mid-run)
+    input  logic        dec_rstn,        // decoder-only reset (caller's RX-recovery FSM pulses it)
     input  logic        pps,
     input  logic [15:0] data_from_xcvr,
     input  logic [1:0]  k_from_xcvr,
@@ -61,7 +62,7 @@ module aclk_gt_readout_top #(
     wire [3:0]  diag;
 
     ACLK_RCV u_rcv (
-        .RESETn         (rx_rstn),
+        .RESETn         (dec_rstn),
         .CLK1           (rx_clk),
         .DATA_FROM_XCVR (data_from_xcvr),
         .K_FROM_XCVR    (k_from_xcvr),
