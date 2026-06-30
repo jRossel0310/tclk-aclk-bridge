@@ -207,11 +207,19 @@ connect_bd_net [get_bd_port gt_rxn]      [get_bd_pins u_pipeline/gt_rxn]
 connect_bd_net [get_bd_port gt_txp]      [get_bd_pins u_pipeline/gt_txp]
 connect_bd_net [get_bd_port gt_txn]      [get_bd_pins u_pipeline/gt_txn]
 
-# ---- Address map (explicit): the two AXI4-Lite slaves at 0x8000_0000 / 0x8001_0000 ----
-assign_bd_address -offset 0x80000000 -range 0x10000 -target_address_space \
-    [get_bd_addr_spaces zynq_ultra_ps_e_0/Data] [get_bd_addr_segs u_pipeline/S_AXI/Reg] -force
-assign_bd_address -offset 0x80010000 -range 0x10000 -target_address_space \
-    [get_bd_addr_spaces zynq_ultra_ps_e_0/Data] [get_bd_addr_segs u_pipeline/S_AXI2/Reg] -force
+# ---- Address map: the two AXI4-Lite slaves at 0x8000_0000 / 0x8001_0000 ----
+# A module-reference AXI slave carries no IP-XACT memory map, so its Reg address
+# segment does NOT exist until assign_bd_address auto-creates it (the proven single-
+# slave builds just call bare `assign_bd_address`). So: bare-assign first to create
+# both segments, then relocate each to its base, referencing the segment by
+# -of_objects (the auto-generated segment name is not u_pipeline/S_AXI/Reg).
+assign_bd_address
+assign_bd_address -offset 0x80000000 -range 0x10000 -force -target_address_space \
+    [get_bd_addr_spaces zynq_ultra_ps_e_0/Data] \
+    [get_bd_addr_segs -of_objects [get_bd_intf_pins u_pipeline/S_AXI]]
+assign_bd_address -offset 0x80010000 -range 0x10000 -force -target_address_space \
+    [get_bd_addr_spaces zynq_ultra_ps_e_0/Data] \
+    [get_bd_addr_segs -of_objects [get_bd_intf_pins u_pipeline/S_AXI2]]
 
 regenerate_bd_layout
 validate_bd_design

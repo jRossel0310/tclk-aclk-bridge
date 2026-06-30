@@ -39,6 +39,10 @@ set_property -dict {PACKAGE_PIN W10 IOSTANDARD LVCMOS33} [get_ports sfp_mod_abs]
 ## ACLK-Lite biphase-mark mirror output: Pmod pin = package B10, LVCMOS33.
 set_property -dict {PACKAGE_PIN B10 IOSTANDARD LVCMOS33} [get_ports aclk_lite_out]
 
+## Debug heartbeat (readout #1 liveness) on PMOD1 pin 7 = package D11, LVCMOS33.
+## Every top-level port needs a LOC + IOSTANDARD or write_bitstream fails DRC (NSTD-1/UCIO-1).
+set_property -dict {PACKAGE_PIN D11 IOSTANDARD LVCMOS33} [get_ports dbg_hb]
+
 ## ---------------------------------------------------------------------------
 ## Asynchronous clock groups
 ## ---------------------------------------------------------------------------
