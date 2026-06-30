@@ -8,7 +8,8 @@
  *   - tclk_readout @ 0x8000_0000  (readout #1: TCLK-in events)
  *   - aclk_readout @ 0x8001_0000  (readout #2: ACLK-back events, after the SFP loop)
  * On the board these appear as two /dev/uioN devices (e.g. uio4 = TCLK, uio5 = ACLK);
- * confirm the index with: cat /sys/class/uio/uio*/name  and  ls -l /dev/uio*.
+ * confirm the index with the uio name sysfs entries and the /dev/uio device list
+ * (cat the uioN name files under /sys/class/uio/).
  *
  * Compile:  dtc -@ -O dtb -o aclk_pipeline.dtbo aclk_pipeline.dts
  * Load:     sudo xmutil unloadapp ; sudo fpgautil -b uart_echo_bd_wrapper.bit.bin -o aclk_pipeline.dtbo
