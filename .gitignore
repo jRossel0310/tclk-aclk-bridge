@@ -65,3 +65,8 @@ vivado/ip/aclkgt_gt/sim/
 vivado/ip/aclkgt_gt_[0-9]*/
 # Generated HTML render of the hardware-interface guide (keep the .md + .pdf)
 docs/generated/*.html
+
+# VS Code: ignore personal editor config, keep the shared task/extension files
+.vscode/*
+!.vscode/tasks.json
+!.vscode/extensions.json
