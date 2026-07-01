@@ -45,3 +45,23 @@ vivado/ip/aclkgt_gt/synth/
 
 # Superpowers SDD scratch (task briefs, reports, progress ledger): on-disk only, not part of the repo
 .superpowers/
+
+# --- repo cleanup (2026-07-01) ---
+# Root-level Vivado logs (vivado/*.log covers the subdir; these are repo-root)
+/vivado.jou
+/vivado.log
+# Stray GUI GT-configuration Vivado project (use the scripted vivado/ip flow)
+gt_configuration/
+# Evan's raw starter-code reference dump: duplicate module names vs rtl/aclk_bridge,
+# kept on disk but out of git to avoid a duplicate-module hazard.
+rtl/Li_Files/
+# GT IP generated products (regenerated from the tracked aclkgt_gt.xci)
+vivado/ip/_ref_*.veo.ports
+vivado/ip/aclkgt_gt/*.dcp
+vivado/ip/aclkgt_gt/*_sim_netlist.*
+vivado/ip/aclkgt_gt/*_stub.*
+vivado/ip/aclkgt_gt/doc/
+vivado/ip/aclkgt_gt/sim/
+vivado/ip/aclkgt_gt_[0-9]*/
+# Generated HTML render of the hardware-interface guide (keep the .md + .pdf)
+docs/generated/*.html
