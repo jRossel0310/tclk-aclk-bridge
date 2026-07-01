@@ -33,11 +33,14 @@ def say(msg):
 
 _args = sys.argv[1:]
 _drop_spec = ""
+_tick_ns = None                       # --tick-ns override (default: this reader's local tick)
 _pos = []
 _i = 0
 while _i < len(_args):
     if _args[_i] == "--drop" and _i + 1 < len(_args):
         _drop_spec = _args[_i + 1]; _i += 2
+    elif _args[_i] == "--tick-ns" and _i + 1 < len(_args):
+        _tick_ns = float(_args[_i + 1]); _i += 2   # e.g. 10 for the pl_clk0 shared timebase (USE_EXT_TS)
     else:
         _pos.append(_args[_i]); _i += 1
 DEV = _pos[0] if _pos else "/dev/uio4"
@@ -51,7 +54,9 @@ STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP, EVENT_COUNT, NULL_COUNT, ERR
 )
 HEARTBEAT, LOCK = 0xB0, 0xC0   # free-running clk_40m counter (trust check); MMCM-locked bit
 FILTER_CFG, FILTERED_COUNT = 0xD0, 0xE0   # drop-mask config (write); dropped-event count (read)
-TICK_NS = 25.0  # clk_40m = 40 MHz timestamp tick
+TICK_NS = _tick_ns if _tick_ns is not None else 25.0  # standalone: clk_40m 40 MHz = 25 ns.
+# For the integrated pipeline (USE_EXT_TS=1) the timestamp is the shared pl_clk0 timebase,
+# so pass --tick-ns 10 to make dt_us correct.
 
 NAME = {STATUS: "STATUS", EVENT: "EVENT", DATA_HI: "DATA_HI", DATA_LO: "DATA_LO",
         TS_HI: "TS_HI", TS_LO: "TS_LO", POP: "POP", EVENT_COUNT: "EVENT_COUNT",

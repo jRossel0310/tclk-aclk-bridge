@@ -31,6 +31,7 @@ _drop_spec = ""
 _gtctrl_spec = None
 _txdiff = _txpost = _txpre = None     # TX driver sweep fields (None => use HW default)
 _gtreset = False                      # --gtreset: also pulse GT_CTRL[24] (full RX PLL+CDR relock)
+_tick_ns = None                       # --tick-ns override (default: this reader's local tick)
 _pos = []
 _i = 0
 while _i < len(_args):
@@ -47,6 +48,8 @@ while _i < len(_args):
     elif _args[_i] == "--gtreset":
         _gtreset = True; _i += 1   # pulse GT_CTRL[24]: full RX PLL+CDR relock (use after a runtime
                                    # loopback/source switch; datapath-only [8] does NOT relock the CDR)
+    elif _args[_i] == "--tick-ns" and _i + 1 < len(_args):
+        _tick_ns = float(_args[_i + 1]); _i += 2   # e.g. 10 for the pl_clk0 shared timebase (USE_EXT_TS)
     else:
         _pos.append(_args[_i]); _i += 1
 DEV = _pos[0] if _pos else "/dev/uio4"
@@ -70,7 +73,9 @@ FILTER_CFG, FILTERED_COUNT = 0xD0, 0xE0
 GT_CTRL = 0xF0   # RW: [0]=rxpolarity [1]=txpolarity [4:2]=loopback_in [8]=RX datapath re-init pulse
                  #     [13:9]=TXDIFFCTRL (0=>PL default 0x18) [18:14]=TXPOSTCURSOR [23:19]=TXPRECURSOR
                  #     [24]=full RX PLL+datapath reset pulse (true CDR relock; --gtreset)
-TICK_NS = 1000.0 / 62.5  # GT RX usrclk2 = 62.5 MHz (1.25 Gbps / 20 for 16-bit 8b10b) => 16.0 ns/tick
+TICK_NS = _tick_ns if _tick_ns is not None else 1000.0 / 62.5  # standalone: GT RX usrclk2 62.5 MHz = 16 ns.
+# For the integrated pipeline (USE_EXT_TS=1) the timestamp is the shared pl_clk0 timebase,
+# so pass --tick-ns 10 to make dt_us correct.
 
 NAME = {STATUS: "STATUS", EVENT: "EVENT", DATA_HI: "DATA_HI", DATA_LO: "DATA_LO",
         TS_HI: "TS_HI", TS_LO: "TS_LO", POP: "POP", EVENT_COUNT: "EVENT_COUNT",
