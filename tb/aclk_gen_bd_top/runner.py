@@ -1,49 +1,21 @@
-"""Cocotb 2.0 runner for rtl/aclk_gen_bd_top.v (the no-AXI BD wrapper). Compiles the
-Verilog wrapper plus its SystemVerilog children (encoder + timeline).
-"""
-
-import os
+"""Cocotb 2.0 runner for rtl/aclk_gen_bd_top.v (the no-AXI BD wrapper).
+Shared plumbing: tb/runner_common.py."""
 import sys
 from pathlib import Path
 
-from cocotb_tools.runner import get_runner
-
-SIM = os.getenv("SIM", "icarus")
-
-TB_DIR   = Path(__file__).resolve().parent
-PROJ_DIR = TB_DIR.parents[1]
-RTL_DIR  = PROJ_DIR / "rtl"
-BUILD    = PROJ_DIR / "sim_build" / "aclk_gen_bd_top"
-
-sys.path.insert(0, str(TB_DIR))
-sys.path.insert(0, str(TB_DIR.parent))
-
-_oss = os.getenv("OSS_CAD_SUITE")
-if _oss and (Path(_oss) / "bin").is_dir():
-    os.environ["PATH"] = str(Path(_oss) / "bin") + os.pathsep + os.environ.get("PATH", "")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from runner_common import run_cocotb
 
 
 def test_aclk_gen_bd_top():
-    runner = get_runner(SIM)
-    build_args = ["--trace-fst", "--trace-structs"] if SIM == "verilator" else []
-    runner.build(
+    run_cocotb(
+        "aclk_gen_bd_top",
         sources=[
-            RTL_DIR / "aclk_lite" / "aclk_lite_encoder.sv",
-            RTL_DIR / "aclk_lite" / "aclk_lite_gen_timeline.sv",
-            RTL_DIR / "aclk_gen_bd_top.v",
+            "rtl/aclk_lite/aclk_lite_encoder.sv",
+            "rtl/aclk_lite/aclk_lite_gen_timeline.sv",
+            "rtl/aclk_gen_bd_top.v",
         ],
         hdl_toplevel="aclk_gen_bd_top",
-        build_dir=BUILD,
-        build_args=build_args,
-        timescale=("1ns", "1ps"),
-        waves=True,
-        always=True,
-    )
-    runner.test(
-        hdl_toplevel="aclk_gen_bd_top",
-        test_module="test_aclk_gen_bd_top",
-        build_dir=BUILD,
-        waves=True,
     )
 
 

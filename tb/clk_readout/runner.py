@@ -1,50 +1,28 @@
 """Cocotb 2.0 runner for the full unified PL chain rtl/aclk_lite/clk_readout_top:
-serdec + clk_byte_framer -> shared readout -> AXI4-Lite. The serial line is driven by
-tb/clk_tx_model.py; AXI is read with tb/axi_lite_bfm.py."""
-import os
+serdec + clk_byte_framer -> shared readout -> AXI4-Lite. Shared plumbing: tb/runner_common.py."""
 import sys
 from pathlib import Path
 
-from cocotb_tools.runner import get_runner
-
-SIM = os.getenv("SIM", "icarus")
-
-TB_DIR   = Path(__file__).resolve().parent
-PROJ_DIR = TB_DIR.parents[1]
-RTL_DIR  = PROJ_DIR / "rtl"
-BUILD    = PROJ_DIR / "sim_build" / "clk_readout"
-
-sys.path.insert(0, str(TB_DIR))
-sys.path.insert(0, str(TB_DIR.parent))    # shared tb/clk_tx_model.py + tb/axi_lite_bfm.py
-
-_oss = os.getenv("OSS_CAD_SUITE")
-if _oss and (Path(_oss) / "bin").is_dir():
-    os.environ["PATH"] = str(Path(_oss) / "bin") + os.pathsep + os.environ.get("PATH", "")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from runner_common import run_cocotb
 
 
 def test_clk_readout():
-    runner = get_runner(SIM)
-    build_args = ["--trace-fst", "--trace-structs"] if SIM == "verilator" else []
-    runner.build(
+    run_cocotb(
+        "clk_readout",
         sources=[
-            RTL_DIR / "synchronizer.sv",
-            RTL_DIR / "async_fifo.sv",
-            RTL_DIR / "cdc_gray_count.sv",
-            RTL_DIR / "aclk_readout" / "aclk_readout_core.sv",
-            RTL_DIR / "aclk_readout" / "aclk_readout_axi.sv",
-            RTL_DIR / "aclk_bridge" / "serdec4_9MHz.v",
-            RTL_DIR / "aclk_lite" / "clk_byte_framer.sv",
-            RTL_DIR / "aclk_lite" / "clk_rcv.sv",
-            RTL_DIR / "aclk_lite" / "clk_readout_top.sv",
+            "rtl/synchronizer.sv",
+            "rtl/async_fifo.sv",
+            "rtl/cdc_gray_count.sv",
+            "rtl/aclk_readout/aclk_readout_core.sv",
+            "rtl/aclk_readout/aclk_readout_axi.sv",
+            "rtl/aclk_bridge/serdec4_9MHz.v",
+            "rtl/aclk_lite/clk_byte_framer.sv",
+            "rtl/aclk_lite/clk_rcv.sv",
+            "rtl/aclk_lite/clk_readout_top.sv",
         ],
         hdl_toplevel="clk_readout_top",
-        build_dir=BUILD,
-        build_args=build_args,
-        timescale=("1ns", "1ps"),
-        waves=True,
-        always=True,
     )
-    runner.test(hdl_toplevel="clk_readout_top", test_module="test_clk_readout", build_dir=BUILD, waves=True)
 
 
 if __name__ == "__main__":
