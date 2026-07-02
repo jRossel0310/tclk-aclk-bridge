@@ -152,55 +152,16 @@ endmodule
 '@
 
     $runnerTpl = @'
-"""Cocotb 2.0 Python runner for the __MOD__ testbench.
-
-Switch simulators by changing SIM below, or from the shell:
-    $env:SIM = "verilator"      # PowerShell
-    export SIM=verilator        # bash
-"""
-
-import os
+"""Cocotb 2.0 runner for rtl/__MOD__.sv (shared plumbing: tb/runner_common.py)."""
 import sys
 from pathlib import Path
 
-from cocotb_tools.runner import get_runner
-
-# ===== flip this ONE variable to change simulator ========================
-SIM = os.getenv("SIM", "icarus")        # "icarus" (default) or "verilator"
-# =========================================================================
-
-TB_DIR   = Path(__file__).resolve().parent
-PROJ_DIR = TB_DIR.parents[1]
-RTL_DIR  = PROJ_DIR / "rtl"
-BUILD    = PROJ_DIR / "sim_build" / "__MOD__"
-
-sys.path.insert(0, str(TB_DIR))
-
-# Best-effort: honor OSS_CAD_SUITE if set; otherwise rely on the tools already
-# being on PATH (the sim.sh / sim.ps1 wrappers put them there for you).
-_oss = os.getenv("OSS_CAD_SUITE")
-if _oss and (Path(_oss) / "bin").is_dir():
-    os.environ["PATH"] = str(Path(_oss) / "bin") + os.pathsep + os.environ.get("PATH", "")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # tb/ for runner_common
+from runner_common import run_cocotb
 
 
 def test___MOD__():
-    runner = get_runner(SIM)
-    build_args = ["--trace-fst", "--trace-structs"] if SIM == "verilator" else []
-    runner.build(
-        sources=[RTL_DIR / "__MOD__.sv"],
-        hdl_toplevel="__MOD__",
-        build_dir=BUILD,
-        build_args=build_args,
-        timescale=("1ns", "1ps"),
-        waves=True,
-        always=True,
-    )
-    runner.test(
-        hdl_toplevel="__MOD__",
-        test_module="test___MOD__",
-        build_dir=BUILD,
-        waves=True,
-    )
+    run_cocotb("__MOD__", sources=["rtl/__MOD__.sv"], hdl_toplevel="__MOD__")
 
 
 if __name__ == "__main__":
