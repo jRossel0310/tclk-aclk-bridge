@@ -43,6 +43,10 @@ ls -l /dev/uio*
 
 ## Readers
 
+All readers import `readout_common.py` (shared register map + watchdog + drain loop);
+`hw.ps1 deploy` copies it automatically. If you scp a reader by hand, copy
+`readout_common.py` and `tclk_filter.py` alongside it.
+
 Python readers mmap either `/dev/uioN` (offset 0) or `/dev/mem` (offset
 `0x8000_0000`); register offsets are identical. Find the right UIO node via
 `cat /sys/class/uio/uio*/name`. Run with `-u` for unbuffered output, e.g.:
