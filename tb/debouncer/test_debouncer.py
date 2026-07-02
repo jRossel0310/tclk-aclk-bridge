@@ -14,6 +14,8 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, Timer
 
+from cocotb_helpers import start_clock
+
 CLK_PERIOD_NS = 10
 
 # Keep in sync with runner.py's `parameters`.
@@ -24,10 +26,6 @@ PULSE_CNT_MAX = 4
 DEBOUNCE_CYCLES = (PULSE_CNT_MAX + 2) * SAMPLE_CNT_MAX
 
 
-def start_clock(dut):
-    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_NS, unit="ns").start())
-
-
 async def settle(dut):
     await Timer(1, unit="ns")
 
@@ -35,7 +33,7 @@ async def settle(dut):
 @cocotb.test()
 async def test_debouncer_asserts_on_steady_high(dut):
     """A steadily-held input eventually drives the output high."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     dut.glitchy_signal.value = 0
     await ClockCycles(dut.clk, SAMPLE_CNT_MAX)
     await settle(dut)
@@ -51,7 +49,7 @@ async def test_debouncer_asserts_on_steady_high(dut):
 @cocotb.test()
 async def test_debouncer_clears_on_release(dut):
     """After the input drops, the output returns low."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     dut.glitchy_signal.value = 1
     await ClockCycles(dut.clk, DEBOUNCE_CYCLES)
     await settle(dut)
@@ -69,7 +67,7 @@ async def test_debouncer_clears_on_release(dut):
 @cocotb.test()
 async def test_debouncer_rejects_glitch(dut):
     """A brief glitch shorter than the window never reaches the output."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     dut.glitchy_signal.value = 0
     await ClockCycles(dut.clk, SAMPLE_CNT_MAX)
     await settle(dut)

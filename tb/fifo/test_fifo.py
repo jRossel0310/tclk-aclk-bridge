@@ -9,15 +9,13 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
+from cocotb_helpers import start_clock
+
 CLK_PERIOD_NS = 10
 
 # Keep in sync with runner.py's `parameters`.
 WIDTH = 8
 DEPTH = 4
-
-
-def start_clock(dut):
-    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_NS, unit="ns").start())
 
 
 async def settle(dut):
@@ -58,7 +56,7 @@ async def pop(dut):
 @cocotb.test()
 async def test_fifo_reset_empty(dut):
     """After reset the FIFO is empty and not full."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     await reset_dut(dut)
     assert int(dut.empty.value) == 1, "FIFO should be empty after reset"
     assert int(dut.full.value) == 0, "FIFO should not be full after reset"
@@ -68,7 +66,7 @@ async def test_fifo_reset_empty(dut):
 @cocotb.test()
 async def test_fifo_fifo_order(dut):
     """Values come out in the order they went in."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     await reset_dut(dut)
 
     data = [0x11, 0x22, 0x33]
@@ -85,7 +83,7 @@ async def test_fifo_fifo_order(dut):
 @cocotb.test()
 async def test_fifo_full_and_overflow(dut):
     """Filling to DEPTH asserts full; writes while full are ignored."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     await reset_dut(dut)
 
     for i in range(DEPTH):
@@ -110,7 +108,7 @@ async def test_fifo_full_and_overflow(dut):
 @cocotb.test()
 async def test_fifo_simultaneous_read_write(dut):
     """A concurrent read+write keeps occupancy steady and preserves order."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     await reset_dut(dut)
 
     await push(dut, 0x01)

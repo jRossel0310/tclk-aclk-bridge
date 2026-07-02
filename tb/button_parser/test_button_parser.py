@@ -10,6 +10,8 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
+from cocotb_helpers import start_clock
+
 CLK_PERIOD_NS = 10
 
 # Keep in sync with runner.py's `parameters`.
@@ -18,10 +20,6 @@ PULSE_CNT_MAX = 4
 
 # Generous window covering sync (2) + debounce + edge-detect (1) + slack.
 SETTLE_CYCLES = (PULSE_CNT_MAX + 4) * SAMPLE_CNT_MAX + 8
-
-
-def start_clock(dut):
-    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_NS, unit="ns").start())
 
 
 async def settle(dut):
@@ -46,7 +44,7 @@ async def count_pulses(dut, cycles):
 @cocotb.test()
 async def test_button_parser_single_press(dut):
     """A sustained press yields exactly one pulse."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     btn = getattr(dut, "in")          # "in" is a Python keyword
     btn.value = 0
     await ClockCycles(dut.clk, SAMPLE_CNT_MAX)
@@ -60,7 +58,7 @@ async def test_button_parser_single_press(dut):
 @cocotb.test()
 async def test_button_parser_press_release_press(dut):
     """Two distinct presses yield two separate pulses; releasing does not."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     btn = getattr(dut, "in")          # "in" is a Python keyword
 
     # Start from a known released state (tests share one simulation, so a

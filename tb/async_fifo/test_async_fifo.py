@@ -21,6 +21,8 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
+from cocotb_helpers import _b
+
 # RTL defaults (rtl/async_fifo.sv): WIDTH=96, ADDR_WIDTH=6 -> DEPTH=64.
 WIDTH = 96
 DEPTH = 64
@@ -33,15 +35,6 @@ RD_PERIOD_NS = 10     # 100 MHz, stands in for pl_clk0
 def _distinct(i: int) -> int:
     """A distinct WIDTH-bit pattern per index, so an order check is meaningful."""
     return (((i & 0xFFFF) << 64) | (0xC0FFEE00 + i)) & MASK
-
-
-def _b(sig) -> int:
-    """Read a 1-bit signal as 0 or 1; unresolved (x/z) returns -1 so callers can
-    treat warm-up cycles as 'not ready' instead of crashing on int(x)."""
-    try:
-        return int(sig.value)
-    except Exception:
-        return -1
 
 
 # ---------------------------------------------------------------------------

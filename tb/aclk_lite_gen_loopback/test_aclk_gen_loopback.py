@@ -17,6 +17,8 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
+from cocotb_helpers import _b
+
 CLK80_NS = 12     # ~80 MHz generator + serdec clock
 CLK40_NS = 25     # ~40 MHz framer clock
 MASK64 = (1 << 64) - 1
@@ -26,13 +28,6 @@ TRIO = [
     (0xABCD, None, 0),
     (0x1234, 0xDEADBEEFCAFE0001, 0),
 ]
-
-
-def _b(sig) -> int:
-    try:
-        return int(sig.value)
-    except Exception:
-        return -1
 
 
 async def reset_dut(dut):

@@ -21,19 +21,12 @@ from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
 from aclk_tx_model import stream_frames, MASK64
+from cocotb_helpers import _b
 
 RX_PERIOD_NS = 16     # recovered RX clock (CLK1), about 62.5 MHz
 RD_PERIOD_NS = 10     # PS-facing read clock, 100 MHz
 
 NULL_EVENT = (0xFFFF, MASK64)     # low event byte 0xFF marks a null/idle packet
-
-
-def _b(sig) -> int:
-    """A 1-bit signal as 0/1; unresolved (x/z) returns -1 (warm-up not ready)."""
-    try:
-        return int(sig.value)
-    except Exception:
-        return -1
 
 
 def _unpack(word: int):

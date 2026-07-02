@@ -15,16 +15,10 @@ from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
 from manchester_tx_model import send_frame, OVERSAMPLE
+from cocotb_helpers import _b
 
 CLK_NS = 10                 # 100 MHz oversampling clock
 MASK64 = (1 << 64) - 1
-
-
-def _b(sig) -> int:
-    try:
-        return int(sig.value)
-    except Exception:
-        return -1
 
 
 async def reset_dut(dut):

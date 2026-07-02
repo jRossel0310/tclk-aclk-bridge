@@ -10,14 +10,12 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
+from cocotb_helpers import start_clock
+
 CLK_PERIOD_NS = 10
 
 # Keep in sync with runner.py: CLOCK_FREQ // BAUD_RATE.
 SYMBOL = 10
-
-
-def start_clock(dut):
-    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_NS, unit="ns").start())
 
 
 async def settle(dut):
@@ -70,7 +68,7 @@ async def recv_and_check(dut, expected):
 @cocotb.test()
 async def test_uart_rx_idle_after_reset(dut):
     """With an idle line, no byte is reported."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     await reset_dut(dut)
     await ClockCycles(dut.clk, SYMBOL)
     await settle(dut)
@@ -81,7 +79,7 @@ async def test_uart_rx_idle_after_reset(dut):
 @cocotb.test()
 async def test_uart_rx_receives_bytes(dut):
     """Several bytes are received and decoded correctly, one after another."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     await reset_dut(dut)
     for byte in (0x00, 0xFF, 0xA5, 0x3C, 0x81):
         await serial_send(dut, byte)

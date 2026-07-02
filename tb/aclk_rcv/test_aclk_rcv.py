@@ -16,6 +16,7 @@ from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
 from aclk_tx_model import stream_frames
+from cocotb_helpers import start_clock
 
 CLK_PERIOD_NS = 10
 
@@ -23,9 +24,6 @@ CLK_PERIOD_NS = 10
 # ---------------------------------------------------------------------------
 # DUT helpers
 # ---------------------------------------------------------------------------
-
-def start_clock(dut):
-    cocotb.start_soon(Clock(dut.CLK1, CLK_PERIOD_NS, unit="ns").start())
 
 
 async def reset_dut(dut):
@@ -59,7 +57,7 @@ async def monitor(dut, captured, errors):
 @cocotb.test()
 async def test_alignment_and_decode(dut):
     """Stream one frame repeatedly: the link aligns and decodes EVENT/DATA exactly."""
-    start_clock(dut)
+    start_clock(dut.CLK1, CLK_PERIOD_NS)
     await reset_dut(dut)
 
     event, data = 0x1234, 0xCAFEF00DDEADBEEF
@@ -81,7 +79,7 @@ async def test_alignment_and_decode(dut):
 @cocotb.test()
 async def test_event_sequence_integrity(dut):
     """A repeating sequence of distinct events decodes back in order."""
-    start_clock(dut)
+    start_clock(dut.CLK1, CLK_PERIOD_NS)
     await reset_dut(dut)
 
     # All event low-bytes != 0xFF (0x..FF denotes a null/idle packet, per top_module.v).
@@ -118,7 +116,7 @@ async def test_event_sequence_integrity(dut):
 async def test_bad_crc_error_path(dut):
     """A single corrupted frame raises ACLK_ERROR (not VALID); the link stays
     aligned and good frames keep decoding."""
-    start_clock(dut)
+    start_clock(dut.CLK1, CLK_PERIOD_NS)
     await reset_dut(dut)
 
     event, data = 0x1234, 0xCAFEF00DDEADBEEF

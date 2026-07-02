@@ -10,17 +10,11 @@ from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
 from clk_tx_model import frame_bits   # real-framing per-byte bit list
+from cocotb_helpers import _b
 
 SPC = 8        # SAMPLES_PER_CELL
 HALF = 4
 CLK_NS = 12    # exact period is irrelevant; only sample counts matter
-
-
-def _b(sig) -> int:
-    try:
-        return int(sig.value)
-    except Exception:
-        return -1
 
 
 def byte_list(event_id, data, frame_type):

@@ -7,15 +7,9 @@ from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
 from clk_tx_model import stream_frames, drive_samples, SAMPLES_PER_CELL
+from cocotb_helpers import _b
 
 WARMUP_CELLS = 40
-
-
-def _b(sig) -> int:
-    try:
-        return int(sig.value)
-    except Exception:
-        return -1
 
 
 async def reset_dut(dut):

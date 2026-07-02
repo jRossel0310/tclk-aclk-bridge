@@ -9,12 +9,10 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
+from cocotb_helpers import start_clock
+
 CLK_PERIOD_NS = 10
 STAGES = 2          # must match the synchronizer's STAGES parameter (default 2)
-
-
-def start_clock(dut):
-    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_NS, unit="ns").start())
 
 
 async def settle(dut):
@@ -32,7 +30,7 @@ async def flush(dut, value):
 @cocotb.test()
 async def test_synchronizer_latency(dut):
     """A 0->1 change appears on the output after exactly STAGES clock edges."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     await flush(dut, 0)
     assert int(dut.sync_signal.value) == 0, "output should track a steady 0"
 
@@ -51,7 +49,7 @@ async def test_synchronizer_latency(dut):
 @cocotb.test()
 async def test_synchronizer_tracks_both_levels(dut):
     """After settling, the output follows the input for both 0 and 1."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     for value in (1, 0, 1, 0):
         await flush(dut, value)
         assert int(dut.sync_signal.value) == value, \

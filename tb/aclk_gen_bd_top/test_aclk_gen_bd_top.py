@@ -13,15 +13,10 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
+from cocotb_helpers import _b
+
 CLK_NS    = 12.5   # 80 MHz cell clock (matches build_aclkgen.tcl CLKOUT1)
 POLL_CYCLES = 90000  # TRIO_GAP=80000 warm-up + margin for first frame_sync
-
-
-def _b(sig) -> int:
-    try:
-        return int(sig.value)
-    except Exception:
-        return -1
 
 
 @cocotb.test()

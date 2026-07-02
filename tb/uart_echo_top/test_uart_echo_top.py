@@ -10,14 +10,12 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles
 
+from cocotb_helpers import start_clock
+
 CLK_PERIOD_NS = 10
 
 # Keep in sync with runner.py: CLOCK_FREQ // BAUD_RATE.
 SYMBOL = 10
-
-
-def start_clock(dut):
-    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_NS, unit="ns").start())
 
 
 async def reset_dut(dut):
@@ -63,7 +61,7 @@ async def serial_recv(dut, timeout_symbols=400):
 @cocotb.test()
 async def test_echo_single_byte(dut):
     """A single byte sent in is echoed back unchanged."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     await reset_dut(dut)
 
     recv = cocotb.start_soon(serial_recv(dut))
@@ -77,7 +75,7 @@ async def test_echo_single_byte(dut):
 @cocotb.test()
 async def test_echo_multiple_bytes(dut):
     """Several bytes are echoed back in order (exercises the FIFO buffering)."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     await reset_dut(dut)
 
     data = [0x00, 0xFF, 0x3C, 0x81]

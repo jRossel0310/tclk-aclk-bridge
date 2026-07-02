@@ -8,14 +8,12 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
+from cocotb_helpers import start_clock
+
 CLK_PERIOD_NS = 10
 
 # Keep in sync with runner.py: CLOCK_FREQ // BAUD_RATE.
 SYMBOL = 10
-
-
-def start_clock(dut):
-    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_NS, unit="ns").start())
 
 
 async def settle(dut):
@@ -68,7 +66,7 @@ async def send_and_check(dut, byte):
 @cocotb.test()
 async def test_uart_tx_idle_after_reset(dut):
     """After reset the line idles high and the TX is ready."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     await reset_dut(dut)
     assert int(dut.serial_out.value) == 1, "serial_out should idle high"
     assert int(dut.data_in_ready.value) == 1, "TX should be ready after reset"
@@ -78,7 +76,7 @@ async def test_uart_tx_idle_after_reset(dut):
 @cocotb.test()
 async def test_uart_tx_transmits_bytes(dut):
     """Several bytes transmit correctly, back to back."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
     await reset_dut(dut)
     for byte in (0x00, 0xFF, 0xA5, 0x3C, 0x81):
         await send_and_check(dut, byte)

@@ -14,14 +14,9 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
+from cocotb_helpers import start_clock
+
 CLK_PERIOD_NS = 10
-
-
-def start_clock(dut):
-    """Start a free-running clock on dut.clk. Reusable across tests."""
-    clock = Clock(dut.clk, CLK_PERIOD_NS, unit="ns")
-    cocotb.start_soon(clock.start())
-    return clock
 
 
 async def reset_dut(dut, cycles: int = 2):
@@ -47,7 +42,7 @@ async def settle(dut):
 @cocotb.test()
 async def test_counter_increments(dut):
     """After reset the counter is 0, then increments once per enabled cycle."""
-    start_clock(dut)
+    start_clock(dut.clk, CLK_PERIOD_NS)
 
     # --- reset: expect a clean zero --------------------------------------
     await reset_dut(dut)

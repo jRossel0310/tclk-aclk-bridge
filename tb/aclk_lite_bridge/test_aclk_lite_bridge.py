@@ -19,6 +19,8 @@ from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 import cocotb.utils
 
+from cocotb_helpers import _b
+
 # ---- timing constants ----
 # enc_clk = 80 MHz -> 12.5 ns period
 ENC_CLK_PS = 12_500   # picoseconds
@@ -33,13 +35,6 @@ PLOT_DIR = (
     Path(__file__).resolve().parents[2]
     / "sim_build" / "aclk_lite_bridge" / "plots"
 )
-
-
-def _b(sig) -> int:
-    try:
-        return int(sig.value)
-    except Exception:
-        return -1
 
 
 def _save_line_plot(timestamps_ns, values, path):

@@ -22,6 +22,7 @@ from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
 from aclk_tx_model import stream_frames, MASK64
 from axi_lite_bfm import axi_read, axi_write
+from cocotb_helpers import _b
 
 RX_PERIOD_NS = 16     # recovered RX clock (CLK1)
 AXI_PERIOD_NS = 10    # PS / AXI clock
@@ -34,13 +35,6 @@ STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP, EVENT_COUNT, NULL_COUNT, ERR
 NULL_EVENT = (0xFFFF, MASK64)
 
 FILTER_CFG, FILTERED_COUNT = 0xD0, 0xE0   # drop-mask config (write-only); dropped-event count (read)
-
-
-def _b(sig) -> int:
-    try:
-        return int(sig.value)
-    except Exception:
-        return -1
 
 
 # ---------------------------------------------------------------------------
