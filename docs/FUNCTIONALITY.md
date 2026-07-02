@@ -78,7 +78,8 @@ async_fifo -> aclk_lite_encoder mirror on B10) and global_timebase.
 13 emit matplotlib plots to sim_build/<module>/plots/. Shared models: tclk_tx_model.py
 (biphase cells), clk_tx_model.py (real multi-byte framing), manchester_tx_model.py
 (legacy clean-room), aclk_tx_model.py (GT frames + CRC), axi_lite_bfm.py (AXI master),
-plot_util.py (3 plot helpers), runner_common.py (shared runner scaffold used by all 30
+plot_util.py (4 plot helpers; save_line_plot added 2026-07-02, adopted by the
+aclk_lite_encoder suite), runner_common.py (shared runner scaffold used by all 30
 runners), cocotb_helpers.py (shared _b/start_clock helpers).
 
 Coverage highlights (suite: what it proves):
