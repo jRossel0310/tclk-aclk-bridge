@@ -22,7 +22,7 @@ Reading the result: the WIN condition is aligned_frac > 0 (decoder locked) or ev
 gets there, the TX drive is not the bottleneck and the problem is elsewhere in the optical
 path (fiber/connector/SFP) or the RX side.
 """
-import mmap, os, struct, sys, time
+import sys, time
 
 try:
     sys.stdout.reconfigure(line_buffering=True)
@@ -53,17 +53,16 @@ while _i < len(_args):
         _i += 1
 
 # ---- register map (16-byte stride, matches aclk_readout_axi) ----
-EVENT_COUNT, DEBUG, GT_CTRL = 0x70, 0xA0, 0xF0
-OFF = 0 if "uio" in DEV else 0x8000_0000
+import readout_common as rc
+from readout_common import EVENT_COUNT, DEBUG, GT_CTRL
 
-fd = os.open(DEV, os.O_RDWR | os.O_SYNC)
-m = mmap.mmap(fd, 0x1000, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=OFF)
+_io = rc.open_dev(DEV, announce=False, watchdog=False)
 
 def rd(o):
-    return struct.unpack("<I", m[o:o + 4])[0]
+    return _io.rd(o)
 
 def wr(o, v):
-    m[o:o + 4] = struct.pack("<I", v & 0xFFFFFFFF)
+    _io.wr(o, v)
 
 def apply_gt(txdiff, txpost, txpre):
     """Set the TX-driver fields + pulse RX datapath re-init (clears stickies, re-aligns).

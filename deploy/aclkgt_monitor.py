@@ -17,7 +17,7 @@ measures deltas from its own start, so the absolute counter values do not matter
 DEBUG word (0xA0): {rcv_aligned[31], byteali[30], rx_los[29], notintbl[28], disperr[27:14],
                     tx_fault[13], mod_abs[12], recover[11:8], commadet[7:0]}
 """
-import mmap, os, struct, sys, time
+import sys, time
 
 # ---- args ----
 _args = sys.argv[1:]
@@ -39,15 +39,13 @@ while _i < len(_args):
     else:
         _i += 1
 
-STATUS, EVENT_COUNT, NULL_COUNT, ERROR_COUNT, DEBUG = 0x00, 0x70, 0x80, 0x90, 0xA0
-LOCK, FILTERED_COUNT = 0xC0, 0xE0
-OFF = 0 if "uio" in DEV else 0x8000_0000
+import readout_common as rc
+from readout_common import STATUS, EVENT_COUNT, ERROR_COUNT, DEBUG, LOCK
 
-fd = os.open(DEV, os.O_RDWR | os.O_SYNC)
-m = mmap.mmap(fd, 0x1000, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=OFF)
+_io = rc.open_dev(DEV, announce=False, watchdog=False)
 
 def rd(o):
-    return struct.unpack("<I", m[o:o + 4])[0]
+    return _io.rd(o)
 
 def decode(d):
     return {
