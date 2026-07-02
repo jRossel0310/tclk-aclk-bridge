@@ -68,9 +68,9 @@ LOSS_WINDOW=512 / RECOVER_LEN=512. sfp_tx_disable driven 0 (laser on).
 aclk_pipeline_bd_top additionally instantiates aclk_lite_bridge (rx event ->
 async_fifo -> aclk_lite_encoder mirror on B10) and global_timebase.
 
-### Legacy-unused (safe-to-remove candidates)
-- **rtl/Li_Files/**: byte-identical copy of rtl/aclk_bridge/, untracked and git-ignored. Pure local dead weight.
-- **rtl/aclk_bridge/** unused members (no build, tb, or runner references): BitEncoder.v, FrameEncoder.v, fake_data.v, lfsr80.v, TimelineGenerator.v, aclk_data_source.v, top_module.v, ack_stimulus_gen.v. (aclk_data_source.v was the reference for aclk_tclk_encoder.v; keep-as-reference is a valid choice.)
+### Removed 2026-07-02 (efficiency-cleanup branch)
+- **rtl/Li_Files/**: byte-identical copy of rtl/aclk_bridge/, untracked and git-ignored. Deleted (it was never tracked, so there is no git history for it).
+- **rtl/aclk_bridge/** unused members, deleted (history retrievable via git): BitEncoder.v, FrameEncoder.v, fake_data.v, lfsr80.v, TimelineGenerator.v, aclk_data_source.v, top_module.v, ack_stimulus_gen.v. (aclk_data_source.v was the reference for aclk_tclk_encoder.v, which remains.)
 
 ## 3. Testbenches (tb/, cocotb 2.0 + Icarus, run via sim.ps1 / sim.sh)
 
@@ -78,7 +78,8 @@ async_fifo -> aclk_lite_encoder mirror on B10) and global_timebase.
 13 emit matplotlib plots to sim_build/<module>/plots/. Shared models: tclk_tx_model.py
 (biphase cells), clk_tx_model.py (real multi-byte framing), manchester_tx_model.py
 (legacy clean-room), aclk_tx_model.py (GT frames + CRC), axi_lite_bfm.py (AXI master),
-plot_util.py (3 plot helpers).
+plot_util.py (3 plot helpers), runner_common.py (shared runner scaffold used by all 30
+runners), cocotb_helpers.py (shared _b/start_clock helpers).
 
 Coverage highlights (suite: what it proves):
 - clk_rcv: unified decoder on mixed 1/2/12-byte frames + parity errors.
@@ -95,7 +96,7 @@ Coverage highlights (suite: what it proves):
 ## 4. Driver scripts (repo root)
 
 - **sim.ps1 / sim.sh** (functionally matched): `setup` (venv + requirements), `run -Module/-m <name> -Sim icarus|verilator`, `wave` (GTKWave on latest FST), `test` (run + wave), `new <name>` (scaffold rtl + tb), `list` (auto-discover tb/*/runner.py), `clean`, `help`. OSS_CAD_SUITE resolution via env var or PATH.
-- **hw.ps1**: `build` (batch Vivado, 12-attempt antivirus-flake retry, runs from a space-free dir, then bootgen .bit -> .bit.bin, MD5/SHA256, build-manifest.json with git commit), `deploy` (scp bin + design-mapped readers: tclk/aclk/clk -> their reader + tclk_filter.py, uart_echo -> uart_echo_test.py), `gui`, `clean`. Flags: -Tcl, -Name, -Vivado, -BuildRoot, -DeployHost.
+- **hw.ps1**: `build` (batch Vivado, 12-attempt antivirus-flake retry, runs from a space-free dir, then bootgen .bit -> .bit.bin, MD5/SHA256, build-manifest.json with git commit), `deploy` (scp bin + design-mapped readers via pyMap: tclk/aclk/clk -> their reader + tclk_filter.py, uart_echo -> uart_echo_test.py, plus aclkgt_loop/aclkgt_rx/aclkgt_selftest/aclk_pipeline entries, all mapped builds now also ship readout_common.py), `gui`, `clean`. Flags: -Tcl, -Name, -Vivado, -BuildRoot, -DeployHost.
 - **hw.sh**: lite subset (build with 6 retries to .bit only, gui, clean; uart_echo default; no bootgen/deploy). Known feature drift vs hw.ps1.
 
 ## 5. Deploy (deploy/)
@@ -110,6 +111,7 @@ event drain, 1 Hz stats line, --drop hardware filter config via tclk_filter.py):
 - **aclkgt_monitor.py**: long-run link endurance monitor (read-only, wrap-corrected counters, CSV log, HEALTHY/MARGINAL/UNSTABLE verdict, --interval/--report).
 - **aclkgt_sweep.py**: TX driver sweep (applies combos via GT_CTRL, dwell + sample, ranks by alignment/events/disperr, prints best).
 - **tclk_filter.py** (+ test_tclk_filter.py): pure drop-mask helpers parse_drop_codes / filter_cfg_word, unit-tested, imported by all readers.
+- **readout_common.py** (+ test_readout_common.py): shared register map, watchdog RegIO, and drain loop, used by all 4 readers + aclkgt_monitor.py + aclkgt_sweep.py.
 - **diag.py / probe.py / pltest.py / uart_echo_test.py**: bring-up diagnostics (UART Lite step-trace, RAM-vs-peripheral probe, PL-alive counter check, AXI UART echo test).
 
 Artifacts: **uart_echo.dts** (single-UIO overlay @ 0x8000_0000, used by ALL single-readout builds), **aclk_pipeline.dts** (two-UIO overlay 0x8000_0000 + 0x8001_0000), **uart_echo.bif / template.bif** (bootgen recipes), **shell.json** (XRT_FLAT metadata).
