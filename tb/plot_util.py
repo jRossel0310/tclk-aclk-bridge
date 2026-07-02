@@ -54,6 +54,43 @@ def save_fifo_plot(series, n_events, title, out_path):
     return out_path
 
 
+def save_line_plot(levels, title, out_path):
+    """Write a step plot of captured serial-line levels vs sample index.
+
+    Parameters
+    ----------
+    levels   : list of 0/1 line samples
+    title    : plot title string
+    out_path : Path (or str) -- destination .png file; parent dirs are created
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:                        # noqa: BLE001
+        warnings.warn(f"matplotlib unavailable, skipping plot: {exc}")
+        return None
+    if not levels:
+        return None
+
+    xs = list(range(len(levels)))
+    fig, ax = plt.subplots(figsize=(11, 3))
+    ax.step(xs, levels, where="post", color="tab:green", lw=1.4)
+    ax.set_ylim(-0.2, 1.2)
+    ax.set_yticks([0, 1])
+    ax.set_xlabel("oversampling-clock sample")
+    ax.set_ylabel("line")
+    ax.set_title(title)
+    ax.grid(True, alpha=0.3)
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+    return out_path
+
+
 def save_word_stream_plot(words, out_path):
     """Write a two-panel DATA16 value + K_OUT flag vs sample index plot.
 

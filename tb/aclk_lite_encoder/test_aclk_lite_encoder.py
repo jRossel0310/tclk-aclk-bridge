@@ -5,16 +5,21 @@ biphase-mark framing of the assembled bytes (transition at every cell boundary, 
 a mid-cell transition iff the cell bit is 1). The transition view is level- and
 phase-independent, so it is robust to exactly when the frame starts.
 """
+from pathlib import Path
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
 from clk_tx_model import frame_bits   # real-framing per-byte bit list
 from cocotb_helpers import _b
+from plot_util import save_line_plot
 
 SPC = 8        # SAMPLES_PER_CELL
 HALF = 4
 CLK_NS = 12    # exact period is irrelevant; only sample counts matter
+
+PLOTS = Path(__file__).resolve().parents[2] / "sim_build" / "aclk_lite_encoder" / "plots"
 
 
 def byte_list(event_id, data, frame_type):
@@ -44,30 +49,6 @@ def golden_transitions(bl):
 def _contains(big, sub):
     n = len(sub)
     return any(big[i:i + n] == sub for i in range(len(big) - n + 1))
-
-
-def _save_line_plot(levels, name, title):
-    """Save a step plot of the captured line levels (matplotlib + Agg backend)."""
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except Exception as exc:
-        import warnings
-        warnings.warn(f"matplotlib unavailable, skipping plot: {exc}")
-        return None
-    from pathlib import Path
-    xs = list(range(len(levels)))
-    fig, ax = plt.subplots(figsize=(11, 3))
-    ax.step(xs, levels, where="post", color="tab:green", lw=1.4)
-    ax.set_ylim(-0.2, 1.2); ax.set_yticks([0, 1])
-    ax.set_xlabel("oversampling-clock sample"); ax.set_ylabel("line")
-    ax.set_title(title); ax.grid(True, alpha=0.3)
-    out_dir = Path(__file__).resolve().parents[2] / "sim_build" / "aclk_lite_encoder" / "plots"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / name
-    fig.tight_layout(); fig.savefig(path, dpi=120); plt.close(fig)
-    return path
 
 
 async def reset_dut(dut):
@@ -125,10 +106,10 @@ async def test_encoder_biphase_framing(dut):
 
     # Emit waveform plot of full 12-byte case
     if full_frame_levels is not None:
-        plot_path = _save_line_plot(
+        plot_path = save_line_plot(
             full_frame_levels,
-            "encoder_frame.png",
-            "ACLK-Lite encoder line: full 12-byte packet (event 0x1234 + data)"
+            "ACLK-Lite encoder line: full 12-byte packet (event 0x1234 + data)",
+            PLOTS / "encoder_frame.png",
         )
         if plot_path:
             dut._log.info(f"encoder waveform plot: {plot_path}")
