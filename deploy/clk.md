@@ -14,7 +14,7 @@ Produces `build/kria/clk/clk.runs/impl_1/uart_echo_bd_wrapper.bit.bin` (+ MD5).
 
     .\hw.ps1 deploy -Name clk -DeployHost ubuntu@<host>
 
-Copies the bin, `clk_read.py`, and `tclk_filter.py` to ~ on the board.
+Copies the bin, `clk_read.py`, `readout_common.py`, and `tclk_filter.py` to ~ on the board.
 
 ## Load + read
 

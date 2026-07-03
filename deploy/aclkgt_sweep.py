@@ -24,10 +24,9 @@ path (fiber/connector/SFP) or the RX side.
 """
 import sys, time
 
-try:
-    sys.stdout.reconfigure(line_buffering=True)
-except Exception:
-    pass
+import readout_common as rc
+
+rc.line_buffer_stdout()
 
 # ---- args ----
 _args = sys.argv[1:]
@@ -53,7 +52,6 @@ while _i < len(_args):
         _i += 1
 
 # ---- register map (16-byte stride, matches aclk_readout_axi) ----
-import readout_common as rc
 from readout_common import EVENT_COUNT, DEBUG, GT_CTRL
 
 _io = rc.open_dev(DEV, announce=False, watchdog=False)

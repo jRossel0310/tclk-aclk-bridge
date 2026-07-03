@@ -16,8 +16,8 @@ name and the overlay are identical to the TCLK build.
 
     .\hw.ps1 deploy -Name aclk -DeployHost ubuntu@kria
 
-Copies `uart_echo_bd_wrapper.bit.bin`, `aclk_read.py`, and `tclk_filter.py` to ~ on the
-board.
+Copies `uart_echo_bd_wrapper.bit.bin`, `aclk_read.py`, `readout_common.py`, and
+`tclk_filter.py` to ~ on the board.
 
 ## Load (on the board)
 

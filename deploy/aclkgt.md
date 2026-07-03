@@ -25,8 +25,8 @@ Produces `build/kria/aclkgt_loop/aclkgt_loop.runs/impl_1/uart_echo_bd_wrapper.bi
 ### Get the bitstream + reader onto the board
 
     .\hw.ps1 deploy -Name aclkgt_loop -DeployHost ubuntu@<board>
-    # then make sure the GT reader + filter helper are on the board too:
-    scp deploy/aclkgt_read.py deploy/tclk_filter.py ubuntu@<board>:~
+    # then make sure the GT reader + its shared helper + filter helper are on the board too:
+    scp deploy/aclkgt_read.py deploy/readout_common.py deploy/tclk_filter.py ubuntu@<board>:~
 
 ### Load (on the board)
 
@@ -107,7 +107,7 @@ while the generator emits frames - a scope/LED sanity check that it is alive.
 
 ### Board A (receiver) - flash + read
 
-    scp build/kria/aclkgt_rx/aclkgt_rx.runs/impl_1/uart_echo_bd_wrapper.bit.bin deploy/aclkgt_read.py deploy/tclk_filter.py ubuntu@<boardA>:~
+    scp build/kria/aclkgt_rx/aclkgt_rx.runs/impl_1/uart_echo_bd_wrapper.bit.bin deploy/aclkgt_read.py deploy/readout_common.py deploy/tclk_filter.py ubuntu@<boardA>:~
     # on board A:
     sudo xmutil unloadapp
     sudo fpgautil -b ~/uart_echo_bd_wrapper.bit.bin -o uart_echo.dtbo

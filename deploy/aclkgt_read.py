@@ -20,7 +20,7 @@ import time
 
 import readout_common as rc
 from readout_common import (
-    STATUS, EVENT_COUNT, NULL_COUNT, ERROR_COUNT, DEBUG, HEARTBEAT, LOCK,
+    STATUS, EVENT_COUNT, NULL_COUNT, ERROR_COUNT, DEBUG, LOCK,
     FILTERED_COUNT, GT_CTRL, parse_drop_codes, say,
 )
 

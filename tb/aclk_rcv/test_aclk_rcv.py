@@ -82,7 +82,8 @@ async def test_event_sequence_integrity(dut):
     start_clock(dut.CLK1, CLK_PERIOD_NS)
     await reset_dut(dut)
 
-    # All event low-bytes != 0xFF (0x..FF denotes a null/idle packet, per top_module.v).
+    # All event low-bytes != 0xFF (0x..FF denotes a null/idle packet, a convention from
+    # the legacy aclk_bridge top_module.v, removed 2026-07-02; see git history).
     frames = [
         (0x0001, 0x1111222233334444),
         (0x00A5, 0xAAAABBBBCCCCDDDD),

@@ -19,8 +19,9 @@ on C:\Xilinx). If bootgen is not found, add Vivado 2024.2's `bin` to PATH.
 ```powershell
 .\hw.ps1 deploy -Name tclk -DeployHost "ubuntu@[fe80::48ec:6a99:b6fd:80e9%6]"
 ```
-Copies `uart_echo_bd_wrapper.bit.bin` + `tclk_read.py` + `tclk_filter.py` to `~`.
-(Manual equivalent: `scp` those three files yourself.)
+Copies `uart_echo_bd_wrapper.bit.bin` + `tclk_read.py` + `readout_common.py` +
+`tclk_filter.py` to `~`.
+(Manual equivalent: `scp` those four files yourself.)
 
 ## 3. Load (board): UIO + overlay
 ```bash

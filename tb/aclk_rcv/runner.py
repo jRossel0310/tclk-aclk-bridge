@@ -1,4 +1,10 @@
 """Cocotb 2.0 Python runner for the ACLK_RCV decoder testbench.
+
+GEARBOX_16_TO_96 intentionally leaves its k_a register unreset, so Icarus
+(X warm-up) and Verilator (2-state 0 init) can differ in the pre-alignment
+cycles; output correctness is unaffected (the decoder only trusts CRC==0),
+but Verilator is unverified for this DUT.
+
 Shared plumbing: tb/runner_common.py."""
 import sys
 from pathlib import Path
