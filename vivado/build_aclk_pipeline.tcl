@@ -5,12 +5,15 @@
 #     -> aclk_tclk_encoder -> GT TX -> SFP (external fiber loop) -> GT RX
 #     -> ACLK readout (AXI S_AXI2 @ 0x8001_0000)
 #     -> aclk_lite_bridge/encoder -> ACLK-Lite biphase-mark out (B10).
+#   White Rabbit reference (E10 10 MHz, E12 PPS) disciplines two wr_timebase
+#     replicas plus the wr_timebase_axi monitor/register slave (AXI S_AXI3 @
+#     0x8002_0000), stamping every TCLK/ACLK event with a common {sec, ns}.
 #
 # The block design is modelled on build_aclkgt_selftest.tcl (GT IP, freerun clk_wiz,
 # proc_sys_reset + dcm_locked tied high, SFP sideband ports) PLUS the build_tclk.tcl
 # 80/40 MHz clk_wiz for the TCLK / ACLK-Lite event domains. The custom top is added as
-# a module-ref cell that Vivado infers TWO AXI4-Lite slaves from (S_AXI, S_AXI2); a
-# SmartConnect (NUM_MI=2) fans the LPD master out to both.
+# a module-ref cell that Vivado infers THREE AXI4-Lite slaves from (S_AXI, S_AXI2,
+# S_AXI3); a SmartConnect (NUM_MI=3) fans the LPD master out to all three.
 #
 # design_name=uart_echo_bd so the overlay/UIO identity is unchanged: the bitstream is
 # named uart_echo_bd_wrapper.bit.bin and the existing overlay loads as-is.
@@ -68,16 +71,18 @@ add_files -norecurse [list \
     [file join $rtl_dir synchronizer.sv] \
     [file join $rtl_dir async_fifo.sv] \
     [file join $rtl_dir cdc_gray_count.sv] \
+    [file join $rtl_dir cdc_word_pulse.sv] \
+    [file join $rtl_dir wr_timebase.sv] \
+    [file join $rtl_dir wr_timebase_axi.sv] \
     [file join $rtl_dir aclk_readout aclk_readout_core.sv] \
     [file join $rtl_dir aclk_readout aclk_readout_axi.sv] \
 ]
-# Pipeline glue: the two readout tops, the TCLK->ACLK encoder, the shared timebase,
-# the ACLK-Lite bridge + encoder, and the integrated BD top.
+# Pipeline glue: the two readout tops, the TCLK->ACLK encoder, the ACLK-Lite bridge
+# + encoder, and the integrated BD top.
 add_files -norecurse [list \
     [file join $rtl_dir aclk_lite tclk_readout_top.sv] \
     [file join $rtl_dir aclk_gt aclk_gt_readout_top.sv] \
     [file join $rtl_dir aclk_gt aclk_tclk_encoder.v] \
-    [file join $rtl_dir global_timebase.v] \
     [file join $rtl_dir aclk_lite_bridge.v] \
     [file join $rtl_dir aclk_lite aclk_lite_encoder.sv] \
     [file join $rtl_dir aclk_pipeline_bd_top.v] \
@@ -111,23 +116,25 @@ connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_resetn0] [get_bd_pins rst_pl0/e
 connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins zynq_ultra_ps_e_0/maxihpm0_lpd_aclk]
 
 # ---- The integrated pipeline top as a module-ref cell ----
-# Vivado infers TWO AXI4-Lite slave interfaces (S_AXI, S_AXI2) from the X_INTERFACE
-# attributes in aclk_pipeline_bd_top.v. Both share s_axi_aclk / s_axi_aresetn (pl_clk0).
+# Vivado infers THREE AXI4-Lite slave interfaces (S_AXI, S_AXI2, S_AXI3) from the
+# X_INTERFACE attributes in aclk_pipeline_bd_top.v. All three share s_axi_aclk /
+# s_axi_aresetn (pl_clk0).
 set u [create_bd_cell -type module -reference aclk_pipeline_bd_top u_pipeline]
 connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0]  [get_bd_pins u_pipeline/s_axi_aclk]
 connect_bd_net [get_bd_pins rst_pl0/peripheral_aresetn] [get_bd_pins u_pipeline/s_axi_aresetn]
 
-# ---- SmartConnect: LPD master -> two AXI4-Lite slaves (NUM_SI=1, NUM_MI=2) ----
+# ---- SmartConnect: LPD master -> three AXI4-Lite slaves (NUM_SI=1, NUM_MI=3) ----
 # A single-clock SmartConnect (everything on pl_clk0) cleanly fans the LPD master out
-# to both readout slaves. (The auto interconnect+protocol_converter path corrupts
-# AXI4->AXI4-Lite read data on hardware; SmartConnect is the proven fix.)
+# to all three readout/monitor slaves. (The auto interconnect+protocol_converter path
+# corrupts AXI4->AXI4-Lite read data on hardware; SmartConnect is the proven fix.)
 set sc [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:* axi_sc]
-set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {2}] $sc
+set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {3}] $sc
 connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0]  [get_bd_pins axi_sc/aclk]
 connect_bd_net [get_bd_pins rst_pl0/peripheral_aresetn] [get_bd_pins axi_sc/aresetn]
 connect_bd_intf_net [get_bd_intf_pins zynq_ultra_ps_e_0/M_AXI_HPM0_LPD] [get_bd_intf_pins axi_sc/S00_AXI]
 connect_bd_intf_net [get_bd_intf_pins axi_sc/M00_AXI] [get_bd_intf_pins u_pipeline/S_AXI]
 connect_bd_intf_net [get_bd_intf_pins axi_sc/M01_AXI] [get_bd_intf_pins u_pipeline/S_AXI2]
+connect_bd_intf_net [get_bd_intf_pins axi_sc/M02_AXI] [get_bd_intf_pins u_pipeline/S_AXI3]
 
 # ---- clk_wiz #1: 80 + 40 MHz event-domain clocks from pl_clk0 (from build_tclk.tcl) ----
 # pl_clk0's realized rate is not exactly 100 MHz; clk_wiz makes clk_in1's FREQ_HZ
@@ -183,6 +190,12 @@ connect_bd_net [get_bd_port tclk]          [get_bd_pins u_pipeline/tclk]
 connect_bd_net [get_bd_port aclk_lite_out] [get_bd_pins u_pipeline/aclk_lite_out]
 connect_bd_net [get_bd_port dbg_hb]        [get_bd_pins u_pipeline/dbg_hb]
 
+# White Rabbit reference inputs (Pmod 1 pins 3/4 = E10/E12).
+create_bd_port -dir I wr_clk10
+create_bd_port -dir I wr_pps
+connect_bd_net [get_bd_port wr_clk10] [get_bd_pins u_pipeline/wr_clk10]
+connect_bd_net [get_bd_port wr_pps]   [get_bd_pins u_pipeline/wr_pps]
+
 # SFP+ sideband control/status (drive TX_DISABLE low to enable the laser; monitor the rest).
 create_bd_port -dir O sfp_tx_disable
 create_bd_port -dir I sfp_tx_fault
@@ -207,7 +220,7 @@ connect_bd_net [get_bd_port gt_rxn]      [get_bd_pins u_pipeline/gt_rxn]
 connect_bd_net [get_bd_port gt_txp]      [get_bd_pins u_pipeline/gt_txp]
 connect_bd_net [get_bd_port gt_txn]      [get_bd_pins u_pipeline/gt_txn]
 
-# ---- Address map: the two AXI4-Lite slaves at 0x8000_0000 / 0x8001_0000 ----
+# ---- Address map: the three AXI4-Lite slaves at 0x8000_0000 / 0x8001_0000 / 0x8002_0000 ----
 # A module-reference AXI slave carries no IP-XACT memory map, so its Reg address
 # segment does NOT exist until assign_bd_address auto-creates it (the proven single-
 # slave builds just call bare `assign_bd_address`). So: bare-assign first to create
@@ -220,6 +233,9 @@ assign_bd_address -offset 0x80000000 -range 0x10000 -force -target_address_space
 assign_bd_address -offset 0x80010000 -range 0x10000 -force -target_address_space \
     [get_bd_addr_spaces zynq_ultra_ps_e_0/Data] \
     [get_bd_addr_segs -of_objects [get_bd_intf_pins u_pipeline/S_AXI2]]
+assign_bd_address -offset 0x80020000 -range 0x10000 -force -target_address_space \
+    [get_bd_addr_spaces zynq_ultra_ps_e_0/Data] \
+    [get_bd_addr_segs -of_objects [get_bd_intf_pins u_pipeline/S_AXI3]]
 
 regenerate_bd_layout
 validate_bd_design

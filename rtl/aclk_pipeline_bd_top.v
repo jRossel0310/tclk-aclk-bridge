@@ -25,15 +25,20 @@
 //   2. ONE ACLK decoder: aclk_gt_readout_top owns the only ACLK_RCV; the bridge taps its
 //      dbg_aclk_event/_data/_valid debug outputs (no second ACLK_RCV).
 //
-// Shared timebase: global_timebase runs in s_axi_aclk (pl_clk0) and distributes one
-// 64-bit tick count to both event domains (clk_40m -> ts_tclk, rx_usrclk2 -> ts_aclk),
-// so TCLK and ACLK events carry a common timeline (both readouts use USE_EXT_TS=1).
+// Shared timebase: White Rabbit disciplined. wr_timebase replicas in clk_40m and
+// rx_usrclk2 (plus a monitor in s_axi_aclk behind S_AXI3) all watch the same two
+// Pmod pins (wr_clk10 10 MHz, wr_pps PPS); both readouts stamp {sec, ns} on one
+// timeline (USE_EXT_TS=1). ts is STRICTLY 0 until armed + WR-locked.
 
 `timescale 1ns / 1ps
 
 module aclk_pipeline_bd_top (
     // ---- TCLK input (H12, LVCMOS33 biphase-mark baseband) ----
     input  wire        tclk,
+
+    // ---- White Rabbit reference inputs (Pmod 1: pin3 = E10 10 MHz, pin4 = E12 PPS) ----
+    input  wire        wr_clk10,
+    input  wire        wr_pps,
 
     // ---- GT reference clock differential pair (MGTREFCLK0_224, 156.25 MHz) ----
     input  wire        gt_refclk_p,
@@ -67,9 +72,9 @@ module aclk_pipeline_bd_top (
     input  wire        sfp_rx_los,       // 1 = module RX loss-of-signal (no light)
     input  wire        sfp_mod_abs,      // 1 = module absent
 
-    // ==== shared AXI clock/reset for BOTH AXI4-Lite slaves (PS clock) ====
+    // ==== shared AXI clock/reset for ALL THREE AXI4-Lite slaves (PS clock) ====
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 s_axi_aclk CLK" *)
-    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S_AXI:S_AXI2, ASSOCIATED_RESET s_axi_aresetn" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF S_AXI:S_AXI2:S_AXI3, ASSOCIATED_RESET s_axi_aresetn" *)
     input  wire        s_axi_aclk,
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 s_axi_aresetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
@@ -145,7 +150,43 @@ module aclk_pipeline_bd_top (
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI2 RVALID" *)
     output wire        s_axi2_rvalid,
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI2 RREADY" *)
-    input  wire        s_axi2_rready
+    input  wire        s_axi2_rready,
+
+    // ==== AXI4-Lite slave #3: WR timebase (bus S_AXI3) ====
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 AWADDR" *)
+    input  wire [7:0]  s_axi3_awaddr,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 AWVALID" *)
+    input  wire        s_axi3_awvalid,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 AWREADY" *)
+    output wire        s_axi3_awready,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 WDATA" *)
+    input  wire [31:0] s_axi3_wdata,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 WSTRB" *)
+    input  wire [3:0]  s_axi3_wstrb,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 WVALID" *)
+    input  wire        s_axi3_wvalid,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 WREADY" *)
+    output wire        s_axi3_wready,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 BRESP" *)
+    output wire [1:0]  s_axi3_bresp,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 BVALID" *)
+    output wire        s_axi3_bvalid,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 BREADY" *)
+    input  wire        s_axi3_bready,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 ARADDR" *)
+    input  wire [7:0]  s_axi3_araddr,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 ARVALID" *)
+    input  wire        s_axi3_arvalid,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 ARREADY" *)
+    output wire        s_axi3_arready,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 RDATA" *)
+    output wire [31:0] s_axi3_rdata,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 RRESP" *)
+    output wire [1:0]  s_axi3_rresp,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 RVALID" *)
+    output wire        s_axi3_rvalid,
+    (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S_AXI3 RREADY" *)
+    input  wire        s_axi3_rready
 );
 
     // =====================================================================
@@ -349,17 +390,73 @@ module aclk_pipeline_bd_top (
         {al_s, ba_s, rl_s, ni_s, disperr_cnt, tf_s, ma_s, recover_cnt, commadet_cnt};
 
     // =====================================================================
-    // Shared 64-bit timebase: ref in pl_clk0, distributed to both event domains
+    // White Rabbit timebase: one wr_timebase replica per event domain plus
+    // the wr_timebase_axi monitor/register slave (S_AXI3). All copies watch
+    // the same two pins, so both readouts stamp one {sec, ns} timeline.
+    // STRICT: ts reads 0 until the PS arms seconds (deploy/wr_time.py) and a
+    // PPS loads them; loss of either reference unlocks and requires a re-arm.
+    // NOTE: a GT relock stops rx_usrclk2 and resets the ACLK replica, so it
+    // unlocks; re-arm after any GT recovery (the runbook covers this).
     // =====================================================================
-    wire [63:0] ts_tclk;   // clk_40m  domain (TCLK readout)
+    wire        wr_cfg_valid, wr_cfg_disarm;
+    wire [31:0] wr_cfg_sec;
+    wire [63:0] ts_tclk;   // clk_40m domain (TCLK readout)
     wire [63:0] ts_aclk;   // rx_usrclk2 domain (ACLK readout)
-    global_timebase u_tb (
-        .ref_clk   (s_axi_aclk),
-        .ref_rstn  (s_axi_aresetn),
-        .dst_clk_a (clk_40m),
-        .ts_a      (ts_tclk),
-        .dst_clk_b (rx_usrclk2),
-        .ts_b      (ts_aclk)
+    wire        tb_locked_tclk, tb_locked_aclk;
+
+    wr_timebase #(
+        .CLK_PERIOD_DS (250),          // clk_40m: 25.0 ns
+        .CLK10_TIMEOUT (16),           // 400 ns at 40 MHz
+        .PPS_TIMEOUT   (44_000_000)    // 1.1 s at 40 MHz
+    ) u_tb_tclk (
+        .clk(clk_40m), .rstn(rstn), .wr_clk10(wr_clk10), .wr_pps(wr_pps),
+        .cfg_clk(s_axi_aclk), .cfg_rstn(s_axi_aresetn),
+        .cfg_valid(wr_cfg_valid), .cfg_disarm(wr_cfg_disarm), .cfg_sec(wr_cfg_sec),
+        .ts(ts_tclk), .locked(tb_locked_tclk), .arm_pending(),
+        .pps_alive(), .clk10_alive(), .pps_edge(), .cells_last()
+    );
+
+    wr_timebase #(
+        .CLK_PERIOD_DS (160),          // rx_usrclk2: 16.0 ns (1.25 Gbps / 20 = 62.5 MHz)
+        .CLK10_TIMEOUT (25),           // 400 ns at 62.5 MHz
+        .PPS_TIMEOUT   (68_750_000)    // 1.1 s at 62.5 MHz
+    ) u_tb_aclk (
+        .clk(rx_usrclk2), .rstn(ro_rstn), .wr_clk10(wr_clk10), .wr_pps(wr_pps),
+        .cfg_clk(s_axi_aclk), .cfg_rstn(s_axi_aresetn),
+        .cfg_valid(wr_cfg_valid), .cfg_disarm(wr_cfg_disarm), .cfg_sec(wr_cfg_sec),
+        .ts(ts_aclk), .locked(tb_locked_aclk), .arm_pending(),
+        .pps_alive(), .clk10_alive(), .pps_edge(), .cells_last()
+    );
+
+    wr_timebase_axi #(
+        .AXI_ADDR_W (8)                // production monitor defaults (100 MHz)
+    ) u_tb_axi (
+        .wr_clk10   (wr_clk10),
+        .wr_pps     (wr_pps),
+        .locked_a   (tb_locked_tclk),
+        .locked_b   (tb_locked_aclk),
+        .cfg_valid  (wr_cfg_valid),
+        .cfg_disarm (wr_cfg_disarm),
+        .cfg_sec    (wr_cfg_sec),
+        .s_axi_aclk    (s_axi_aclk),
+        .s_axi_aresetn (s_axi_aresetn),
+        .s_axi_awaddr  (s_axi3_awaddr),
+        .s_axi_awvalid (s_axi3_awvalid),
+        .s_axi_awready (s_axi3_awready),
+        .s_axi_wdata   (s_axi3_wdata),
+        .s_axi_wstrb   (s_axi3_wstrb),
+        .s_axi_wvalid  (s_axi3_wvalid),
+        .s_axi_wready  (s_axi3_wready),
+        .s_axi_bresp   (s_axi3_bresp),
+        .s_axi_bvalid  (s_axi3_bvalid),
+        .s_axi_bready  (s_axi3_bready),
+        .s_axi_araddr  (s_axi3_araddr),
+        .s_axi_arvalid (s_axi3_arvalid),
+        .s_axi_arready (s_axi3_arready),
+        .s_axi_rdata   (s_axi3_rdata),
+        .s_axi_rresp   (s_axi3_rresp),
+        .s_axi_rvalid  (s_axi3_rvalid),
+        .s_axi_rready  (s_axi3_rready)
     );
 
     // =====================================================================

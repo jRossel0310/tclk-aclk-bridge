@@ -43,6 +43,12 @@ set_property -dict {PACKAGE_PIN B10 IOSTANDARD LVCMOS33} [get_ports aclk_lite_ou
 ## Every top-level port needs a LOC + IOSTANDARD or write_bitstream fails DRC (NSTD-1/UCIO-1).
 set_property -dict {PACKAGE_PIN D11 IOSTANDARD LVCMOS33} [get_ports dbg_hb]
 
+## White Rabbit reference inputs: PMOD1 pin 3 = package E10 (10 MHz), pin 4 = E12 (PPS).
+## Both are ASYNC DATA inputs (2-FF synced per consuming domain, like tclk): ordinary
+## LVCMOS33 pins, no clock-capable routing, no create_clock, no set_input_delay.
+set_property -dict {PACKAGE_PIN E10 IOSTANDARD LVCMOS33} [get_ports wr_clk10]
+set_property -dict {PACKAGE_PIN E12 IOSTANDARD LVCMOS33} [get_ports wr_pps]
+
 ## ---------------------------------------------------------------------------
 ## Asynchronous clock groups
 ## ---------------------------------------------------------------------------
@@ -64,10 +70,10 @@ set_property -dict {PACKAGE_PIN D11 IOSTANDARD LVCMOS33} [get_ports dbg_hb]
 ##                      (gtwiz_userclk_*_srcclk_out* and their dividers) + rxoutclk*.
 ##
 ## Which CDC each cross-group cut covers:
-##   A<->B : pl_clk0 <-> clk_40m / clk_80m   - global_timebase gray CDC (ref pl_clk0 ->
-##           ts_a in clk_40m) AND the AXI s_axi_aclk <-> TCLK-readout async FIFO.
-##   A<->C : pl_clk0 <-> rx_usrclk2 / tx_usrclk2 - global_timebase gray CDC (ref pl_clk0
-##           -> ts_b in rx_usrclk2), the ACLK-readout async FIFO (rx_usrclk2 <-> AXI),
+##   A<->B : pl_clk0 <-> clk_40m / clk_80m   - the wr_timebase cfg toggle-CDC
+##           (cdc_word_pulse) AND the AXI s_axi_aclk <-> TCLK-readout async FIFO.
+##   A<->C : pl_clk0 <-> rx_usrclk2 / tx_usrclk2 - the wr_timebase cfg toggle-CDC
+##           (cdc_word_pulse), the ACLK-readout async FIFO (rx_usrclk2 <-> AXI),
 ##           and the GT-health cdc_gray_count / 2-FF status syncs into s_axi_aclk.
 ##   B<->C : clk_40m / clk_80m <-> rx_usrclk2 / tx_usrclk2 - aclk_lite_bridge async FIFO
 ##           (rx_usrclk2 -> clk_80m) AND aclk_tclk_encoder's clk_40m -> tx_usrclk2 handoff.
