@@ -16,8 +16,10 @@ def test_aclk_pipeline_chain():
             "rtl/async_fifo.sv",
             "rtl/cdc_gray_count.sv",
 
-            # Shared timebase
-            "rtl/global_timebase.v",
+            # WR timebase (shared timeline, per-domain replicas + AXI monitor)
+            "rtl/cdc_word_pulse.sv",
+            "rtl/wr_timebase.sv",
+            "rtl/wr_timebase_axi.sv",
 
             # TCLK_RCV (biphase-mark receiver)
             "rtl/aclk_bridge/serdec4_9MHz.v",

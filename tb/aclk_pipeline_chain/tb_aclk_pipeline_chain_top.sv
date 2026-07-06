@@ -10,9 +10,10 @@
 //     -> ACLK_RCV          (direct 16b+K feed, no GT)
 //     -> aclk_gt_readout_top (readout #2, s2_s_axi_*)
 //
-// global_timebase provides a shared 64-bit tick counter:
-//   ref_clk = pl_clk0, dst_clk_a = clk_40m -> ts_tclk -> readout#1
-//             dst_clk_b = clk_tx  -> ts_aclk -> readout#2
+// Two wr_timebase replicas + the wr_timebase_axi monitor/register slave
+// (s3_s_axi_*) replace global_timebase: both readouts stamp events with the
+// same WR-disciplined {sec, ns} timeline, strictly zero until armed + locked.
+// Sim second = 50 WR cells = 5 us (watchdog params scaled to match).
 //
 // Both readouts use USE_EXT_TS=1 so they sample the shared timebase.
 //
@@ -37,6 +38,10 @@ module tb_aclk_pipeline_chain_top (
 
     // TCLK biphase line input
     input  wire tclk,
+
+    // White Rabbit reference inputs (async; shared by all timebase copies)
+    input  wire wr_clk10,
+    input  wire wr_pps,
 
     // ---- AXI4-Lite slave #1: tclk_readout_top (pfx="" -> s_axi_*) ----
     input  wire        s_axi_aclk,
@@ -78,22 +83,95 @@ module tb_aclk_pipeline_chain_top (
     output wire [31:0] s2_s_axi_rdata,
     output wire [1:0]  s2_s_axi_rresp,
     output wire        s2_s_axi_rvalid,
-    input  wire        s2_s_axi_rready
+    input  wire        s2_s_axi_rready,
+
+    // ---- AXI4-Lite slave #3: wr_timebase_axi (pfx="s3_" -> s3_s_axi_*) ----
+    input  wire        s3_s_axi_aclk,
+    input  wire        s3_s_axi_aresetn,
+    input  wire [7:0]  s3_s_axi_awaddr,
+    input  wire        s3_s_axi_awvalid,
+    output wire        s3_s_axi_awready,
+    input  wire [31:0] s3_s_axi_wdata,
+    input  wire [3:0]  s3_s_axi_wstrb,
+    input  wire        s3_s_axi_wvalid,
+    output wire        s3_s_axi_wready,
+    output wire [1:0]  s3_s_axi_bresp,
+    output wire        s3_s_axi_bvalid,
+    input  wire        s3_s_axi_bready,
+    input  wire [7:0]  s3_s_axi_araddr,
+    input  wire        s3_s_axi_arvalid,
+    output wire        s3_s_axi_arready,
+    output wire [31:0] s3_s_axi_rdata,
+    output wire [1:0]  s3_s_axi_rresp,
+    output wire        s3_s_axi_rvalid,
+    input  wire        s3_s_axi_rready
 );
 
     // ----------------------------------------------------------------
-    // Shared timebase (ref = pl_clk0; distributed to both event domains)
+    // WR timebase: one replica per event domain + the AXI monitor slave.
+    // Sim-scaled watchdogs for the 50-cell (5 us) sim second.
     // ----------------------------------------------------------------
-    wire [63:0] ts_tclk;   // sampled into clk_40m domain -> readout#1
-    wire [63:0] ts_aclk;   // sampled into clk_tx  domain -> readout#2
+    wire        cfg_valid, cfg_disarm;
+    wire [31:0] cfg_sec;
+    wire [63:0] ts_tclk;   // clk_40m domain -> readout#1
+    wire [63:0] ts_aclk;   // clk_tx domain -> readout#2
+    wire        tb_locked_tclk, tb_locked_aclk;
 
-    global_timebase u_tb (
-        .ref_clk   (pl_clk0),
-        .ref_rstn  (rstn),
-        .dst_clk_a (clk_40m),
-        .ts_a      (ts_tclk),
-        .dst_clk_b (clk_tx),
-        .ts_b      (ts_aclk)
+    wr_timebase #(
+        .CLK_PERIOD_DS (250),
+        .CLK10_TIMEOUT (16),     // 400 ns at 40 MHz
+        .PPS_TIMEOUT   (240)     // 6 us at 40 MHz
+    ) u_tb_tclk (
+        .clk(clk_40m), .rstn(rstn), .wr_clk10(wr_clk10), .wr_pps(wr_pps),
+        .cfg_clk(s_axi_aclk), .cfg_rstn(s_axi_aresetn),
+        .cfg_valid(cfg_valid), .cfg_disarm(cfg_disarm), .cfg_sec(cfg_sec),
+        .ts(ts_tclk), .locked(tb_locked_tclk), .arm_pending(),
+        .pps_alive(), .clk10_alive(), .pps_edge(), .cells_last()
+    );
+
+    wr_timebase #(
+        .CLK_PERIOD_DS (160),
+        .CLK10_TIMEOUT (25),     // 400 ns at 62.5 MHz
+        .PPS_TIMEOUT   (375)     // 6 us at 62.5 MHz
+    ) u_tb_aclk (
+        .clk(clk_tx), .rstn(rstn), .wr_clk10(wr_clk10), .wr_pps(wr_pps),
+        .cfg_clk(s_axi_aclk), .cfg_rstn(s_axi_aresetn),
+        .cfg_valid(cfg_valid), .cfg_disarm(cfg_disarm), .cfg_sec(cfg_sec),
+        .ts(ts_aclk), .locked(tb_locked_aclk), .arm_pending(),
+        .pps_alive(), .clk10_alive(), .pps_edge(), .cells_last()
+    );
+
+    wr_timebase_axi #(
+        .AXI_ADDR_W        (8),
+        .MON_CLK10_TIMEOUT (40),    // 400 ns at 100 MHz
+        .MON_PPS_TIMEOUT   (600)    // 6 us at 100 MHz
+    ) u_tb_axi (
+        .wr_clk10   (wr_clk10),
+        .wr_pps     (wr_pps),
+        .locked_a   (tb_locked_tclk),
+        .locked_b   (tb_locked_aclk),
+        .cfg_valid  (cfg_valid),
+        .cfg_disarm (cfg_disarm),
+        .cfg_sec    (cfg_sec),
+        .s_axi_aclk    (s3_s_axi_aclk),
+        .s_axi_aresetn (s3_s_axi_aresetn),
+        .s_axi_awaddr  (s3_s_axi_awaddr),
+        .s_axi_awvalid (s3_s_axi_awvalid),
+        .s_axi_awready (s3_s_axi_awready),
+        .s_axi_wdata   (s3_s_axi_wdata),
+        .s_axi_wstrb   (s3_s_axi_wstrb),
+        .s_axi_wvalid  (s3_s_axi_wvalid),
+        .s_axi_wready  (s3_s_axi_wready),
+        .s_axi_bresp   (s3_s_axi_bresp),
+        .s_axi_bvalid  (s3_s_axi_bvalid),
+        .s_axi_bready  (s3_s_axi_bready),
+        .s_axi_araddr  (s3_s_axi_araddr),
+        .s_axi_arvalid (s3_s_axi_arvalid),
+        .s_axi_arready (s3_s_axi_arready),
+        .s_axi_rdata   (s3_s_axi_rdata),
+        .s_axi_rresp   (s3_s_axi_rresp),
+        .s_axi_rvalid  (s3_s_axi_rvalid),
+        .s_axi_rready  (s3_s_axi_rready)
     );
 
     // ----------------------------------------------------------------
