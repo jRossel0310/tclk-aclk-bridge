@@ -156,6 +156,11 @@ module wr_timebase_axi #(
     logic [31:0] wdata_q;
     logic la_d, lb_d, lm_d;
 
+    // set wins over a coincident CTRL[0] clear: a fresh loss event must
+    // never be eaten by software clearing the previous one
+    wire lock_fall = (la_d && !locked_a_s) || (lb_d && !locked_b_s) ||
+                     (lm_d && !locked_mon);
+
     always_ff @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
         if (!s_axi_aresetn) begin
             awready_r   <= 1'b1;
@@ -181,9 +186,7 @@ module wr_timebase_axi #(
             la_d <= locked_a_s;
             lb_d <= locked_b_s;
             lm_d <= locked_mon;
-            if ((la_d && !locked_a_s) || (lb_d && !locked_b_s) ||
-                (lm_d && !locked_mon))
-                lost_lock <= 1'b1;
+            if (lock_fall) lost_lock <= 1'b1;
 
             if (s_axi_awvalid && awready_r) begin
                 awready_r <= 1'b0;
@@ -201,7 +204,7 @@ module wr_timebase_axi #(
                     cfg_disarm  <= 1'b0;
                 end
                 if (waddr_q == 'd6) begin                 // CTRL @ 0x60
-                    if (wdata_q[0]) lost_lock <= 1'b0;
+                    if (wdata_q[0] && !lock_fall) lost_lock <= 1'b0;
                     if (wdata_q[1]) begin
                         cfg_valid  <= 1'b1;
                         cfg_disarm <= 1'b1;

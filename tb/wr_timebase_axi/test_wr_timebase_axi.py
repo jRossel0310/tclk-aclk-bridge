@@ -5,9 +5,9 @@ import warnings
 from pathlib import Path
 
 import cocotb
-from cocotb.triggers import RisingEdge, ClockCycles, Timer
+from cocotb.triggers import ClockCycles, Timer
 
-from cocotb_helpers import _b, start_clock
+from cocotb_helpers import start_clock
 from axi_lite_bfm import axi_read, axi_write
 from wr_model import WrGen
 
