@@ -20,9 +20,15 @@
 // AXI BFM signal-prefix convention:
 //   pfx=""    -> s_axi_*      (readout #1: tclk_readout_top)
 //   pfx="s2_" -> s2_s_axi_*  (readout #2: aclk_gt_readout_top)
+//   pfx="s3_" -> s3_s_axi_*  (wr_timebase_axi: the WR timebase monitor/registers)
 //
-// The AXI clock for both slaves is the same pl_clk0 signal, exposed here as
-// both s_axi_aclk and s2_s_axi_aclk so the BFM can find them by name.
+// All THREE AXI slaves share the same pl_clk0 net, exposed here as s_axi_aclk /
+// s2_s_axi_aclk / s3_s_axi_aclk so the BFM can find them by name. Load-bearing
+// assumption: the two wr_timebase replicas take cfg_clk(s_axi_aclk) while their
+// cfg_valid/cfg_disarm/cfg_sec strobes are generated inside u_tb_axi on
+// s3_s_axi_aclk. That cross-slave handoff is glitch-free only because all three
+// AXI clocks are the same physical net (true on hardware, and true here since
+// all three clocks are driven identically). Task 5 copies this into the HW top.
 
 `timescale 1ns / 1ps
 
@@ -31,7 +37,7 @@ module tb_aclk_pipeline_chain_top (
     input  wire clk_80m,          // 80 MHz: TCLK_RCV oversample
     input  wire clk_40m,          // 40 MHz: TCLK_RCV decode + readout#1 rx_clk
     input  wire clk_tx,           // ~62.5 MHz: encoder TX + ACLK_RCV rx_clk
-    input  wire pl_clk0,          // 100 MHz: AXI / global_timebase reference
+    input  wire pl_clk0,          // 100 MHz: AXI / WR timebase monitor reference
 
     // Reset (active-low; single async reset for the whole chain)
     input  wire rstn,

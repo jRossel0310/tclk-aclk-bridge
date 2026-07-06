@@ -33,7 +33,7 @@ class WrGen:
 
     def stop(self):
         if self._task is not None:
-            self._task.kill()
+            self._task.cancel()   # cocotb 2.0: kill() is deprecated
             self._task = None
         self.clk10.value = 0
         self.pps.value = 0
