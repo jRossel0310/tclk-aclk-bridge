@@ -38,6 +38,7 @@ with synth + impl + bitstream. Every bitstream is `uart_echo_bd_wrapper.bit.bin`
 - **counter.sv**: sim-skeleton smoke module; the default target of `sim run` and `sim new` workflow. Keep.
 - **pin_blink.v**, **pl_heartbeat.v**: bring-up scaffolds used by build_pinblink/build_pltest.
 - **global_timebase.v**: one 64-bit tick distributed bit-identically to two clock domains via two cdc_gray_count instances. No longer instantiated by the pipeline (see wr_timebase below); kept in the repo with its own suite for the standalone tick scheme.
+- **uart_receiver.sv / uart_transmitter.sv / uart_echo_top.sv**: 8-N-1 UART echo (origin skeleton, HW-verified via AXI UART Lite loopback).
 
 ### wr_timebase / wr_timebase_axi / cdc_word_pulse (White Rabbit timestamps, pipeline build)
 
@@ -57,8 +58,6 @@ lost_lock sticky), 0x10 SEC_ARM (RW, write arms), 0x20 SEC_NOW / 0x30 NS_NOW
 (expect 10,000,000), 0x60 CTRL ([0] clear sticky, [1] disarm). Bring-up runbook:
 `deploy/wr.md`. Suites: `tb/wr_timebase`, `tb/wr_timebase_axi`,
 `tb/cdc_word_pulse`, and the WR-converted `tb/aclk_pipeline_chain`.
-
-- **uart_receiver.sv / uart_transmitter.sv / uart_echo_top.sv**: 8-N-1 UART echo (origin skeleton, HW-verified via AXI UART Lite loopback).
 
 ### Timing receivers (rtl/aclk_lite/, rtl/aclk_readout/, rtl/aclk_bridge/)
 - **aclk_bridge/serdec4_9MHz.v**: inherited HW-proven biphase-mark bit recovery (80 MHz oversample, emits SCLK/SDATA).
@@ -97,7 +96,7 @@ wr_timebase_axi trio (S_AXI3), replacing the earlier global_timebase instance
 ## 3. Testbenches (tb/, cocotb 2.0 + Icarus, run via sim.ps1 / sim.sh)
 
 33 suites, one per module/chain; 10 have SV wrappers (tb_*.sv) for multi-clock DUTs;
-16 emit matplotlib plots to sim_build/<module>/plots/. Shared models: tclk_tx_model.py
+19 emit matplotlib plots to sim_build/<module>/plots/. Shared models: tclk_tx_model.py
 (biphase cells), clk_tx_model.py (real multi-byte framing), manchester_tx_model.py
 (legacy clean-room), aclk_tx_model.py (GT frames + CRC), wr_model.py (WR 10 MHz/PPS
 stimulus, used by wr_timebase / wr_timebase_axi / aclk_pipeline_chain), axi_lite_bfm.py
@@ -136,12 +135,13 @@ event drain, 1 Hz stats line, --drop hardware filter config via tclk_filter.py):
 - **aclkgt_monitor.py**: long-run link endurance monitor (read-only, wrap-corrected counters, CSV log, HEALTHY/MARGINAL/UNSTABLE verdict, --interval/--report).
 - **aclkgt_sweep.py**: TX driver sweep (applies combos via GT_CTRL, dwell + sample, ranks by alignment/events/disperr, prints best).
 - **tclk_filter.py** (+ test_tclk_filter.py): pure drop-mask helpers parse_drop_codes / filter_cfg_word, unit-tested, imported by all readers.
-- **readout_common.py** (+ test_readout_common.py): shared register map, watchdog RegIO, and drain loop, used by all 4 readers + aclkgt_monitor.py + aclkgt_sweep.py.
+- **readout_common.py** (+ test_readout_common.py): shared register map, watchdog RegIO, and drain loop, used by all 4 readers + aclkgt_monitor.py + aclkgt_sweep.py. Adds wr_split / wr_utc (WR sec:ns decode, 0 renders UNSYNC) and the stream_events wr= path.
+- **wr_time.py** (+ test_wr_time.py): White Rabbit timebase control over the S_AXI3 UIO block (0x8002_0000): status (lock + HW-vs-system delta), arm (writes floor(now)+1 mid-second so the next PPS loads it), disarm, clear-sticky.
 - **diag.py / probe.py / pltest.py / uart_echo_test.py**: bring-up diagnostics (UART Lite step-trace, RAM-vs-peripheral probe, PL-alive counter check, AXI UART echo test).
 
-Artifacts: **uart_echo.dts** (single-UIO overlay @ 0x8000_0000, used by ALL single-readout builds), **aclk_pipeline.dts** (two-UIO overlay 0x8000_0000 + 0x8001_0000), **uart_echo.bif / template.bif** (bootgen recipes), **shell.json** (XRT_FLAT metadata).
+Artifacts: **uart_echo.dts** (single-UIO overlay @ 0x8000_0000, used by ALL single-readout builds), **aclk_pipeline.dts** (three-UIO overlay 0x8000_0000 + 0x8001_0000 + 0x8002_0000: TCLK readout, ACLK readout, WR timebase), **uart_echo.bif / template.bif** (bootgen recipes), **shell.json** (XRT_FLAT metadata).
 
-Runbooks: clk.md, tclk.md, aclk.md, aclkgt.md (M0 loopback, M1/M2 two-board fiber, sweep workflow), pinblink.md, README.md (generic load flow: xmutil unloadapp, fpgautil -b <bin> -o uart_echo.dtbo, md5 check first).
+Runbooks: clk.md, tclk.md, aclk.md, aclkgt.md (M0 loopback, M1/M2 two-board fiber, sweep workflow), wr.md (White Rabbit sec:ns bring-up: E10/E12 wiring, arm, --wr readers), pinblink.md, README.md (generic load flow: xmutil unloadapp, fpgautil -b <bin> -o uart_echo.dtbo, md5 check first).
 
 ## 6. Constraints (constraints/)
 

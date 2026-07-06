@@ -28,8 +28,9 @@ _pos, _flags = rc.parse_args(sys.argv[1:], value_flags=("--drop", "--tick-ns"),
                              bool_flags=("--wr",))
 DEV = _pos[0] if _pos else "/dev/uio4"
 DROP_CODES = parse_drop_codes(_flags.get("--drop", ""))
-# Standalone: clk_40m 40 MHz = 25 ns. For the integrated pipeline (USE_EXT_TS=1) the
-# timestamp is the shared pl_clk0 timebase, so pass --tick-ns 10 to make dt_us correct.
+# Standalone tick timestamps: clk_40m 40 MHz = 25 ns. For the integrated pipeline
+# pass --wr instead: timestamps are the White Rabbit {sec, ns} timebase, so TICK_NS
+# is ignored and dt comes from real nanoseconds (see WR below).
 TICK_NS = float(_flags["--tick-ns"]) if "--tick-ns" in _flags else 25.0
 WR = bool(_flags.get("--wr"))   # WR sec:ns timestamps (integrated pipeline bitstream)
 
