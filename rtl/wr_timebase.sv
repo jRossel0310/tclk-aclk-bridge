@@ -84,6 +84,9 @@ module wr_timebase #(
         .dst_valid(req_v), .dst_data(req_w));
     wire        req_is_disarm = req_w[32];
     wire [31:0] req_sec       = req_w[31:0];
+    // A disarm arriving this cycle must win over everything, including a
+    // coincident PPS trying to consume a stale pending arm (see PPS branch).
+    wire        disarm_now    = req_v && req_is_disarm;
 
     // ---- watchdogs: saturating, reset to expired so alive starts low ----
     logic [31:0] clk10_wd, pps_wd;
@@ -95,8 +98,10 @@ module wr_timebase #(
     // wr_clk10 edges for 2 cycles after each PPS so the boundary edge cannot
     // double-count as "cell 1" right after ns was zeroed (2 cycles is well
     // under one 100 ns cell in every target domain: 50 ns at 40 MHz).
+    // (A PPS-coincident clk10 edge is already excluded by the if (pps_re)
+    // priority in the always_ff, so no !pps_re term is needed here.)
     logic [1:0] pps_shadow;
-    wire clk10_cell = clk10_re && (pps_shadow == 2'd0) && !pps_re;
+    wire clk10_cell = clk10_re && (pps_shadow == 2'd0);
 
     // ---- the timebase proper ----
     logic        armed;
@@ -152,25 +157,37 @@ module wr_timebase #(
 
             if (pps_shadow != 2'd0) pps_shadow <= pps_shadow - 2'd1;
 
+            // A boundary edge that resolves one cycle after the PPS (sync
+            // skew) is suppressed as a cell of the new interval; credit it
+            // to the interval it closes so cells_last is exact in all three
+            // skew alignments (clk10-first, same-cycle, pps-first).
+            if (clk10_re && !pps_re && (pps_shadow != 2'd0))
+                cells_last <= cells_last + 32'd1;
+
             if (pps_re) begin
                 // PPS boundary: zero ns, latch the interval cell count, seconds.
                 ns_base     <= '0;
                 interp      <= '0;
                 interp_frac <= '0;
-                // The WR PPS is phase-aligned to a wr_clk10 edge, and this
-                // boundary cell's rising edge resolves through its own 2-FF
-                // sync in lockstep with the PPS sync (same source transition,
-                // identical sync depth), so clk10_re and pps_re land on this
-                // SAME cycle. That coincident edge belongs to the interval
-                // that just ended: fold it into cells_last here, or the last
-                // cell of every interval is silently dropped from the count.
+                // The WR PPS is phase-aligned to a wr_clk10 edge; the two
+                // independent 2-FF syncs can resolve that shared physical
+                // transition with clk10_re one cycle EARLY, on the SAME
+                // cycle, or one cycle LATE relative to pps_re. (In this
+                // zero-delay sim the same-cycle case is what deterministically
+                // happens; on hardware all three occur.) A same-cycle edge
+                // belongs to the interval that just ended, so fold it in
+                // here; the late (pps-first) case is credited by the shadow-
+                // window statement above; the early (clk10-first) case is
+                // already inside `cells`.
                 cells_last  <= cells + (clk10_re ? 32'd1 : 32'd0);
                 cells       <= '0;
                 pps_shadow  <= 2'd2;
                 if (armed) begin
                     sec   <= arm_sec_q;
                     armed <= 1'b0;
-                    if (clk10_alive) lk <= 1'b1;   // never lock onto a dead 10 MHz
+                    // Never lock onto a dead 10 MHz, and never let a stale
+                    // pending arm override a disarm landing this same cycle.
+                    if (clk10_alive && !disarm_now) lk <= 1'b1;
                 end else if (lk) begin
                     sec <= sec + 1'b1;
                 end

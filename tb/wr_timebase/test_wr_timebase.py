@@ -172,6 +172,11 @@ async def test_reference_loss_unlocks_strictly(dut):
     await Timer(1, unit="ns")
     assert _b(dut.locked_a) == 0 and _b(dut.ts_a) == 0, "PPS loss did not unlock"
     gen.pps_on = True
+    # -- restoring the PPS does NOT relock either (strict: re-arm required) --
+    await ClockCycles(dut.clk_a, 2 * SIM_NS_PER_SEC // 25)
+    await Timer(1, unit="ns")
+    assert _b(dut.locked_a) == 0 and _b(dut.ts_a) == 0, (
+        "relocked on PPS restore without a fresh arm (strict violated)")
     await _arm(dut, SEC0 + 200)
     await _wait_locked(dut)
     gen.stop()
