@@ -74,15 +74,12 @@ from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
 from cocotb_helpers import _b, start_clock
 
-_clocks_started = False
-
 
 def _start_clocks(dut):
-    global _clocks_started
-    if not _clocks_started:
-        start_clock(dut.src_clk, 10)   # 100 MHz source
-        start_clock(dut.dst_clk, 25)   # 40 MHz destination (slower, worst case)
-        _clocks_started = True
+    # cocotb kills a test's spawned tasks (including clock drivers) when the
+    # test ends, so EVERY test must start its own clocks.
+    start_clock(dut.src_clk, 10)   # 100 MHz source
+    start_clock(dut.dst_clk, 25)   # 40 MHz destination (slower, worst case)
 
 
 async def _reset(dut):
@@ -504,16 +501,13 @@ from wr_model import WrGen
 SIM_NS_PER_SEC = 5000     # 50 cells * 100 ns
 SEC0 = 1_751_800_000      # arbitrary Unix-like armed seconds value
 
-_clocks_started = False
-
 
 def _start_clocks(dut):
-    global _clocks_started
-    if not _clocks_started:
-        start_clock(dut.clk_a, 25)
-        cocotb.start_soon(Clock(dut.clk_b, 6400, unit="ps").start())
-        start_clock(dut.cfg_clk, 10)
-        _clocks_started = True
+    # cocotb kills a test's spawned tasks (including clock drivers) when the
+    # test ends, so EVERY test must start its own clocks.
+    start_clock(dut.clk_a, 25)
+    cocotb.start_soon(Clock(dut.clk_b, 6400, unit="ps").start())
+    start_clock(dut.cfg_clk, 10)
 
 
 async def _reset(dut):
@@ -1036,14 +1030,11 @@ STATUS, SEC_ARM, SEC_NOW, NS_NOW, PPS_COUNT, CELLS_LAST, CTRL = (
 SIM_NS_PER_SEC = 5000
 SEC0 = 1_751_800_000
 
-_clocks_started = False
-
 
 def _start_clocks(dut):
-    global _clocks_started
-    if not _clocks_started:
-        start_clock(dut.s_axi_aclk, 10)
-        _clocks_started = True
+    # cocotb kills a test's spawned tasks (including clock drivers) when the
+    # test ends, so EVERY test must start its own clocks.
+    start_clock(dut.s_axi_aclk, 10)
 
 
 async def _reset(dut):
