@@ -73,6 +73,62 @@ def test_wr_split_and_utc():
     assert s.endswith(".123456789Z") and s.startswith("20")
 
 
+def test_stream_events_wr_formats_sec_ns_and_unsync():
+    import readout_common as rc
+    from readout_common import STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP
+
+    # Drive stream_events(wr=True) with a scripted fake io: STATUS is non-empty for
+    # each event, then raises KeyboardInterrupt to end the loop; read_event reads
+    # EVENT/DATA/TS then POP advances. Verifies (a) an UNSYNC (ts==0) event and the
+    # event right after it print the "--" dt placeholder, (b) a real WR pair prints
+    # dt = ns_delta / 1000 us.
+    class FakeIO:
+        def __init__(self, events):
+            self.events = events   # list of (event, flags, data, ts)
+            self.i = 0
+            self.regs = {}
+
+        def rd(self, o):
+            if o == STATUS:
+                if self.i >= len(self.events):
+                    raise KeyboardInterrupt
+                ev, fl, data, ts = self.events[self.i]
+                self.regs = {
+                    EVENT: (fl << 16) | (ev & 0xFFFF),
+                    DATA_HI: (data >> 32) & 0xFFFFFFFF, DATA_LO: data & 0xFFFFFFFF,
+                    TS_HI: (ts >> 32) & 0xFFFFFFFF, TS_LO: ts & 0xFFFFFFFF,
+                }
+                return 0   # empty bit clear
+            return self.regs.get(o, 0)
+
+        def wr(self, o, v=0):
+            if o == POP:
+                self.i += 1
+
+    SEC = 1_751_800_000
+    events = [
+        (0x02, 0x02, 0, 0),                                   # UNSYNC
+        (0x07, 0x02, 0, (SEC << 32) | 1500),                  # +1500 ns after a 0-ns base
+        (0x09, 0x02, 0, (SEC << 32) | 3500),                  # +2000 ns later
+    ]
+    io = FakeIO(events)
+    lines = []
+    orig_say = rc.say
+    rc.say = lambda m: lines.append(m)
+    try:
+        rc.stream_events(io, tick_ns=0.0,
+                         stats_line=lambda: "[stats]",
+                         format_event=lambda ts, dt, e, d, t, h: "TS=%d dt=%s ev=0x%02X" % (ts, dt.strip(), e & 0xFF),
+                         header="#hdr", wr=True)
+    finally:
+        rc.say = orig_say
+    body = [l for l in lines if l.startswith("TS=")]
+    assert body[0].endswith("ev=0x02") and "TS=0 " in body[0], body[0]      # UNSYNC event
+    assert "dt=--" in body[0]                                                # no dt from/at UNSYNC
+    assert "dt=--" in body[1]                                                # event after UNSYNC also suppressed
+    assert "dt=2.0" in body[2], body[2]                                      # 2000 ns -> 2.0 us
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

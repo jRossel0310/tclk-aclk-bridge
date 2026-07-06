@@ -92,6 +92,10 @@ def cmd_arm(io):
         if s["locked_mon"] and s["locked_tclk"] and s["locked_aclk"]:
             break
         time.sleep(0.05)
+    s = decode_status(io.rd(WR_STATUS))
+    if not (s["locked_mon"] and s["locked_tclk"] and s["locked_aclk"]):
+        say("# !! arm did not reach full lock within timeout; check STATUS below "
+            "(pps_alive/clk10_alive and CELLS_LAST). Re-run 'arm' or check the WR wiring.")
     cmd_status(io)
 
 
