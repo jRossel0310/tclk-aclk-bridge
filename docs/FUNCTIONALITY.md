@@ -22,7 +22,7 @@ with synth + impl + bitstream. Every bitstream is `uart_echo_bd_wrapper.bit.bin`
 | build_aclkgt_rx.tcl | aclk_gt_rx_bd_top | Gigabit-ACLK GT/SFP receiver + GT_CTRL reg 0xF0 (polarity/loopback/reset) | 1 | aclkgt project |
 | build_aclkgt_loop.tcl | aclk_gt_loop_bd_top | Single-board GT near-end PMA loopback (loopback_in=3'b010) | 1 | aclkgt milestone M0 |
 | build_aclkgt_selftest.tcl | aclk_gt_selftest_bd_top | Same-board SFP fiber loop, TX sweep fields in GT_CTRL, RX recovery FSM, ILA | 1 | aclkgt self-test |
-| build_aclk_pipeline.tcl | aclk_pipeline_bd_top | Integrated TCLK -> GT ACLK -> ACLK-Lite pipeline, two readouts, shared timebase, H12 in / SFP loop / B10 out | 2 @ 0x8000_0000 + 0x8001_0000 | Pipeline project |
+| build_aclk_pipeline.tcl | aclk_pipeline_bd_top | Integrated TCLK -> GT ACLK -> ACLK-Lite pipeline, two readouts, WR timebase (S_AXI3), H12 in / SFP loop / B10 out | 3 @ 0x8000_0000 + 0x8001_0000 + 0x8002_0000 | Pipeline project |
 | build_pltest.tcl | (pl_heartbeat + AXI GPIO) | PL-alive smoke test | 1 GPIO | Scaffold |
 | build_pinblink.tcl | (pin_blink + pl_heartbeat) | 0.5 Hz square wave on H12 (pin/bank verification) | 1 GPIO | Scaffold |
 | build.tcl + uart_echo_bd.tcl | uart_echo_bd_top | Original UART echo loopback (PS UART Lite <-> PL echo) | UART Lite | Origin skeleton |
@@ -37,7 +37,27 @@ with synth + impl + bitstream. Every bitstream is `uart_echo_bd_wrapper.bit.bin`
 - **edge_detector.sv**, **debouncer.sv**, **button_parser.sv**: input conditioning chain (tb-covered; button_parser not in any current build).
 - **counter.sv**: sim-skeleton smoke module; the default target of `sim run` and `sim new` workflow. Keep.
 - **pin_blink.v**, **pl_heartbeat.v**: bring-up scaffolds used by build_pinblink/build_pltest.
-- **global_timebase.v**: one 64-bit tick distributed bit-identically to two clock domains via two cdc_gray_count instances (pipeline shared timebase).
+- **global_timebase.v**: one 64-bit tick distributed bit-identically to two clock domains via two cdc_gray_count instances. No longer instantiated by the pipeline (see wr_timebase below); kept in the repo with its own suite for the standalone tick scheme.
+
+### wr_timebase / wr_timebase_axi / cdc_word_pulse (White Rabbit timestamps, pipeline build)
+
+The integrated pipeline no longer uses `global_timebase`: `rtl/wr_timebase.sv`
+replicas in `clk_40m` and `rx_usrclk2` (plus a monitor in `s_axi_aclk`) each
+watch the WR 10 MHz (Pmod1 pin3, E10) and PPS (pin4, E12) and generate
+`{sec[31:0], ns[31:0]}` in-domain: ns = 100 ns per 10 MHz edge since PPS plus a
+local-clock interpolator cleared at every edge. STRICT validity: ts is 0 unless
+armed seconds were loaded at a PPS and both watchdogs are alive; any loss (or a
+GT relock, which resets the rx-domain replica) requires the PS to re-arm.
+Seconds come from the NTP-synced PS clock via `deploy/wr_time.py arm`.
+`rtl/cdc_word_pulse.sv` (toggle-handshake word CDC) carries the arm into each
+domain. `rtl/wr_timebase_axi.sv` is the third AXI-Lite slave (S_AXI3 at
+0x8002_0000, 16-byte stride): 0x00 STATUS (locked bits, aliveness, arm_pending,
+lost_lock sticky), 0x10 SEC_ARM (RW, write arms), 0x20 SEC_NOW / 0x30 NS_NOW
+(atomic pair: the SEC_NOW read latches NS_NOW), 0x40 PPS_COUNT, 0x50 CELLS_LAST
+(expect 10,000,000), 0x60 CTRL ([0] clear sticky, [1] disarm). Bring-up runbook:
+`deploy/wr.md`. Suites: `tb/wr_timebase`, `tb/wr_timebase_axi`,
+`tb/cdc_word_pulse`, and the WR-converted `tb/aclk_pipeline_chain`.
+
 - **uart_receiver.sv / uart_transmitter.sv / uart_echo_top.sv**: 8-N-1 UART echo (origin skeleton, HW-verified via AXI UART Lite loopback).
 
 ### Timing receivers (rtl/aclk_lite/, rtl/aclk_readout/, rtl/aclk_bridge/)
@@ -66,7 +86,9 @@ counters, a DEBUG word 0xA0 (per-build bit layout, decoded by aclkgt_read.py), a
 (selftest + pipeline) a SEARCH/LOCKED/RECOVER byte-align recovery FSM with
 LOSS_WINDOW=512 / RECOVER_LEN=512. sfp_tx_disable driven 0 (laser on).
 aclk_pipeline_bd_top additionally instantiates aclk_lite_bridge (rx event ->
-async_fifo -> aclk_lite_encoder mirror on B10) and global_timebase.
+async_fifo -> aclk_lite_encoder mirror on B10) and the wr_timebase /
+wr_timebase_axi trio (S_AXI3), replacing the earlier global_timebase instance
+(see the wr_timebase module summary above).
 
 ### Removed 2026-07-02 (efficiency-cleanup branch)
 - **rtl/Li_Files/**: byte-identical copy of rtl/aclk_bridge/, untracked and git-ignored. Deleted (it was never tracked, so there is no git history for it).
@@ -74,12 +96,13 @@ async_fifo -> aclk_lite_encoder mirror on B10) and global_timebase.
 
 ## 3. Testbenches (tb/, cocotb 2.0 + Icarus, run via sim.ps1 / sim.sh)
 
-30 suites, one per module/chain; 9 have SV wrappers (tb_*.sv) for multi-clock DUTs;
-13 emit matplotlib plots to sim_build/<module>/plots/. Shared models: tclk_tx_model.py
+33 suites, one per module/chain; 10 have SV wrappers (tb_*.sv) for multi-clock DUTs;
+16 emit matplotlib plots to sim_build/<module>/plots/. Shared models: tclk_tx_model.py
 (biphase cells), clk_tx_model.py (real multi-byte framing), manchester_tx_model.py
-(legacy clean-room), aclk_tx_model.py (GT frames + CRC), axi_lite_bfm.py (AXI master),
-plot_util.py (4 plot helpers; save_line_plot added 2026-07-02, adopted by the
-aclk_lite_encoder suite), runner_common.py (shared runner scaffold used by all 30
+(legacy clean-room), aclk_tx_model.py (GT frames + CRC), wr_model.py (WR 10 MHz/PPS
+stimulus, used by wr_timebase / wr_timebase_axi / aclk_pipeline_chain), axi_lite_bfm.py
+(AXI master), plot_util.py (4 plot helpers; save_line_plot added 2026-07-02, adopted by
+the aclk_lite_encoder suite), runner_common.py (shared runner scaffold used by all 33
 runners), cocotb_helpers.py (shared _b/start_clock helpers).
 
 Coverage highlights (suite: what it proves):
@@ -89,7 +112,8 @@ Coverage highlights (suite: what it proves):
 - aclk_rcv / aclkgt_gen / aclkgt_gen_loop: inherited GT decoder alignment, CRC error path, frame-gen vs model, gen -> rcv loop.
 - aclk_readout / aclk_readout_axi / aclk_readout_ext_ts: FIFO integrity, AXI register map, external-timestamp option.
 - aclk_lite_bridge: real events recovered, nulls suppressed, back-to-back events.
-- aclk_pipeline_chain: full pure-RTL pipeline (TCLK in -> both readouts, shared timebase).
+- aclk_pipeline_chain: full pure-RTL pipeline (TCLK in -> both readouts, WR timebase).
+- wr_timebase / wr_timebase_axi / cdc_word_pulse: WR ns interpolation + PPS/sec rollover, STRICT lock/unlock and re-arm, S_AXI3 register map (incl. atomic SEC_NOW/NS_NOW pair), the arm toggle-handshake CDC.
 - async_fifo / synchronizer / fifo / global_timebase: CDC primitives (backpressure, overflow latch, latency, shared monotonic ts).
 - uart_receiver / uart_transmitter / uart_echo_top, counter, debouncer, edge_detector, button_parser: skeleton + input conditioning.
 - aclk_gen_bd_top, aclk_tclk_encoder_loop: generator wrapper activity, encoder -> TCLK_RCV loop.
@@ -106,7 +130,7 @@ Readers (all: UIO/devmem mmap, watchdog thread that flags AXI hangs after 2 s,
 startup register probe with heartbeat trust-check, 1 ms STATUS poll loop, POP-driven
 event drain, 1 Hz stats line, --drop hardware filter config via tclk_filter.py):
 - **clk_read.py**: unified receiver reader (25 ns tick), prints ts/dt/event/tclk/has_data + sig_err.
-- **tclk_read.py**: TCLK reader (25 ns tick, --tick-ns override for the pipeline timebase, tclk_edges stat).
+- **tclk_read.py**: TCLK reader (25 ns tick by default, --tick-ns override for non-WR builds, --wr to print WR sec:ns UTC timestamps for the pipeline build, tclk_edges stat).
 - **aclk_read.py**: clean-room ACLK reader (8.33 ns tick).
 - **aclkgt_read.py**: GT reader (16 ns tick, --tick-ns), plus GT_CTRL control: --gtctrl, --txdiff/--txpost/--txpre TX driver settings, --gtreset RX re-init, GT link-health decode of DEBUG 0xA0.
 - **aclkgt_monitor.py**: long-run link endurance monitor (read-only, wrap-corrected counters, CSV log, HEALTHY/MARGINAL/UNSTABLE verdict, --interval/--report).
