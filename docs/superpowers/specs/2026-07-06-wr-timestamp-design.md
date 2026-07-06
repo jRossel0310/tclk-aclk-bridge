@@ -70,9 +70,9 @@ translators' bandwidth and comfortably sampled at 40 MHz and up.
   `ns` to `cells * 100`. Accumulated local-oscillator error can never exceed one
   100 ns cell.
 - Interpolator: between 10 MHz edges, a fixed-point accumulator adds the local clock
-  period (parameter; 25 ns in `clk_40m`, 6.4 ns in `rx_usrclk2`, 10 ns in the
-  100 MHz `s_axi_aclk` monitor) so `ns` advances in roughly one-clock steps instead
-  of 100 ns jumps. The accumulator clears at every 10 MHz edge, so interpolation
+  period (parameter; 25 ns in `clk_40m`, 16 ns in `rx_usrclk2` (62.5 MHz, the
+  1.25 Gbps GT user clock), 10 ns in the 100 MHz `s_axi_aclk` monitor) so `ns`
+  advances in roughly one-clock steps instead of 100 ns jumps. The accumulator clears at every 10 MHz edge, so interpolation
   error never accumulates.
 - PPS edge: `ns` clears to 0; `sec` loads the armed value (first PPS after arming)
   or increments by 1 (subsequent PPSes).
@@ -100,10 +100,11 @@ parameters so simulation can shorten them.
 
 ### 3.5 Accuracy budget
 
-- ns is WR-true to within one 100 ns cell bound (snap) plus one local clock of
-  sampling quantization (25 ns at 40 MHz, 6.4 ns at 156.25 MHz).
-- The TCLK and ACLK copies agree with each other to within about one local clock
-  cycle, since both are slaved to the same physical edges every 100 ns.
+- ns is WR-true to within one 100 ns cell bound (snap) plus a few local clocks of
+  sampling quantization and 2-FF sync latency (25 ns at 40 MHz, 16 ns at 62.5 MHz).
+- The TCLK and ACLK copies agree with each other to within roughly 100 ns (a few
+  slower-domain clock cycles of synchronizer skew), since both are slaved to the
+  same physical edges every 100 ns and re-zeroed by the same PPS.
 - Absolute seconds are as correct as the arm-time NTP reading, and are verified by
   readback (section 5).
 
@@ -178,9 +179,14 @@ value far from 10,000,000 means a flaky 10 MHz or PPS line.
   arm-and-load at PPS, ns snapping at every cell, interpolation monotonicity and
   bounds, strict behavior (ts == 0 before arm; stopping 10 MHz collapses ts to 0
   and sets the sticky; re-arm recovers), seconds increment across several PPSes,
-  and both integer (25 ns) and fractional (6.4 ns) period parameterizations.
-  Cells-per-second and watchdog thresholds are parameters so most tests run a
-  "short second", with a couple of full-length spot checks.
+  and both integer (25 ns, 16 ns) and fractional (6.4 ns) period parameterizations
+  (the fractional case proves the interpolator generalizes even though no current
+  domain needs it).
+  Cells-per-second and watchdog thresholds are parameters so tests run a "short
+  second" (50 cells = 5 us). A true 1 s interval (40M cycles at 40 MHz) is
+  impractical under Icarus; multi-sim-second tracking runs plus counter-width
+  inspection (ns_base, cells, and the watchdogs are 32-bit) substitute for
+  full-length spot checks.
 - New `tb/wr_timebase_axi/` suite: arm write path, atomic SEC_NOW/NS_NOW latch,
   sticky set/clear, CELLS_LAST.
 - Updated `tb/aclk_pipeline_chain/` integration suite: WR stimulus added; assert
