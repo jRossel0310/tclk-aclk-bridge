@@ -29,7 +29,7 @@ rc.line_buffer_stdout()
 _pos, _flags = rc.parse_args(
     sys.argv[1:],
     value_flags=("--drop", "--gtctrl", "--txdiff", "--txpost", "--txpre", "--tick-ns"),
-    bool_flags=("--gtreset",))
+    bool_flags=("--gtreset", "--wr"))
 DEV = _pos[0] if _pos else "/dev/uio4"
 DROP_CODES = parse_drop_codes(_flags.get("--drop", ""))
 _gtreset = bool(_flags.get("--gtreset"))   # pulse GT_CTRL[24]: full RX PLL+CDR relock (use after a
@@ -44,6 +44,7 @@ GTCTRL |= (int(_flags.get("--txpre", "0"), 0) & 0x1F) << 19
 # Standalone: GT RX usrclk2 62.5 MHz = 16 ns. For the integrated pipeline (USE_EXT_TS=1)
 # the timestamp is the shared pl_clk0 timebase, so pass --tick-ns 10.
 TICK_NS = float(_flags["--tick-ns"]) if "--tick-ns" in _flags else 1000.0 / 62.5
+WR = bool(_flags.get("--wr"))   # WR sec:ns timestamps (integrated pipeline bitstream)
 
 io = rc.open_dev(DEV)
 rc.apply_drop_filter(io, DROP_CODES)
@@ -108,6 +109,9 @@ def stats_line():
 
 def format_event(ts, dt, event, data, is_tclk, has_data):
     data_str = "0x%016X" % data if has_data else "       --         "
+    if WR:
+        return "  %s %s   0x%04X  %s    %d      %d" % (
+            rc.wr_utc(ts).ljust(30), dt, event, data_str, is_tclk, has_data)
     return "  %16d %s   0x%04X  %s    %d      %d" % (ts, dt, event, data_str, is_tclk, has_data)
 
 
@@ -125,5 +129,7 @@ rc.probe(
     stuck_warn="GT RX locked but heartbeat STUCK => counter readback broken.",
 )
 say(stats_line())
-rc.stream_events(io, TICK_NS, stats_line, format_event,
-                 header="#        ts_ticks    dt_us   event     data               tclk  has_data")
+rc.stream_events(io, TICK_NS, stats_line, format_event, wr=WR,
+                 header=("#  utc                             dt_us   event     data               tclk  has_data"
+                         if WR else
+                         "#        ts_ticks    dt_us   event     data               tclk  has_data"))

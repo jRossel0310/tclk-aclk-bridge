@@ -62,6 +62,17 @@ def test_apply_drop_filter_writes_cfg_word():
     assert io.rd(FILTER_CFG) == 0x107            # bit8=drop | code
 
 
+def test_wr_split_and_utc():
+    from readout_common import wr_split, wr_utc
+    ts = (1_751_800_000 << 32) | 123_456_789
+    assert wr_split(ts) == (1_751_800_000, 123_456_789)
+    assert wr_utc(0) == "UNSYNC"                    # strict-zero timestamp
+    s = wr_utc((0 << 32) | 123)                     # epoch second 0
+    assert s == "1970-01-01T00:00:00.000000123Z"
+    s = wr_utc(ts)
+    assert s.endswith(".123456789Z") and s.startswith("20")
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

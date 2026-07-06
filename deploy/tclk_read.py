@@ -24,12 +24,14 @@ from readout_common import (
 
 rc.line_buffer_stdout()
 
-_pos, _flags = rc.parse_args(sys.argv[1:], value_flags=("--drop", "--tick-ns"))
+_pos, _flags = rc.parse_args(sys.argv[1:], value_flags=("--drop", "--tick-ns"),
+                             bool_flags=("--wr",))
 DEV = _pos[0] if _pos else "/dev/uio4"
 DROP_CODES = parse_drop_codes(_flags.get("--drop", ""))
 # Standalone: clk_40m 40 MHz = 25 ns. For the integrated pipeline (USE_EXT_TS=1) the
 # timestamp is the shared pl_clk0 timebase, so pass --tick-ns 10 to make dt_us correct.
 TICK_NS = float(_flags["--tick-ns"]) if "--tick-ns" in _flags else 25.0
+WR = bool(_flags.get("--wr"))   # WR sec:ns timestamps (integrated pipeline bitstream)
 
 io = rc.open_dev(DEV)
 rc.apply_drop_filter(io, DROP_CODES)
@@ -44,6 +46,9 @@ def stats_line():
 
 
 def format_event(ts, dt, event, data, is_tclk, has_data):
+    if WR:
+        return "  %s %s   0x%02X    %d      %d" % (
+            rc.wr_utc(ts).ljust(30), dt, event & 0xFF, is_tclk, has_data)
     return "  %16d %s   0x%02X    %d      %d" % (ts, dt, event & 0xFF, is_tclk, has_data)
 
 
@@ -61,5 +66,7 @@ rc.probe(
                 "so fix the readback BEFORE wiring TCLK (else bring-up is uninterpretable)."),
 )
 say(stats_line())
-rc.stream_events(io, TICK_NS, stats_line, format_event,
-                 header="#        ts_ticks    dt_us   event  tclk  has_data")
+rc.stream_events(io, TICK_NS, stats_line, format_event, wr=WR,
+                 header=("#  utc                             dt_us   event  tclk  has_data"
+                         if WR else
+                         "#        ts_ticks    dt_us   event  tclk  has_data"))

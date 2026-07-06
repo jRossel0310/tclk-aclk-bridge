@@ -69,6 +69,21 @@ def dev_offset(dev):
     return 0 if "uio" in dev else 0x8000_0000
 
 
+def wr_split(ts):
+    """Split a packed White Rabbit timestamp into (sec, ns)."""
+    return (ts >> 32) & 0xFFFFFFFF, ts & 0xFFFFFFFF
+
+
+def wr_utc(ts):
+    """Human-readable UTC for a packed WR timestamp. The strict-zero value
+    (stamped while not WR-locked) renders as 'UNSYNC'."""
+    if ts == 0:
+        return "UNSYNC"
+    sec, ns = wr_split(ts)
+    base = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(sec))
+    return "%s.%09dZ" % (base, ns)
+
+
 class RegIO:
     """Watchdog-guarded 32-bit register access over a buffer: an mmap on the board,
     or any mutable buffer (e.g. bytearray) in unit tests.
@@ -181,10 +196,12 @@ def probe(io, counters, lock_desc, red_flag, trust_ok, stuck_warn):
     say("# --- probe complete: AXI reads return, the bus is alive. ---")
 
 
-def stream_events(io, tick_ns, stats_line, format_event, header):
+def stream_events(io, tick_ns, stats_line, format_event, header, wr=False):
     """The shared drain loop: poll STATUS, print each event via format_event, emit a
     stats line every ~1 s while idle. Runs until Ctrl-C, then prints a final stats
-    line. format_event(ts, dt, event, data, is_tclk, has_data) -> str."""
+    line. format_event(ts, dt, event, data, is_tclk, has_data) -> str.
+    wr=True: ts is a WR {sec, ns} pair; dt_us comes from real nanoseconds and is
+    suppressed around UNSYNC (zero) stamps. wr=False: legacy tick behavior."""
     say(header)
     last_ts = None
     last_stats = time.monotonic()
@@ -200,7 +217,15 @@ def stream_events(io, tick_ns, stats_line, format_event, header):
             event, flags, data, ts = read_event(io)
             is_tclk = (flags >> 1) & 1
             has_data = flags & 1
-            dt = "   --  " if last_ts is None else "%7.1f" % ((ts - last_ts) * tick_ns / 1000.0)
+            if wr:
+                if last_ts in (None, 0) or ts == 0:
+                    dt = "   --  "
+                else:
+                    s2, n2 = wr_split(ts)
+                    s1, n1 = wr_split(last_ts)
+                    dt = "%7.1f" % (((s2 - s1) * 1_000_000_000 + (n2 - n1)) / 1000.0)
+            else:
+                dt = "   --  " if last_ts is None else "%7.1f" % ((ts - last_ts) * tick_ns / 1000.0)
             last_ts = ts
             say(format_event(ts, dt, event, data, is_tclk, has_data))
     except KeyboardInterrupt:
