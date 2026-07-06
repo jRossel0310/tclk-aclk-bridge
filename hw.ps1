@@ -237,7 +237,7 @@ all:
             "aclkgt_loop"     = @("aclkgt_read.py", "aclkgt_monitor.py", "aclkgt_sweep.py", "tclk_filter.py", "readout_common.py")
             "aclkgt_rx"       = @("aclkgt_read.py", "aclkgt_monitor.py", "aclkgt_sweep.py", "tclk_filter.py", "readout_common.py")
             "aclkgt_selftest" = @("aclkgt_read.py", "aclkgt_monitor.py", "aclkgt_sweep.py", "tclk_filter.py", "readout_common.py")
-            "aclk_pipeline"   = @("tclk_read.py", "aclkgt_read.py", "tclk_filter.py", "readout_common.py")
+            "aclk_pipeline"   = @("tclk_read.py", "aclkgt_read.py", "wr_time.py", "tclk_filter.py", "readout_common.py")
             "uart_echo"       = @("uart_echo_test.py")
         }
         $pyFiles = @()

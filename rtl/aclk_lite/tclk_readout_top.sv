@@ -66,7 +66,7 @@ module tclk_readout_top #(
     output logic                   s_axi_rvalid,
     input  logic                   s_axi_rready,
 
-    // ---- external shared timestamp (from global_timebase, A2) ----
+    // ---- external shared timestamp (from the top: wr_timebase in the pipeline, global_timebase standalone) ----
     input  logic [63:0] ts_ext,            // shared 64-bit timebase; sampled at each event VALID
 
     // ---- debug (clk_40m domain) ----
