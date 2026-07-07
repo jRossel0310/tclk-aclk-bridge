@@ -44,5 +44,10 @@ appear):
 - The publisher never blocks the hardware FIFO drain on a Redis stall: it drops the
   oldest queued entries (queue_dropped climbs) rather than stalling. A rising
   queue_dropped / redis_dropped means Redis is not keeping up.
+- The `reconnects` stat counts Redis connect/publish FAILURES (not successful
+  reconnections). If `published` stays 0 while `reconnects` climbs, Redis is not
+  reachable: check `redis-cli ping` (is redis-server running?) and that redis-py is
+  installed (`pip install -r requirements-board.txt`) -- a missing redis-py shows up
+  as this same climbing-reconnects, published=0 pattern.
 - Streams are capped at --maxlen (approximate); old entries are trimmed by Redis.
 - redis-server binds localhost by default; keep it that way (no auth is configured).
