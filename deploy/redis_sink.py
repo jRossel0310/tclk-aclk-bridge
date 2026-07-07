@@ -113,19 +113,19 @@ class RedisSink:
         pipe.execute()
 
     def _maybe_watchdog(self, client):
-        """Set status once per (re)connect and refresh the watchdog TTL key every
-        watchdog_period seconds. Raises on a Redis error so the caller reconnects."""
+        """Set status once per (re)connect (announced immediately, not throttled) and
+        refresh the watchdog TTL key every watchdog_period seconds. Raises on a Redis
+        error so the caller reconnects."""
         if self.status_key is None and self.watchdog_key is None:
-            return
-        now = time.monotonic()
-        if self._status_set and (now - self._last_wd) < self.watchdog_period:
             return
         if self.status_key is not None and not self._status_set:
             client.set(self.status_key, 1)
             self._status_set = True
         if self.watchdog_key is not None:
-            client.set(self.watchdog_key, int(time.time()), ex=self.watchdog_ttl)
-        self._last_wd = now
+            now = time.monotonic()
+            if self._last_wd == 0.0 or (now - self._last_wd) >= self.watchdog_period:
+                client.set(self.watchdog_key, int(time.time()), ex=self.watchdog_ttl)
+                self._last_wd = now
 
     def _run(self):
         client = None

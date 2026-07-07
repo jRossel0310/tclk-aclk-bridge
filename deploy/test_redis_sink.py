@@ -146,6 +146,18 @@ def test_status_and_watchdog():
     assert ex == 30
 
 
+def test_watchdog_only_no_status():
+    fake = FakeRedis()
+    sink = RedisSink(watchdog_key="KR260:watchdog", watchdog_ttl=30,
+                     watchdog_period=0, connect=lambda: fake)
+    sink.start()
+    assert _wait(lambda: "KR260:watchdog" in fake.kv), fake.kv
+    sink.stop()
+    assert "KR260:status" not in fake.kv          # status_key is None -> never written
+    _, ex = fake.kv["KR260:watchdog"]
+    assert ex == 30
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
