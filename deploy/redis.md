@@ -1,40 +1,52 @@
-# Redis event publishing (board-side)
+# Redis event publishing (board-side, KR260 convention)
 
-Publishes WR-timestamped TCLK/ACLK readout events into local Redis Streams so
-other processes on the KR260 can consume a durable, ordered feed. Publish side
-only. UNSYNC events (ts==0, WR timebase not locked) are dropped, so arm the WR
-timebase first (see wr.md).
+Publishes WR-timestamped TCLK/ACLK readout events into local Redis under the `KR260:`
+namespace, matching the Fermilab redis-clock-server conventions. Publish side only.
+UNSYNC events (ts==0, WR timebase not locked) are dropped, so arm the WR timebase first
+(see wr.md).
+
+Per event the publisher writes:
+- `XADD KR260:<src>` (the time-ordered event feed; entry ID is the event time in ms),
+  fields `sec, ns, utc, event, data, is_tclk, has_data, src`.
+- `HSET KR260:event:<src>:0x<CODE>` = that code's latest event (`sec, ns, utc, data`) and
+  `HINCRBY ... count 1` (a per-code lookup index).
+It also maintains `KR260:status` (=1 while alive) and `KR260:watchdog` (a TTL key,
+refreshed every ~10 s, expiring in 30 s) for liveness.
 
 ## One-time setup on the board
 
-    sudo apt update && sudo apt install -y redis-server
+    sudo apt update && sudo apt install -y redis-server python3-redis
+    # apply the KR260 Redis settings (ephemeral streams, stream tuning), then restart:
+    cat redis-kr260.conf | sudo tee -a /etc/redis/redis.conf
     sudo systemctl enable --now redis-server
+    sudo systemctl restart redis-server
     redis-cli ping                       # -> PONG
-    pip install -r requirements-board.txt   # installs redis-py
+    sudo python3 -c "import redis; print(redis.__version__)"   # redis-py visible to root
 
 ## Run (one publisher per source; after the WR timebase is armed + locked)
 
-    sudo python3 redis_publish.py /dev/uio4 --stream events:tclk --src tclk
-    sudo python3 redis_publish.py /dev/uio5 --stream events:aclk --src aclk
+    sudo python3 redis_publish.py /dev/uio4 --src tclk
+    sudo python3 redis_publish.py /dev/uio5 --src aclk
 
 Match the /dev/uioN indices to the readout names with:
     grep . /sys/class/uio/uio*/name
 
-Ctrl-C stops a publisher (it flushes the queue and prints final stats). The 1 Hz
-stats line reports drained / published / queued / queue_dropped / redis_dropped /
-reconnects.
+Ctrl-C stops a publisher (it flushes the queue and prints final stats). The 1 Hz stats
+line reports drained / published / queued / queue_dropped / redis_dropped / reconnects.
 
-Options: --redis-host (default 127.0.0.1), --redis-port (6379), --maxlen (stream
-cap, default 1000000), --queue-size (in-process queue, default 100000).
+Options: --namespace (default KR260), --redis-host (127.0.0.1), --redis-port (6379),
+--maxlen (stream cap, default 1000000), --queue-size (in-process queue, default 100000).
 
 ## Verify
 
-    redis-cli XLEN events:tclk                       # climbs while publishing
-    redis-cli XREVRANGE events:tclk + - COUNT 5      # newest 5 entries
+    redis-cli XLEN KR260:tclk                        # climbs while publishing
+    redis-cli XREVRANGE KR260:tclk + - COUNT 3       # newest 3 (event-time ordered)
+    redis-cli HGETALL KR260:event:tclk:0x1D          # latest event for code 0x1D + count
+    redis-cli GET KR260:status                       # 1 while a publisher is alive
+    redis-cli TTL KR260:watchdog                     # counts down from ~30 while alive
 
-Each entry carries: sec, ns, utc, event, data, is_tclk, has_data, src. Cross-check
-against the console reader (they read the same FIFO, so the same events/timestamps
-appear):
+Cross-check the stream against the console reader (they read the same FIFO, so the same
+events appear; do NOT run both on the same /dev/uioN at once, they both POP the FIFO):
     sudo python3 tclk_read.py /dev/uio4 --wr
 
 ## Gotchas
@@ -42,12 +54,15 @@ appear):
 - Nothing publishes until the WR timebase is armed and locked (UNSYNC events are
   dropped). If XLEN stays 0, run: sudo python3 wr_time.py /dev/uio6 status
 - The publisher never blocks the hardware FIFO drain on a Redis stall: it drops the
-  oldest queued entries (queue_dropped climbs) rather than stalling. A rising
+  oldest queued records (queue_dropped climbs) rather than stalling. A rising
   queue_dropped / redis_dropped means Redis is not keeping up.
 - The `reconnects` stat counts Redis connect/publish FAILURES (not successful
   reconnections). If `published` stays 0 while `reconnects` climbs, Redis is not
   reachable: check `redis-cli ping` (is redis-server running?) and that redis-py is
   installed (`pip install -r requirements-board.txt`) -- a missing redis-py shows up
   as this same climbing-reconnects, published=0 pattern.
-- Streams are capped at --maxlen (approximate); old entries are trimmed by Redis.
+- Stream IDs are the event time, guarded to never go backward. A WR re-arm that jumps
+  the clock back briefly clusters a few entries at the last ms instead of erroring.
+- Streams are capped at --maxlen (approximate) and Redis persistence is off
+  (redis-kr260.conf), so streams are in-memory and start empty on a redis restart.
 - redis-server binds localhost by default; keep it that way (no auth is configured).
