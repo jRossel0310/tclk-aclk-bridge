@@ -129,6 +129,46 @@ def test_stream_events_wr_formats_sec_ns_and_unsync():
     assert "dt=2.0" in body[2], body[2]                                      # 2000 ns -> 2.0 us
 
 
+def test_drain_events_decodes_and_pops():
+    import readout_common as rc
+    from readout_common import STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP
+
+    class FakeIO:
+        def __init__(self, events):
+            self.events = events   # list of (event, flags, data, ts)
+            self.i = 0
+            self.regs = {}
+        def rd(self, o):
+            if o == STATUS:
+                if self.i >= len(self.events):
+                    raise KeyboardInterrupt   # ends drain_events cleanly
+                ev, fl, data, ts = self.events[self.i]
+                self.regs = {
+                    EVENT: (fl << 16) | (ev & 0xFFFF),
+                    DATA_HI: (data >> 32) & 0xFFFFFFFF, DATA_LO: data & 0xFFFFFFFF,
+                    TS_HI: (ts >> 32) & 0xFFFFFFFF, TS_LO: ts & 0xFFFFFFFF,
+                }
+                return 0   # not empty
+            return self.regs.get(o, 0)
+        def wr(self, o, v=0):
+            if o == POP:
+                self.i += 1
+
+    SEC = 1_751_800_000
+    events = [
+        (0x07, 0x03, 0xABCD, (SEC << 32) | 1500),   # is_tclk=1, has_data=1
+        (0x18, 0x02, 0,      0),                      # is_tclk=1, has_data=0, UNSYNC
+    ]
+    got = []
+    io = FakeIO(events)
+    rc.drain_events(io, lambda e: got.append(e), idle_cb=None, poll_s=0)
+    assert len(got) == 2, got
+    assert got[0] == {"event": 0x07, "flags": 0x03, "data": 0xABCD,
+                      "ts": (SEC << 32) | 1500, "is_tclk": 1, "has_data": 1}, got[0]
+    assert got[1]["event"] == 0x18 and got[1]["ts"] == 0
+    assert got[1]["is_tclk"] == 1 and got[1]["has_data"] == 0
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

@@ -231,3 +231,30 @@ def stream_events(io, tick_ns, stats_line, format_event, header, wr=False):
     except KeyboardInterrupt:
         say("\n# stopped.")
         say(stats_line())
+
+
+def drain_events(io, on_event, idle_cb=None, poll_s=0.001):
+    """Shared drain loop for the Redis publisher: poll STATUS, and for each buffered
+    event call on_event(evt) with a decoded dict, popping it from the FIFO. While the
+    FIFO is empty, call idle_cb() at most once per second (for a stats line). Returns
+    on KeyboardInterrupt. Source-agnostic: does NOT filter (the publisher drops
+    UNSYNC). The console readers use stream_events instead; this is a separate, simpler
+    loop kept deliberately (see the design doc)."""
+    last_idle = time.monotonic()
+    try:
+        while True:
+            if io.rd(STATUS) & 0x1:                     # empty
+                if idle_cb is not None:
+                    now = time.monotonic()
+                    if now - last_idle >= 1.0:
+                        idle_cb()
+                        last_idle = now
+                time.sleep(poll_s)
+                continue
+            event, flags, data, ts = read_event(io)
+            on_event({
+                "event": event, "flags": flags, "data": data, "ts": ts,
+                "is_tclk": (flags >> 1) & 1, "has_data": flags & 1,
+            })
+    except KeyboardInterrupt:
+        pass
