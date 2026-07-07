@@ -1,0 +1,4 @@
+# Board-side Python deps for the KR260 readout tooling (NOT the sim venv; the sim
+# deps are in the repo-root requirements.txt). Install on the board with:
+#   pip install -r requirements-board.txt
+redis
