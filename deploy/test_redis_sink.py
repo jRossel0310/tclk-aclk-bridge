@@ -29,10 +29,11 @@ class FakePipe:
 
 
 class FakeRedis:
-    """Records committed pipeline ops in `ops`. First `fail_times` pipelines raise on
-    execute(), to exercise the sink's reconnect/drop path."""
+    """Records committed pipeline ops in `ops`, and set() calls in `kv`. First
+    `fail_times` pipelines raise on execute(), to exercise reconnect/drop."""
     def __init__(self, fail_times=0):
         self.ops = []
+        self.kv = {}
         self.fail_times = fail_times
 
     def pipeline(self, transaction=False):
@@ -40,6 +41,9 @@ class FakeRedis:
         if fail:
             self.fail_times -= 1
         return FakePipe(self.ops, fail)
+
+    def set(self, key, value, ex=None):
+        self.kv[key] = (value, ex)
 
 
 def _wait(pred, timeout=3.0):
@@ -128,6 +132,18 @@ def test_stop_flushes_queue():
     sink.stop(timeout=3.0)
     assert len(_xadds(fake)) == 50
     assert sink.stats()["published"] == 50 and sink.stats()["queued"] == 0
+
+
+def test_status_and_watchdog():
+    fake = FakeRedis()
+    sink = RedisSink(status_key="KR260:status", watchdog_key="KR260:watchdog",
+                     watchdog_ttl=30, watchdog_period=0, connect=lambda: fake)
+    sink.start()
+    assert _wait(lambda: "KR260:status" in fake.kv and "KR260:watchdog" in fake.kv), fake.kv
+    sink.stop()
+    assert fake.kv["KR260:status"][0] == 1
+    _, ex = fake.kv["KR260:watchdog"]
+    assert ex == 30
 
 
 if __name__ == "__main__":

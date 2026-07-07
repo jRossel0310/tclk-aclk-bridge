@@ -28,15 +28,23 @@ def _default_connect(host, port):
 
 class RedisSink:
     def __init__(self, host="127.0.0.1", port=6379, maxlen=1_000_000,
-                 queue_size=100_000, batch=1000, connect=None):
+                 queue_size=100_000, batch=1000, status_key=None,
+                 watchdog_key=None, watchdog_ttl=30, watchdog_period=10,
+                 connect=None):
         self.maxlen = maxlen
         self.batch = batch
+        self.status_key = status_key
+        self.watchdog_key = watchdog_key
+        self.watchdog_ttl = watchdog_ttl
+        self.watchdog_period = watchdog_period
         self._connect = connect or (lambda: _default_connect(host, port))
         self._q = queue.Queue(maxsize=queue_size)
         self._stop = threading.Event()
         self._thread = None
         self._lock = threading.Lock()
         self._last_ms = {}                       # per-stream monotonic-ID guard
+        self._status_set = False                 # re-announced after each (re)connect
+        self._last_wd = 0.0                       # monotonic time of last watchdog refresh
         self.published = 0
         self.queue_dropped = 0
         self.redis_dropped = 0
@@ -104,6 +112,21 @@ class RedisSink:
             pipe.hincrby(rec["index_key"], "count", 1)
         pipe.execute()
 
+    def _maybe_watchdog(self, client):
+        """Set status once per (re)connect and refresh the watchdog TTL key every
+        watchdog_period seconds. Raises on a Redis error so the caller reconnects."""
+        if self.status_key is None and self.watchdog_key is None:
+            return
+        now = time.monotonic()
+        if self._status_set and (now - self._last_wd) < self.watchdog_period:
+            return
+        if self.status_key is not None and not self._status_set:
+            client.set(self.status_key, 1)
+            self._status_set = True
+        if self.watchdog_key is not None:
+            client.set(self.watchdog_key, int(time.time()), ex=self.watchdog_ttl)
+        self._last_wd = now
+
     def _run(self):
         client = None
         while True:
@@ -112,6 +135,7 @@ class RedisSink:
             if client is None:
                 try:
                     client = self._connect()
+                    self._status_set = False     # re-announce status after (re)connect
                 except Exception:
                     with self._lock:
                         self.reconnects += 1
@@ -119,6 +143,13 @@ class RedisSink:
                         break                    # stopping AND cannot connect: give up rest
                     time.sleep(0.5)
                     continue
+            try:
+                self._maybe_watchdog(client)
+            except Exception:
+                with self._lock:
+                    self.reconnects += 1
+                client = None
+                continue
             batch = self._drain_batch()
             if not batch:
                 if self._stop.is_set():
