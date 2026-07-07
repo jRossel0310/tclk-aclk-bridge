@@ -59,8 +59,18 @@ events appear; do NOT run both on the same /dev/uioN at once, they both POP the 
 - The `reconnects` stat counts Redis connect/publish FAILURES (not successful
   reconnections). If `published` stays 0 while `reconnects` climbs, Redis is not
   reachable: check `redis-cli ping` (is redis-server running?) and that redis-py is
-  installed (`pip install -r requirements-board.txt`) -- a missing redis-py shows up
-  as this same climbing-reconnects, published=0 pattern.
+  installed and visible to root (the publisher runs under sudo): `sudo apt install
+  python3-redis`, or `sudo pip3 install redis`. A user-only `pip install --user` is
+  invisible to `sudo python3`. On a persistent failure the writer backs off ~0.5 s
+  between retries (it does not busy-spin).
+- Liveness: `KR260:watchdog` (a TTL key) is the authoritative signal, it expires within
+  ~30 s if the publisher dies. `KR260:status` is sticky (set to 1 on connect, not reset
+  on stop), so do not trust it alone.
+- The event-time stream-ID guard is per publisher process. If you restart a publisher
+  within ~1 s of a backward WR re-arm, Redis may reject the first events (their ID is
+  below the stream's current top) and they are dropped until wall-clock time passes that
+  top. Persistence is off, so restarting redis-server (which clears the stream) avoids
+  this; only a publisher-only restart is exposed.
 - Stream IDs are the event time, guarded to never go backward. A WR re-arm that jumps
   the clock back briefly clusters a few entries at the last ms instead of erroring.
 - Streams are capped at --maxlen (approximate) and Redis persistence is off

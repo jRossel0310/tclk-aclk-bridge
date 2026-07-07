@@ -149,6 +149,8 @@ class RedisSink:
                 with self._lock:
                     self.reconnects += 1
                 client = None
+                if not self._stop.is_set():
+                    time.sleep(0.5)          # back off on a Redis error (no busy-spin)
                 continue
             batch = self._drain_batch()
             if not batch:
@@ -165,3 +167,5 @@ class RedisSink:
                     self.redis_dropped += len(batch)
                     self.reconnects += 1
                 client = None                    # force reconnect next iteration
+                if not self._stop.is_set():
+                    time.sleep(0.5)          # back off on a Redis error (no busy-spin)

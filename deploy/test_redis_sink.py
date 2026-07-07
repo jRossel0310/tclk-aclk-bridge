@@ -35,6 +35,7 @@ class FakeRedis:
         self.ops = []
         self.kv = {}
         self.fail_times = fail_times
+        self.set_calls = 0
 
     def pipeline(self, transaction=False):
         fail = self.fail_times > 0
@@ -43,6 +44,7 @@ class FakeRedis:
         return FakePipe(self.ops, fail)
 
     def set(self, key, value, ex=None):
+        self.set_calls += 1
         self.kv[key] = (value, ex)
 
 
@@ -156,6 +158,33 @@ def test_watchdog_only_no_status():
     assert "KR260:status" not in fake.kv          # status_key is None -> never written
     _, ex = fake.kv["KR260:watchdog"]
     assert ex == 30
+
+
+def test_watchdog_error_backs_off():
+    class FailSet(FakeRedis):
+        def set(self, key, value, ex=None):
+            raise RuntimeError("redis down")
+    fake = FailSet()
+    sink = RedisSink(status_key="KR260:status", watchdog_key="KR260:watchdog",
+                     watchdog_period=0, connect=lambda: fake)
+    sink.start()
+    time.sleep(0.3)
+    sink.stop()
+    # a persistent Redis error must back off (~0.5 s), not busy-spin: a spin would rack
+    # up thousands of reconnects in 0.3 s; the backoff keeps it tiny.
+    assert sink.stats()["reconnects"] <= 5, sink.stats()
+
+
+def test_watchdog_throttle_period():
+    fake = FakeRedis()
+    sink = RedisSink(watchdog_key="KR260:watchdog", watchdog_period=1000,
+                     connect=lambda: fake)
+    sink.start()
+    assert _wait(lambda: fake.set_calls >= 1), fake.set_calls
+    time.sleep(0.05)
+    sink.stop()
+    # period is 1000 s, so after the first refresh no further watchdog writes happen
+    assert fake.set_calls == 1, fake.set_calls
 
 
 if __name__ == "__main__":
