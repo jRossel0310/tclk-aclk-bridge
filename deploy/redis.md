@@ -16,6 +16,13 @@ refreshed every ~10 s, expiring in 30 s) for liveness.
 ## One-time setup on the board
 
     sudo apt update && sudo apt install -y redis-server python3-redis
+    # Redis MUST be >= 7.0 (the <ms>-* event-time stream ID syntax is a Redis 7 feature;
+    # Ubuntu's default redis 6.x rejects every XADD and publishes nothing). If your
+    # redis-server is 6.x, install Redis 7 from packages.redis.io:
+    #   curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+    #   echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list
+    #   sudo apt update && sudo apt install -y redis
+    redis-cli INFO server | grep redis_version    # confirm >= 7.0
     # apply the KR260 Redis settings (ephemeral streams, stream tuning), then restart:
     cat redis-kr260.conf | sudo tee -a /etc/redis/redis.conf
     sudo systemctl enable --now redis-server
@@ -76,3 +83,5 @@ events appear; do NOT run both on the same /dev/uioN at once, they both POP the 
 - Streams are capped at --maxlen (approximate) and Redis persistence is off
   (redis-kr260.conf), so streams are in-memory and start empty on a redis restart.
 - redis-server binds localhost by default; keep it that way (no auth is configured).
+- Requires redis-server >= 7.0; on 6.x every XADD is rejected (invalid stream ID) and
+  published stays 0 (with backoff, not a spin).

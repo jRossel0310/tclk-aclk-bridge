@@ -143,15 +143,15 @@ class RedisSink:
                         break                    # stopping AND cannot connect: give up rest
                     time.sleep(0.5)
                     continue
-            try:
-                self._maybe_watchdog(client)
-            except Exception:
-                with self._lock:
-                    self.reconnects += 1
-                client = None
-                if not self._stop.is_set():
+            if not self._stop.is_set():
+                try:
+                    self._maybe_watchdog(client)
+                except Exception:
+                    with self._lock:
+                        self.reconnects += 1
+                    client = None
                     time.sleep(0.5)          # back off on a Redis error (no busy-spin)
-                continue
+                    continue
             batch = self._drain_batch()
             if not batch:
                 if self._stop.is_set():

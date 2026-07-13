@@ -36,6 +36,7 @@ class FakeRedis:
         self.kv = {}
         self.fail_times = fail_times
         self.set_calls = 0
+        self.fail_set = False      # if True, set() always raises (watchdog fully down)
 
     def pipeline(self, transaction=False):
         fail = self.fail_times > 0
@@ -44,6 +45,8 @@ class FakeRedis:
         return FakePipe(self.ops, fail)
 
     def set(self, key, value, ex=None):
+        if self.fail_set:
+            raise RuntimeError("redis down")
         self.set_calls += 1
         self.kv[key] = (value, ex)
 
@@ -185,6 +188,22 @@ def test_watchdog_throttle_period():
     sink.stop()
     # period is 1000 s, so after the first refresh no further watchdog writes happen
     assert fake.set_calls == 1, fake.set_calls
+
+
+def test_stop_flushes_when_redis_fully_down():
+    # set() raises (watchdog down) and every pipeline.execute() raises (writes down).
+    # A stopping writer must skip liveness work and go straight to draining the queue
+    # (discarding as redis_dropped), not busy-spin on the watchdog path until timeout.
+    fake = FakeRedis(fail_times=10_000)
+    fake.fail_set = True
+    sink = RedisSink(status_key="KR260:status", watchdog_key="KR260:watchdog",
+                     watchdog_period=0, connect=lambda: fake)
+    for i in range(50):
+        sink.submit(_record(1000 + i))
+    sink.start()
+    sink.stop(timeout=2.0)
+    assert sink.stats()["queued"] == 0, sink.stats()
+    assert sink.stats()["redis_dropped"] >= 50, sink.stats()
 
 
 if __name__ == "__main__":
