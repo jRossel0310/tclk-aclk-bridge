@@ -49,7 +49,12 @@ module async_fifo #(
 
     localparam int DEPTH = 1 << ADDR_WIDTH;
 
-    // Storage. Written in wr_clk, read combinationally in rd_clk (FWFT).
+    // Storage. Written in wr_clk, read combinationally in rd_clk (FWFT). The async read
+    // means this can only be LUT (distributed) RAM, never BRAM. ram_style="distributed"
+    // plus the reset-free write block below let Vivado infer it as LUTRAM; without them the
+    // async reset in the write block blocks RAM inference and the array dissolves into
+    // flip-flops, which fails to synthesize once DEPTH*WIDTH grows past a few thousand bits.
+    (* ram_style = "distributed" *)
     logic [WIDTH-1:0] mem [DEPTH];
 
     // Binary and Gray pointers, each ADDR_WIDTH+1 bits (the extra MSB is the
@@ -68,13 +73,18 @@ module async_fifo #(
     wire [ADDR_WIDTH:0] wr_bin_nxt  = wr_bin + (do_wr ? 1'b1 : 1'b0);
     wire [ADDR_WIDTH:0] wr_gray_nxt = (wr_bin_nxt >> 1) ^ wr_bin_nxt;
 
+    // Memory write: a reset-free clocked block so Vivado infers RAM (a RAM primitive has no
+    // async reset). mem needs no reset -- the pointers below gate what can ever be read out.
+    always_ff @(posedge wr_clk) begin
+        if (do_wr)
+            mem[wr_bin[ADDR_WIDTH-1:0]] <= wr_data;
+    end
+
     always_ff @(posedge wr_clk or negedge wr_rstn) begin
         if (!wr_rstn) begin
             wr_bin  <= '0;
             wr_gray <= '0;
         end else begin
-            if (do_wr)
-                mem[wr_bin[ADDR_WIDTH-1:0]] <= wr_data;
             wr_bin  <= wr_bin_nxt;
             wr_gray <= wr_gray_nxt;
         end
