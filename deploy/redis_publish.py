@@ -17,10 +17,30 @@ stall never stalls the hardware FIFO drain.
 Ctrl-C to stop (flushes the queue, prints final stats). Needs redis-py on the board
 (pip install -r requirements-board.txt) and a running redis-server."""
 import sys
+import time
 
 import readout_common as rc
-from readout_common import say, wr_split, wr_utc
+from readout_common import say, wr_split, wr_utc, read_hw_counters
 from redis_sink import RedisSink
+from stats_log import StatsLog, build_snapshot, sw_counters, now_utc
+
+
+class PublisherState:
+    """Drain-side counters. note(ts) classifies one event: a real event increments
+    `drained` and returns True (publish it); an UNSYNC event (ts==0, WR not locked when
+    stamped) increments `unsync` and returns False (dropped by design, see
+    should_publish)."""
+
+    def __init__(self):
+        self.drained = 0
+        self.unsync = 0
+
+    def note(self, ts):
+        if should_publish(ts):
+            self.drained += 1
+            return True
+        self.unsync += 1
+        return False
 
 
 def event_fields(event, flags, data, ts, src):
@@ -58,43 +78,52 @@ def main(argv):
     rc.line_buffer_stdout()
     pos, flags = rc.parse_args(
         argv, value_flags=("--src", "--namespace", "--redis-host", "--redis-port",
-                           "--maxlen", "--queue-size"))
-    dev    = pos[0] if pos else "/dev/uio4"
-    src    = flags.get("--src", "tclk")
-    ns     = flags.get("--namespace", "KR260")
-    host   = flags.get("--redis-host", "127.0.0.1")
-    port   = int(flags.get("--redis-port", "6379"))
-    maxlen = int(flags.get("--maxlen", "1000000"))
-    qsize  = int(flags.get("--queue-size", "100000"))
+                           "--maxlen", "--queue-size", "--statlog", "--snapshot-interval"))
+    dev      = pos[0] if pos else "/dev/uio4"
+    src      = flags.get("--src", "tclk")
+    ns       = flags.get("--namespace", "KR260")
+    host     = flags.get("--redis-host", "127.0.0.1")
+    port     = int(flags.get("--redis-port", "6379"))
+    maxlen   = int(flags.get("--maxlen", "1000000"))
+    qsize    = int(flags.get("--queue-size", "100000"))
+    statpath = flags.get("--statlog", "stats-%s.jsonl" % src)
+    interval = float(flags.get("--snapshot-interval", "60"))
 
     io = rc.open_dev(dev)
     sink = RedisSink(host=host, port=port, maxlen=maxlen, queue_size=qsize,
                      status_key="%s:status" % ns, watchdog_key="%s:watchdog" % ns)
     sink.start()
     stream = "%s:%s" % (ns, src)
-    say("# publishing %s events from %s to Redis stream '%s' (%s:%d). Ctrl-C to stop."
-        % (src, dev, stream, host, port))
-
-    drained = [0]
+    statlog = StatsLog(statpath)
+    state = PublisherState()
+    say("# publishing %s events from %s to Redis stream '%s' (%s:%d); stats -> %s every "
+        "%gs. Ctrl-C to stop." % (src, dev, stream, host, port, statpath, interval))
 
     def on_event(e):
-        if not should_publish(e["ts"]):        # UNSYNC: dropped by design
-            return
-        drained[0] += 1
-        sink.submit(build_record(ns, src, e["event"], e["flags"], e["data"], e["ts"]))
+        if state.note(e["ts"]):
+            sink.submit(build_record(ns, src, e["event"], e["flags"], e["data"], e["ts"]))
+
+    def snapshot():
+        statlog.write(build_snapshot(
+            now_utc(), time.monotonic(), src,
+            read_hw_counters(io), sw_counters(state.drained, state.unsync, sink.stats())))
 
     def stats_line():
         s = sink.stats()
-        say("[stats] drained=%d published=%d queued=%d queue_dropped=%d "
+        say("[stats] drained=%d unsync=%d published=%d queued=%d queue_dropped=%d "
             "redis_dropped=%d reconnects=%d" % (
-                drained[0], s["published"], s["queued"], s["queue_dropped"],
-                s["redis_dropped"], s["reconnects"]))
+                state.drained, state.unsync, s["published"], s["queued"],
+                s["queue_dropped"], s["redis_dropped"], s["reconnects"]))
 
+    snapshot()                                     # baseline before draining
     try:
-        rc.drain_events(io, on_event, idle_cb=stats_line)
+        rc.drain_events(io, on_event, idle_cb=stats_line,
+                        tick_cb=snapshot, tick_s=interval)
     finally:
         say("\n# stopping; flushing queue ...")
         sink.stop(timeout=3.0)
+        snapshot()                                 # final, post-flush
+        statlog.close()
         stats_line()
 
 

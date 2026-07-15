@@ -44,6 +44,15 @@ def test_build_record():
     assert r2["index_fields"]["data"] == "5"
 
 
+def test_publisher_state_counts():
+    from redis_publish import PublisherState
+    st = PublisherState()
+    assert st.note(0) is False and st.unsync == 1 and st.drained == 0
+    assert st.note((1 << 32) | 5) is True and st.drained == 1 and st.unsync == 1
+    st.note(0)
+    assert st.unsync == 2 and st.drained == 1
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
