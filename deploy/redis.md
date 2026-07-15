@@ -1,5 +1,9 @@
 # Redis event publishing (board-side, KR260 convention)
 
+> For leaving the board capturing unattended for hours/days and then reconciling
+> events-published / missed / failed-CRC statistics, see **capture.md** (tmux launcher +
+> on-disk stats log + `stats_report.py`).
+
 Publishes WR-timestamped TCLK/ACLK readout events into local Redis under the `KR260:`
 namespace, matching the Fermilab redis-clock-server conventions. Publish side only.
 UNSYNC events (ts==0, WR timebase not locked) are dropped, so arm the WR timebase first
