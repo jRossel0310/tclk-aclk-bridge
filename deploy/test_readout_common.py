@@ -43,6 +43,19 @@ def test_read_event_unpacks_fields_and_pops():
     assert io.rd(POP) == 0
 
 
+def test_read_event_skips_data_reads_when_no_payload():
+    io = make_io()
+    io.wr(EVENT, (0x0002 << 16) | 0x0007)   # is_tclk=1, has_data=0 (every TCLK event)
+    io.wr(DATA_HI, 0xDEADBEEF)              # stale head data that must NOT be read
+    io.wr(DATA_LO, 0xCAFE0001)
+    io.wr(TS_HI, 1)
+    io.wr(TS_LO, 2)
+    event, flags, data, ts = read_event(io)
+    assert event == 0x0007 and flags == 0x0002
+    assert data == 0                        # payload-less: DATA_HI/DATA_LO skipped
+    assert ts == (1 << 32) | 2
+
+
 def test_parse_args_matches_old_reader_behavior():
     pos, fl = parse_args(
         ["/dev/uio4", "--drop", "07,0F", "--gtreset", "--unknown"],
@@ -106,6 +119,8 @@ def test_stream_events_wr_formats_sec_ns_and_unsync():
         def wr(self, o, v=0):
             if o == POP:
                 self.i += 1
+        def pulse(self, o):
+            self.wr(o)
 
     SEC = 1_751_800_000
     events = [
@@ -155,6 +170,8 @@ def test_drain_events_decodes_and_pops():
         def wr(self, o, v=0):
             if o == POP:
                 self.i += 1
+        def pulse(self, o):
+            self.wr(o)
 
     SEC = 1_751_800_000
     events = [
@@ -209,6 +226,8 @@ def test_drain_events_tick_fires_when_fifo_busy():
         def wr(self, o, v=0):
             if o == POP:
                 self.i += 1
+        def pulse(self, o):
+            self.wr(o)
 
     ticks = [0]
     idles = [0]
@@ -219,7 +238,7 @@ def test_drain_events_tick_fires_when_fifo_busy():
                     tick_cb=lambda: ticks.__setitem__(0, ticks[0] + 1),
                     tick_s=0.0)          # tick_s=0 -> fires every iteration
     assert idles[0] == 0, "idle_cb must not fire on a never-empty FIFO"
-    assert ticks[0] >= 3, ticks[0]       # fired on each busy iteration
+    assert ticks[0] >= 1, ticks[0]       # tick still fires under a never-empty (overloaded) FIFO
 
 
 if __name__ == "__main__":

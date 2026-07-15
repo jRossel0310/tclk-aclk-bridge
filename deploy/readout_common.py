@@ -7,9 +7,9 @@ the startup probe, and the streaming loop. Pure logic stays off the mmap so it i
 unit-testable on the PC (test_readout_common.py); only open_dev() touches
 /dev/uio* and needs the board.
 """
+import ctypes
 import mmap
 import os
-import struct
 import sys
 import threading
 import time
@@ -74,14 +74,28 @@ def wr_split(ts):
     return (ts >> 32) & 0xFFFFFFFF, ts & 0xFFFFFFFF
 
 
+_utc_cache_sec = None       # last seconds value formatted (module-global memo)
+_utc_cache_base = None      # its "%Y-%m-%dT%H:%M:%S" string
+
+
 def wr_utc(ts):
-    """Human-readable UTC for a packed WR timestamp. The strict-zero value
-    (stamped while not WR-locked) renders as 'UNSYNC'."""
+    """Human-readable UTC for a packed WR timestamp. The strict-zero value (stamped while
+    not WR-locked) renders as 'UNSYNC'.
+
+    The strftime/gmtime of the SECONDS field is memoized for the current second: within one
+    second only the nanoseconds change. This matters on the board -- glibc's strftime stats
+    the timezone on every call (~ms each on the SD card), and the readout hot path formats
+    ~100 events/s. Calling it once per second instead of twice per event took the PS drain
+    from ~77 ev/s (the real overflow bottleneck) back above the ~100 ev/s decode rate. Only
+    the drain thread calls this, so the module-global memo needs no lock."""
     if ts == 0:
         return "UNSYNC"
+    global _utc_cache_sec, _utc_cache_base
     sec, ns = wr_split(ts)
-    base = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(sec))
-    return "%s.%09dZ" % (base, ns)
+    if sec != _utc_cache_sec:
+        _utc_cache_sec = sec
+        _utc_cache_base = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(sec))
+    return "%s.%09dZ" % (_utc_cache_base, ns)
 
 
 class RegIO:
@@ -98,6 +112,27 @@ class RegIO:
         self.m = buf
         self.names = names
         self._watch = {"label": None, "t": 0.0}
+        self._labels = {}          # (verb, offset) -> precomputed watchdog label string
+        self._views = {}           # offset -> cached ctypes uint32 view into buf
+
+    def _label(self, verb, o):
+        """Watchdog label, precomputed per (verb, offset). Formatting it per access was
+        ~8 us of the ~10.7 us per register access; a dict hit is ~0.1 us."""
+        key = (verb, o)
+        lbl = self._labels.get(key)
+        if lbl is None:
+            lbl = self._labels[key] = "%s %s (0x%02X)" % (verb, self.names.get(o, "?"), o)
+        return lbl
+
+    def _view(self, o):
+        """Cached ctypes uint32 view of one register. ctypes scalar access is a single
+        32-bit load/store (HW-verified for the store side); an mmap slice goes through
+        glibc memcpy, which multi-loads/multi-stores (2 bus transactions for 4 bytes).
+        Caching the view also keeps object creation off the hot path."""
+        v = self._views.get(o)
+        if v is None:
+            v = self._views[o] = ctypes.c_uint32.from_buffer(self.m, o)
+        return v
 
     def start_watchdog(self):
         threading.Thread(target=self._watchdog, daemon=True).start()
@@ -126,14 +161,34 @@ class RegIO:
         self._watch["label"] = None
 
     def rd(self, o):
-        self._enter("read %s (0x%02X)" % (self.names.get(o, "?"), o))
-        v = struct.unpack("<I", self.m[o:o + 4])[0]
+        self._enter(self._label("read", o))
+        v = self._view(o).value
         self._leave()
         return v
 
     def wr(self, o, v=0):
-        self._enter("write %s (0x%02X)" % (self.names.get(o, "?"), o))
-        self.m[o:o + 4] = struct.pack("<I", v & 0xFFFFFFFF)
+        """Register write, exactly one AXI write transaction (ctypes scalar store).
+        History: this used to be an mmap slice write, which goes through glibc memcpy
+        and on aarch64 issues TWO overlapping 32-bit stores for a 4-byte copy = TWO AXI
+        writes. Harmless for idempotent config registers (FILTER_CFG, GT_CTRL) but fatal
+        for POP. Never reintroduce slice writes for device registers."""
+        self._enter(self._label("write", o))
+        self._view(o).value = v & 0xFFFFFFFF
+        self._leave()
+
+    def pulse(self, o):
+        """Fire a write-sensitive register with EXACTLY ONE AXI write transaction.
+
+        An mmap slice write memcpy-multi-stores: 2 stores for 4 bytes, 3 for 1 byte, each
+        store a separate AXI write. On POP that popped the FIFO 2-3 times per call, and
+        every extra pop while >=2 events were buffered silently DISCARDED an unread event.
+        That ate the second member of every back-to-back TCLK chain (~24% of all events;
+        the survivor gap was quantized at 2x the 1.2 us on-wire chain pitch). HW-verified
+        2026-07-15: draining N buffered events took N/2 slice-write pops vs N ctypes pops
+        (147 vs 298 for ~297 events). A ctypes scalar assignment stores the word exactly
+        once. The written value is 0; POP fires on any write."""
+        self._enter(self._label("pulse", o))
+        self._view(o).value = 0
         self._leave()
 
 
@@ -154,13 +209,18 @@ def open_dev(dev, announce=True, watchdog=True):
 
 
 def read_event(io):
-    """Read one buffered event (EVENT + DATA + TS) and pop it from the FIFO."""
+    """Read one buffered event (EVENT + optional DATA + TS) and pop it from the FIFO.
+    DATA_HI/DATA_LO are read only when the head's has_data flag (FLAGS bit0) is set;
+    payload-less events (every TCLK event) skip those two AXI reads."""
     ev = io.rd(EVENT)
     event = ev & 0xFFFF
     flags = (ev >> 16) & 0xFFFF
-    data = (io.rd(DATA_HI) << 32) | io.rd(DATA_LO)
+    if flags & 1:
+        data = (io.rd(DATA_HI) << 32) | io.rd(DATA_LO)
+    else:
+        data = 0
     ts = (io.rd(TS_HI) << 32) | io.rd(TS_LO)
-    io.wr(POP)
+    io.pulse(POP)      # pulse, NOT a slice write: that double-fires POP (see pulse())
     return event, flags, data, ts
 
 
@@ -250,36 +310,46 @@ def stream_events(io, tick_ns, stats_line, format_event, header, wr=False):
         say(stats_line())
 
 
-def drain_events(io, on_event, idle_cb=None, poll_s=0.001, tick_cb=None, tick_s=60.0):
-    """Shared drain loop for the Redis publisher: poll STATUS, and for each buffered
-    event call on_event(evt) with a decoded dict, popping it from the FIFO. While the
-    FIFO is empty, call idle_cb() at most once per second (for a stats line). Separately,
-    if tick_cb is given, call it at most once per tick_s seconds regardless of whether the
-    FIFO is busy or idle (for the periodic stats snapshot); a sustained-busy run would
-    never idle, so the snapshot cannot ride on idle_cb. Returns on KeyboardInterrupt.
-    Source-agnostic: does NOT filter (the publisher drops UNSYNC). The console readers use
-    stream_events instead; this is a separate, simpler loop kept deliberately."""
+def drain_events(io, on_event, idle_cb=None, poll_s=0.0002, tick_cb=None, tick_s=60.0,
+                 batch=4096):
+    """Shared drain loop for the Redis publisher. Each pass drains EVERY event currently
+    buffered, in a tight inner loop (bounded by `batch`), then sleeps `poll_s` only when the
+    FIFO is genuinely empty. on_event(evt) gets a decoded dict; the event is popped.
+
+    poll_s is 200 us (was 1 ms), and the inner loop drains the whole FIFO per pass (the old
+    loop serviced ONE event per outer iteration and slept 1 ms the instant it caught up). On
+    hardware the old structure lost ~25% of a sustained ~100 ev/s stream: after each catch-up
+    the drain sat idle ~1 ms while the multi-threaded GIL handed off to the Redis sink, so its
+    effective service rate fell just below the arrival rate, the readout FIFO stayed full, and
+    it shed the overflow -- and NO FIFO depth fixed it, because the PS drain, not the buffer,
+    was the bottleneck. Draining everything each pass and polling tightly keeps the drain ahead.
+
+    While the FIFO is empty, idle_cb() is called at most once per second (for a stats line).
+    tick_cb() is called at most once per tick_s seconds regardless of load (for the periodic
+    snapshot); the `batch` bound returns to this housekeeping even under a never-empty overload
+    so the snapshot still fires. Returns on KeyboardInterrupt. Source-agnostic: does NOT filter
+    (the publisher drops UNSYNC). The console readers use stream_events instead; this is a
+    separate, simpler loop kept deliberately."""
     last_idle = time.monotonic()
     last_tick = time.monotonic()
     try:
         while True:
-            if tick_cb is not None:
-                now = time.monotonic()
-                if now - last_tick >= tick_s:
-                    tick_cb()
-                    last_tick = now
-            if io.rd(STATUS) & 0x1:                     # empty
-                if idle_cb is not None:
-                    now = time.monotonic()
-                    if now - last_idle >= 1.0:
-                        idle_cb()
-                        last_idle = now
+            now = time.monotonic()
+            if tick_cb is not None and now - last_tick >= tick_s:
+                tick_cb()
+                last_tick = now
+            got = 0
+            while got < batch and not (io.rd(STATUS) & 0x1):    # drain all buffered, tight
+                event, flags, data, ts = read_event(io)
+                on_event({
+                    "event": event, "flags": flags, "data": data, "ts": ts,
+                    "is_tclk": (flags >> 1) & 1, "has_data": flags & 1,
+                })
+                got += 1
+            if got == 0:                                        # FIFO empty
+                if idle_cb is not None and now - last_idle >= 1.0:
+                    idle_cb()
+                    last_idle = now
                 time.sleep(poll_s)
-                continue
-            event, flags, data, ts = read_event(io)
-            on_event({
-                "event": event, "flags": flags, "data": data, "ts": ts,
-                "is_tclk": (flags >> 1) & 1, "has_data": flags & 1,
-            })
     except KeyboardInterrupt:
         pass
