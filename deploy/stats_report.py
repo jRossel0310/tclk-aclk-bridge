@@ -13,7 +13,10 @@ nulls/filtered, events missed at the hardware (FIFO overflow) and at the publish
 import json
 import sys
 
-FIFO_RESIDUAL = 64      # FIFO depth (ADDR_WIDTH=6): tolerated |missed_hw| from residual
+FIFO_RESIDUAL = 512     # FIFO depth (ADDR_WIDTH=9): tolerated |missed_hw| from residual.
+                        # A run that STARTS against a full FIFO drains up to DEPTH events that
+                        # were already counted before the baseline snapshot, so missed_hw can
+                        # legitimately read as low as -DEPTH (a recovered backlog, not a loss).
 
 
 def load_snapshots(path):

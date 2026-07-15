@@ -122,13 +122,13 @@ def test_reconcile_surfaces_queued_and_ledger_ok():
 
 
 def test_reconcile_ledger_mismatch_flagged():
-    # Counters that do not close (100 events unaccounted, beyond the 64 tolerance).
+    # Counters that do not close (600 events unaccounted, beyond the 512 tolerance).
     snaps = [
         _snap("tclk", 0.0, ev=0),
-        _snap("tclk", 60.0, ev=1000, drained=1000, published=500, queued=400),
+        _snap("tclk", 60.0, ev=1000, drained=1000, published=300, queued=100),
     ]
     r = reconcile(snaps)
-    assert r["ledger_ok"] is False      # 500 + 0 + 400 + 0 + 0 = 900 vs decoded 1000
+    assert r["ledger_ok"] is False      # 300 + 0 + 100 + 0 + 0 = 400 vs decoded 1000
     assert "MISMATCH" in format_report(r)
 
 

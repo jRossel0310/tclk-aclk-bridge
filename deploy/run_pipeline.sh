@@ -16,6 +16,12 @@ ACLK_DEV="${2:-/dev/uio5}"
 WR_DEV="${3:-/dev/uio6}"
 SESSION="kr260"
 FORCE="${FORCE:-0}"
+DROP="${DROP-07}"      # PL drop-mask codes (hex, comma-separated). Default: 0x07, the 720 Hz
+                      # flood. DROP="" (set-but-empty) keeps every code; note ${DROP-07} not
+                      # ${DROP:-07}, so an explicit empty value is honored. The mask register
+                      # PERSISTS across launches (clears only on PL reload): launching with
+                      # DROP="" does not un-drop codes a previous launch set; clear the bit
+                      # explicitly (io.wr(FILTER_CFG, code) with bit8=0) or reload the PL.
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 # --- pre-flight: Redis ---
@@ -46,9 +52,9 @@ fi
 
 # --- launch (exec bash keeps each window open after Ctrl-C so final stats stay visible) ---
 tmux new-session -d -s "$SESSION" -n tclk \
-    "cd '$HERE' && python3 redis_publish.py $TCLK_DEV --src tclk --statlog stats-tclk.jsonl; exec bash"
+    "cd '$HERE' && python3 redis_publish.py $TCLK_DEV --src tclk --drop '$DROP' --statlog stats-tclk.jsonl; exec bash"
 tmux new-window -t "$SESSION" -n aclk \
-    "cd '$HERE' && python3 redis_publish.py $ACLK_DEV --src aclk --statlog stats-aclk.jsonl; exec bash"
+    "cd '$HERE' && python3 redis_publish.py $ACLK_DEV --src aclk --drop '$DROP' --statlog stats-aclk.jsonl; exec bash"
 
 echo "# launched tmux session '$SESSION' (windows: tclk, aclk)."
 echo "#   attach : sudo tmux attach -t $SESSION      (detach with Ctrl-b d)"
