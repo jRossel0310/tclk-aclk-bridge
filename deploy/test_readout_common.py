@@ -3,6 +3,8 @@ Run: python test_readout_common.py   or   pytest deploy -q"""
 from readout_common import (
     RegIO, read_event, parse_args, dev_offset, apply_drop_filter,
     STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP, FILTER_CFG, NAME, GT_CTRL,
+    read_hw_counters,
+    EVENT_COUNT, NULL_COUNT, ERROR_COUNT, FILTERED_COUNT, LOCK, HEARTBEAT,
 )
 
 
@@ -167,6 +169,57 @@ def test_drain_events_decodes_and_pops():
                       "ts": (SEC << 32) | 1500, "is_tclk": 1, "has_data": 1}, got[0]
     assert got[1]["event"] == 0x18 and got[1]["ts"] == 0
     assert got[1]["is_tclk"] == 1 and got[1]["has_data"] == 0
+
+
+def test_read_hw_counters_decodes_all_regs():
+    io = make_io()
+    io.wr(EVENT_COUNT, 1000)
+    io.wr(NULL_COUNT, 5)
+    io.wr(ERROR_COUNT, 7)
+    io.wr(FILTERED_COUNT, 3)
+    io.wr(LOCK, 1)
+    io.wr(HEARTBEAT, 0x00ABCDEF)
+    io.wr(STATUS, 0b10)                 # overflow bit set, empty bit clear
+    hw = read_hw_counters(io)
+    assert hw == {"event_count": 1000, "null_count": 5, "error_count": 7,
+                  "filtered_count": 3, "overflow": 1, "lock": 1,
+                  "heartbeat": 0x00ABCDEF}
+    io.wr(STATUS, 0b01)                 # empty set, overflow clear
+    io.wr(LOCK, 0)
+    hw = read_hw_counters(io)
+    assert hw["overflow"] == 0 and hw["lock"] == 0
+
+
+def test_drain_events_tick_fires_when_fifo_busy():
+    import readout_common as rc
+    from readout_common import STATUS, EVENT, DATA_HI, DATA_LO, TS_HI, TS_LO, POP
+
+    class BusyIO:
+        # STATUS always reads not-empty (bit0=0) until the events run out, then raises
+        # KeyboardInterrupt. So idle_cb (empty-only) must NEVER fire, but tick_cb must.
+        def __init__(self, n):
+            self.n = n
+            self.i = 0
+        def rd(self, o):
+            if o == STATUS:
+                if self.i >= self.n:
+                    raise KeyboardInterrupt
+                return 0                # not empty
+            return 0
+        def wr(self, o, v=0):
+            if o == POP:
+                self.i += 1
+
+    ticks = [0]
+    idles = [0]
+    io = BusyIO(3)
+    rc.drain_events(io, on_event=lambda e: None,
+                    idle_cb=lambda: idles.__setitem__(0, idles[0] + 1),
+                    poll_s=0,
+                    tick_cb=lambda: ticks.__setitem__(0, ticks[0] + 1),
+                    tick_s=0.0)          # tick_s=0 -> fires every iteration
+    assert idles[0] == 0, "idle_cb must not fire on a never-empty FIFO"
+    assert ticks[0] >= 3, ticks[0]       # fired on each busy iteration
 
 
 if __name__ == "__main__":

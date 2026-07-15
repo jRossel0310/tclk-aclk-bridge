@@ -164,6 +164,23 @@ def read_event(io):
     return event, flags, data, ts
 
 
+def read_hw_counters(io):
+    """Snapshot the read-only diagnostic counters for one readout block. Reads only
+    (no POP), so it is safe to call from the drain thread without disturbing the FIFO.
+    overflow is STATUS bit1 (sticky: an enqueued event was lost to a full FIFO); lock
+    is LOCK bit0 (MMCM locked)."""
+    status = io.rd(STATUS)
+    return {
+        "event_count":    io.rd(EVENT_COUNT),
+        "null_count":     io.rd(NULL_COUNT),
+        "error_count":    io.rd(ERROR_COUNT),
+        "filtered_count": io.rd(FILTERED_COUNT),
+        "overflow":       (status >> 1) & 1,
+        "lock":           io.rd(LOCK) & 1,
+        "heartbeat":      io.rd(HEARTBEAT),
+    }
+
+
 def apply_drop_filter(io, drop_codes):
     for c in drop_codes:
         io.wr(FILTER_CFG, filter_cfg_word(c))
@@ -233,16 +250,24 @@ def stream_events(io, tick_ns, stats_line, format_event, header, wr=False):
         say(stats_line())
 
 
-def drain_events(io, on_event, idle_cb=None, poll_s=0.001):
+def drain_events(io, on_event, idle_cb=None, poll_s=0.001, tick_cb=None, tick_s=60.0):
     """Shared drain loop for the Redis publisher: poll STATUS, and for each buffered
     event call on_event(evt) with a decoded dict, popping it from the FIFO. While the
-    FIFO is empty, call idle_cb() at most once per second (for a stats line). Returns
-    on KeyboardInterrupt. Source-agnostic: does NOT filter (the publisher drops
-    UNSYNC). The console readers use stream_events instead; this is a separate, simpler
-    loop kept deliberately (see the design doc)."""
+    FIFO is empty, call idle_cb() at most once per second (for a stats line). Separately,
+    if tick_cb is given, call it at most once per tick_s seconds regardless of whether the
+    FIFO is busy or idle (for the periodic stats snapshot); a sustained-busy run would
+    never idle, so the snapshot cannot ride on idle_cb. Returns on KeyboardInterrupt.
+    Source-agnostic: does NOT filter (the publisher drops UNSYNC). The console readers use
+    stream_events instead; this is a separate, simpler loop kept deliberately."""
     last_idle = time.monotonic()
+    last_tick = time.monotonic()
     try:
         while True:
+            if tick_cb is not None:
+                now = time.monotonic()
+                if now - last_tick >= tick_s:
+                    tick_cb()
+                    last_tick = now
             if io.rd(STATUS) & 0x1:                     # empty
                 if idle_cb is not None:
                     now = time.monotonic()
