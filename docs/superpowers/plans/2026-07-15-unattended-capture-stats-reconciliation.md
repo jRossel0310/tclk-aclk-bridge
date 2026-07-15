@@ -28,21 +28,21 @@
 ## File Structure
 
 **Modify:**
-- `deploy/readout_common.py` — add `read_hw_counters(io)`; add `tick_cb`/`tick_s` to `drain_events`.
-- `deploy/redis_publish.py` — add `PublisherState`; wire snapshot writer + baseline/periodic/final snapshots; new `--statlog` / `--snapshot-interval` flags; add `unsync` to the stats line.
-- `deploy/test_readout_common.py` — tests for `read_hw_counters` and the busy-FIFO tick.
-- `deploy/test_redis_publish.py` — test for `PublisherState`.
-- `deploy/redis.md` — pointer to the new capture runbook.
-- `hw.ps1` — add new board files to the `aclk_pipeline` deploy map.
+- `deploy/readout_common.py` - add `read_hw_counters(io)`; add `tick_cb`/`tick_s` to `drain_events`.
+- `deploy/redis_publish.py` - add `PublisherState`; wire snapshot writer + baseline/periodic/final snapshots; new `--statlog` / `--snapshot-interval` flags; add `unsync` to the stats line.
+- `deploy/test_readout_common.py` - tests for `read_hw_counters` and the busy-FIFO tick.
+- `deploy/test_redis_publish.py` - test for `PublisherState`.
+- `deploy/redis.md` - pointer to the new capture runbook.
+- `hw.ps1` - add new board files to the `aclk_pipeline` deploy map.
 
 **Create:**
-- `deploy/stats_log.py` — `now_utc()`, `sw_counters()`, `build_snapshot()`, `StatsLog`.
-- `deploy/test_stats_log.py` — unit tests for the above.
-- `deploy/stats_report.py` — `load_snapshots()`, `group_by_src()`, `reconcile()`, `format_report()`, `main()`.
-- `deploy/test_stats_report.py` — unit tests for reconciliation + cross-check.
-- `deploy/run_pipeline.sh` — tmux launcher with Redis + WR pre-flight.
-- `deploy/plot_stats.py` — PC-side matplotlib plotter (not run on the board).
-- `deploy/capture.md` — the unattended-run runbook.
+- `deploy/stats_log.py` - `now_utc()`, `sw_counters()`, `build_snapshot()`, `StatsLog`.
+- `deploy/test_stats_log.py` - unit tests for the above.
+- `deploy/stats_report.py` - `load_snapshots()`, `group_by_src()`, `reconcile()`, `format_report()`, `main()`.
+- `deploy/test_stats_report.py` - unit tests for reconciliation + cross-check.
+- `deploy/run_pipeline.sh` - tmux launcher with Redis + WR pre-flight.
+- `deploy/plot_stats.py` - PC-side matplotlib plotter (not run on the board).
+- `deploy/capture.md` - the unattended-run runbook.
 
 ---
 
@@ -54,7 +54,7 @@
 
 **Interfaces:**
 - Produces: `read_hw_counters(io) -> dict` with keys `event_count, null_count, error_count, filtered_count, overflow, lock, heartbeat` (all ints; `overflow` and `lock` are 0/1).
-- Produces: `drain_events(io, on_event, idle_cb=None, poll_s=0.001, tick_cb=None, tick_s=60.0)` — `tick_cb()` fires at most once per `tick_s` seconds, evaluated every loop iteration so it fires whether the FIFO is busy or idle.
+- Produces: `drain_events(io, on_event, idle_cb=None, poll_s=0.001, tick_cb=None, tick_s=60.0)` - `tick_cb()` fires at most once per `tick_s` seconds, evaluated every loop iteration so it fires whether the FIFO is busy or idle.
 
 - [ ] **Step 1: Write the failing tests**
 
