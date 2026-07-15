@@ -92,6 +92,24 @@ def test_record_pipelines_xadd_hset_hincrby():
     assert sink.stats()["published"] == 1
 
 
+def test_index_writes_aggregate_per_batch():
+    # 5 events of one code + 1 of another, all drained in one batch: 6 XADDs but only
+    # one HSET + one HINCRBY per code, with the count summed exactly.
+    fake = FakeRedis()
+    sink = RedisSink(connect=lambda: fake)
+    for i in range(5):
+        sink.submit(_record(1000 + i, event="7"))
+    sink.submit(_record(2000, event="12"))               # 12 == 0x0C
+    sink.start()
+    sink.stop(timeout=3.0)
+    assert len(_xadds(fake)) == 6
+    hsets = [o for o in fake.ops if o[0] == "hset"]
+    incs = {o[1]: o[3] for o in fake.ops if o[0] == "hincrby"}
+    assert len(hsets) == 2, fake.ops
+    assert incs == {"KR260:event:tclk:0x07": 5, "KR260:event:tclk:0x0C": 1}, incs
+    assert sink.stats()["published"] == 6
+
+
 def test_monotonic_id_guard():
     fake = FakeRedis()
     sink = RedisSink(connect=lambda: fake)

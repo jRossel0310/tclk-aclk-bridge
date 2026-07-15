@@ -9,11 +9,15 @@ namespace, matching the Fermilab redis-clock-server conventions. Publish side on
 UNSYNC events (ts==0, WR timebase not locked) are dropped, so arm the WR timebase first
 (see wr.md).
 
-Per event the publisher writes:
-- `XADD KR260:<src>` (the time-ordered event feed; entry ID is the event time in ms),
-  fields `sec, ns, utc, event, data, is_tclk, has_data, src`.
-- `HSET KR260:event:<src>:0x<CODE>` = that code's latest event (`sec, ns, utc, data`) and
-  `HINCRBY ... count 1` (a per-code lookup index).
+The publisher writes:
+- per event: `XADD KR260:<src>` (the time-ordered event feed; entry ID is the event time
+  in ms), fields `sec, ns, event, data, is_tclk, has_data, src`. There is no per-entry
+  `utc` field (derive it from `sec`/`ns`): building it per event was measurable sink
+  throughput.
+- per event code, per writer batch (<= ~1 s): `HSET KR260:event:<src>:0x<CODE>` = that
+  code's latest event (`sec, ns, utc, data`) and `HINCRBY ... count <n-in-batch>` (a
+  per-code lookup index; counts stay exact, the hash just updates per batch instead of
+  per event).
 It also maintains `KR260:status` (=1 while alive) and `KR260:watchdog` (a TTL key,
 refreshed every ~10 s, expiring in 30 s) for liveness.
 

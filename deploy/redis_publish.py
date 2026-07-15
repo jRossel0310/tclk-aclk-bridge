@@ -2,11 +2,13 @@
 """Publish WR-timestamped readout events to local Redis (KR260 namespace).
 
 Drains one UIO readout (TCLK or ACLK), drops UNSYNC events (ts==0), and submits a
-record per event to a background RedisSink. Per event the sink writes:
-  XADD KR260:<src> <event-time-ms>-* {sec, ns, utc, event, data, is_tclk, has_data, src}
-  HSET KR260:event:<src>:0x<CODE> {sec, ns, utc, data}   (latest event for that code)
-  HINCRBY KR260:event:<src>:0x<CODE> count 1
-So consumers read the time-ordered stream OR look an event code up directly. The sink
+record per event to a background RedisSink. The sink writes:
+  per event:                 XADD KR260:<src> <event-time-ms>-*
+                                  {sec, ns, event, data, is_tclk, has_data, src}
+  per event code, per batch: HSET KR260:event:<src>:0x<CODE> {sec, ns, utc, data}
+                             HINCRBY KR260:event:<src>:0x<CODE> count <n-in-batch>
+So consumers read the time-ordered stream OR look an event code up directly. (No
+per-entry utc on the stream: derive it from sec/ns; the index hash keeps one.) The sink
 also maintains KR260:status / KR260:watchdog liveness keys. Two threads: this (main)
 thread drains the FIFO and enqueues; the sink's writer thread talks to Redis, so a Redis
 stall never stalls the hardware FIFO drain.
@@ -18,6 +20,7 @@ Ctrl-C to stop (flushes the queue, prints final stats). Needs redis-py on the bo
 (pip install -r requirements-board.txt) and a running redis-server."""
 import sys
 import time
+from functools import lru_cache
 
 import readout_common as rc
 from readout_common import say, wr_split, wr_utc, read_hw_counters
@@ -43,11 +46,25 @@ class PublisherState:
         return False
 
 
+@lru_cache(maxsize=None)
+def _stream_key(ns, src):
+    return "%s:%s" % (ns, src)
+
+
+@lru_cache(maxsize=4096)
+def _index_key(ns, src, event):
+    return "%s:event:%s:0x%02X" % (ns, src, event)
+
+
 def event_fields(event, flags, data, ts, src):
-    """Map a decoded event to the Redis Stream field dict (all string values)."""
+    """Map a decoded event to the Redis Stream field dict (all string values).
+    No per-event `utc` field: it duplicated sec/ns on every entry, and building +
+    shipping it was pure per-event overhead in the sink's redis-py hot path (the
+    measured throughput cap). Consumers derive UTC from sec/ns; the per-code index
+    hash still carries a human-readable utc."""
     sec, ns = wr_split(ts)
     return {
-        "sec": str(sec), "ns": str(ns), "utc": wr_utc(ts),
+        "sec": str(sec), "ns": str(ns),
         "event": str(event), "data": str(data),
         "is_tclk": str((flags >> 1) & 1), "has_data": str(flags & 1),
         "src": src,
@@ -62,15 +79,18 @@ def should_publish(ts):
 def build_record(ns, src, event, flags, data, ts):
     """Build the sink record for one event: the per-source stream write plus the
     per-event-code index write, all under the `ns` namespace. The stream entry ID is
-    the event time in ms (the sink applies the monotonic guard)."""
+    the event time in ms (the sink applies the monotonic guard). Keys are lru_cached
+    and the index shares the fields dict's strings: this runs per event on the drain
+    thread's hot path."""
     sec, nsec = wr_split(ts)
+    fields = event_fields(event, flags, data, ts, src)
     return {
-        "stream":       "%s:%s" % (ns, src),
+        "stream":       _stream_key(ns, src),
         "id_ms":        sec * 1000 + nsec // 1_000_000,
-        "fields":       event_fields(event, flags, data, ts, src),
-        "index_key":    "%s:event:%s:0x%02X" % (ns, src, event),
-        "index_fields": {"sec": str(sec), "ns": str(nsec),
-                         "utc": wr_utc(ts), "data": str(data)},
+        "fields":       fields,
+        "index_key":    _index_key(ns, src, event),
+        "index_fields": {"sec": fields["sec"], "ns": fields["ns"],
+                         "utc": wr_utc(ts), "data": fields["data"]},
     }
 
 
@@ -78,7 +98,8 @@ def main(argv):
     rc.line_buffer_stdout()
     pos, flags = rc.parse_args(
         argv, value_flags=("--src", "--namespace", "--redis-host", "--redis-port",
-                           "--maxlen", "--queue-size", "--statlog", "--snapshot-interval"))
+                           "--maxlen", "--queue-size", "--statlog", "--snapshot-interval",
+                           "--drop"))
     dev      = pos[0] if pos else "/dev/uio4"
     src      = flags.get("--src", "tclk")
     ns       = flags.get("--namespace", "KR260")
@@ -90,6 +111,11 @@ def main(argv):
     interval = float(flags.get("--snapshot-interval", "60"))
 
     io = rc.open_dev(dev)
+    # Suppress flood codes (e.g. the 720 Hz 0x07) in the PL before they ever reach the FIFO,
+    # so a sustained rate above the PS drain ceiling cannot overflow it. The drop-mask is a
+    # hardware register cleared on every bitstream reload, so re-applying it here (once per
+    # launch) makes the drop survive a PL reprogram with no manual step. See capture.md.
+    rc.apply_drop_filter(io, rc.parse_drop_codes(flags.get("--drop", "")))
     sink = RedisSink(host=host, port=port, maxlen=maxlen, queue_size=qsize,
                      status_key="%s:status" % ns, watchdog_key="%s:watchdog" % ns)
     sink.start()

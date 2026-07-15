@@ -10,8 +10,8 @@ def test_event_fields_schema():
     assert f["event"] == "7" and f["data"] == str(0xABCD)
     assert f["is_tclk"] == "1" and f["has_data"] == "1"
     assert f["src"] == "tclk"
-    assert f["utc"].startswith("20") and f["utc"].endswith("Z")
-    assert set(f.keys()) == {"sec", "ns", "utc", "event", "data",
+    # no per-entry utc on the stream (hot-path cost); consumers derive it from sec/ns
+    assert set(f.keys()) == {"sec", "ns", "event", "data",
                              "is_tclk", "has_data", "src"}
     assert all(isinstance(v, str) for v in f.values())
 
@@ -35,8 +35,10 @@ def test_build_record():
     assert r["index_key"] == "KR260:event:tclk:0x1D"
     assert r["id_ms"] == SEC * 1000 + NS // 1_000_000       # ...*1000 + 123
     assert r["fields"]["event"] == str(0x1D) and r["fields"]["src"] == "tclk"
-    assert r["index_fields"] == {"sec": str(SEC), "ns": str(NS),
-                                 "utc": r["fields"]["utc"], "data": "0"}
+    assert "utc" not in r["fields"]                       # stream entries carry sec/ns only
+    assert r["index_fields"]["sec"] == str(SEC) and r["index_fields"]["ns"] == str(NS)
+    assert r["index_fields"]["data"] == "0"
+    assert r["index_fields"]["utc"].startswith("20") and r["index_fields"]["utc"].endswith("Z")
     # a wide (16-bit) ACLK event still formats sensibly
     r2 = build_record("KR260", "aclk", 0xABCD, 0x01, 5, (SEC << 32) | NS)
     assert r2["stream"] == "KR260:aclk"

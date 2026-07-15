@@ -3,10 +3,15 @@
 A bounded in-process queue decouples the caller (the UIO drain thread) from Redis
 latency: submit() never blocks; if the queue is full it drops the OLDEST record
 (counted) so the hardware FIFO drain can never stall on a Redis hiccup. A writer
-thread pops records in batches and, per record, pipelines:
-  XADD <stream> <guarded_ms>-* <fields> MAXLEN ~ <maxlen>
-  HSET <index_key> <index_fields>
-  HINCRBY <index_key> count 1
+thread pops records in batches and pipelines:
+  per record:                XADD <stream> <guarded_ms>-* <fields> MAXLEN ~ <maxlen>
+  per event code, per batch: HSET <index_key> <latest index_fields>
+                             HINCRBY <index_key> count <occurrences in batch>
+The per-code index writes are AGGREGATED per batch (last event wins the HSET, counts
+sum exactly): redis-py command BUILDING is the throughput cap on the board (~560 us per
+3-command record), so collapsing 3 commands/event to ~1 tripled the sustained rate. The
+index hash therefore updates once per batch (<= 1 s typically) instead of per event;
+counts stay exact.
 On any Redis error it counts the dropped batch, reconnects with backoff, continues.
 
 Stream IDs come from event time (ms), with a per-stream monotonic guard so a backward
@@ -99,6 +104,8 @@ class RedisSink:
 
     def _write_batch(self, client, batch):
         pipe = client.pipeline(transaction=False)
+        idx_last = {}                            # index_key -> latest index_fields in batch
+        idx_cnt = {}                             # index_key -> occurrences in batch
         for rec in batch:
             stream = rec["stream"]
             ms = rec["id_ms"]
@@ -108,8 +115,12 @@ class RedisSink:
             self._last_ms[stream] = ms
             pipe.xadd(stream, rec["fields"], id="%d-*" % ms,
                       maxlen=self.maxlen, approximate=True)
-            pipe.hset(rec["index_key"], mapping=rec["index_fields"])
-            pipe.hincrby(rec["index_key"], "count", 1)
+            k = rec["index_key"]
+            idx_last[k] = rec["index_fields"]    # batch order = event order: last wins
+            idx_cnt[k] = idx_cnt.get(k, 0) + 1
+        for k, f in idx_last.items():            # one HSET + one HINCRBY per code per batch
+            pipe.hset(k, mapping=f)
+            pipe.hincrby(k, "count", idx_cnt[k])
         pipe.execute()
 
     def _maybe_watchdog(self, client):
