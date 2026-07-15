@@ -35,14 +35,35 @@ def group_by_src(snaps):
     return groups
 
 
+def _run_start(snaps):
+    """Index where the most recent capture run begins in a possibly-appended log.
+    Hardware counters keep climbing across a publisher restart but the software counters
+    (drained/published/...) reset to 0, so a drop in `drained` between consecutive
+    snapshots marks a new run. Returns the last such index (0 for a single-run log)."""
+    start = 0
+    for i in range(1, len(snaps)):
+        if snaps[i]["sw"]["drained"] < snaps[i - 1]["sw"]["drained"]:
+            start = i
+    return start
+
+
 def reconcile(snaps):
-    """Reconcile time-ordered snapshots for ONE source into a summary dict."""
-    f, l = snaps[0], snaps[-1]
+    """Reconcile time-ordered snapshots for ONE source into a summary dict. If the log
+    holds several capture runs (appended together), only the MOST RECENT run is
+    reconciled: its software counters reset at the run boundary, so mixing them with an
+    older run's hardware baseline would report a phantom loss."""
+    start = _run_start(snaps)
+    run = snaps[start:]
+    runs = sum(1 for i in range(1, len(snaps))
+               if snaps[i]["sw"]["drained"] < snaps[i - 1]["sw"]["drained"]) + 1
+    f, l = run[0], run[-1]
     hwf, hwl, swl = f["hw"], l["hw"], l["sw"]
     decoded = hwl["event_count"] - hwf["event_count"]
     missed_hw = decoded - swl["drained"] - swl["unsync"]
-    overflow_ever = 1 if any(s["hw"]["overflow"] for s in snaps) else 0
-    lock_lost = 1 if any(not s["hw"]["lock"] for s in snaps) else 0
+    missed_pub = swl["queue_dropped"] + swl["redis_dropped"]
+    queued = swl["queued"]
+    overflow_ever = 1 if any(s["hw"]["overflow"] for s in run) else 0
+    lock_lost = 1 if any(not s["hw"]["lock"] for s in run) else 0
 
     if overflow_ever:
         xcheck = "overflow bit set: hardware confirms FIFO loss"
@@ -53,17 +74,22 @@ def reconcile(snaps):
     else:
         xcheck = "clean (loss within FIFO residual, overflow bit clear)"
 
+    # Ledger identity: every decoded event ends up published, dropped by the publisher,
+    # still queued, dropped as UNSYNC, or lost to a FIFO overflow. At a clean final
+    # snapshot (writer thread stopped) this closes exactly; allow FIFO_RESIDUAL slack for
+    # an unclean kill mid-flight.
+    accounted = swl["published"] + missed_pub + queued + swl["unsync"] + missed_hw
     return {
-        "src": l["src"], "snapshots": len(snaps),
+        "src": l["src"], "snapshots": len(run), "runs_in_log": runs,
         "duration_s": l["mono"] - f["mono"],
         "decoded": decoded, "published": swl["published"],
         "failed_crc": hwl["error_count"] - hwf["error_count"],
         "nulls": hwl["null_count"] - hwf["null_count"],
         "filtered": hwl["filtered_count"] - hwf["filtered_count"],
-        "missed_hw": missed_hw,
-        "missed_pub": swl["queue_dropped"] + swl["redis_dropped"],
+        "missed_hw": missed_hw, "missed_pub": missed_pub, "queued": queued,
         "reconnects": swl["reconnects"], "unsync": swl["unsync"],
         "overflow_ever": overflow_ever, "lock_lost": lock_lost,
+        "accounted": accounted, "ledger_ok": abs(decoded - accounted) <= FIFO_RESIDUAL,
         "xcheck": xcheck,
     }
 
@@ -82,12 +108,18 @@ def format_report(r):
         "  nulls/filtered: %d / %d" % (r["nulls"], r["filtered"]),
         "  missed @ HW   : %d  (FIFO overflow loss)" % r["missed_hw"],
         "  missed @ pub  : %d  (queue + redis drops)" % r["missed_pub"],
+        "  undelivered   : %d  (still queued at stop; Redis backlog/down)" % r["queued"],
         "  reconnects    : %d" % r["reconnects"],
         "  unsync drops  : %d  (WR not locked when stamped)" % r["unsync"],
         "  WR lock lost  : %s" % ("YES" if r["lock_lost"] else "no"),
         "  overflow bit  : %s" % ("SET" if r["overflow_ever"] else "clear"),
         "  cross-check   : %s" % r["xcheck"],
+        "  ledger check  : decoded=%d vs accounted=%d  (%s)" % (
+            r["decoded"], r["accounted"], "OK" if r["ledger_ok"] else "MISMATCH"),
     ]
+    if r["runs_in_log"] > 1:
+        lines.append("  NOTE: log holds %d capture runs; reporting the most recent only."
+                     % r["runs_in_log"])
     if r["snapshots"] < 2:
         lines.append("  NOTE: only one snapshot; run longer for a real delta.")
     return "\n".join(lines)

@@ -8,12 +8,12 @@ from stats_report import load_snapshots, group_by_src, reconcile, format_report
 
 
 def _snap(src, mono, ev, err=0, nul=0, filt=0, ovf=0, lock=1,
-          drained=0, unsync=0, published=0, qd=0, rd=0, rec=0):
+          drained=0, unsync=0, published=0, qd=0, rd=0, rec=0, queued=0):
     return {"utc": "t", "mono": mono, "src": src,
             "hw": {"event_count": ev, "null_count": nul, "error_count": err,
                    "filtered_count": filt, "overflow": ovf, "lock": lock, "heartbeat": 0},
             "sw": {"drained": drained, "unsync": unsync, "published": published,
-                   "queued": 0, "queue_dropped": qd, "redis_dropped": rd, "reconnects": rec}}
+                   "queued": queued, "queue_dropped": qd, "redis_dropped": rd, "reconnects": rec}}
 
 
 def test_reconcile_basic_deltas():
@@ -90,6 +90,46 @@ def test_format_report_is_readable():
                    _snap("tclk", 60.0, ev=600, drained=600, published=600)])
     text = format_report(r)
     assert "tclk" in text and "published" in text and "failed CRC" in text
+
+
+def test_reconcile_reanchors_to_most_recent_run():
+    # Run 1: drained climbs 0 -> 490 while event_count goes 100 -> 600.
+    # Run 2 (appended, sw counters reset): drained 0 -> 295 while event_count 600 -> 900.
+    snaps = [
+        _snap("tclk", 0.0, ev=100, drained=0),
+        _snap("tclk", 60.0, ev=600, drained=490),
+        _snap("tclk", 61.0, ev=600, drained=0),      # run 2 baseline: drained reset
+        _snap("tclk", 121.0, ev=900, drained=295),
+    ]
+    r = reconcile(snaps)
+    assert r["runs_in_log"] == 2
+    assert r["decoded"] == 300          # 900 - 600 (run 2 only), NOT 900 - 100
+    assert r["missed_hw"] == 5          # 300 - 295 - 0
+    assert r["snapshots"] == 2          # only the last run's snapshots
+
+
+def test_reconcile_surfaces_queued_and_ledger_ok():
+    # Redis backlog leaves 400 events in the queue at the last snapshot.
+    snaps = [
+        _snap("tclk", 0.0, ev=0),
+        _snap("tclk", 60.0, ev=1000, drained=1000, published=600, queued=400),
+    ]
+    r = reconcile(snaps)
+    assert r["queued"] == 400
+    assert r["ledger_ok"] is True       # 600 + 0 + 400 + 0 + 0 == 1000 decoded
+    text = format_report(r)
+    assert "undelivered" in text and "ledger check" in text and "OK" in text
+
+
+def test_reconcile_ledger_mismatch_flagged():
+    # Counters that do not close (100 events unaccounted, beyond the 64 tolerance).
+    snaps = [
+        _snap("tclk", 0.0, ev=0),
+        _snap("tclk", 60.0, ev=1000, drained=1000, published=500, queued=400),
+    ]
+    r = reconcile(snaps)
+    assert r["ledger_ok"] is False      # 500 + 0 + 400 + 0 + 0 = 900 vs decoded 1000
+    assert "MISMATCH" in format_report(r)
 
 
 if __name__ == "__main__":

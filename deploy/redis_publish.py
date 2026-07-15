@@ -103,6 +103,8 @@ def main(argv):
         if state.note(e["ts"]):
             sink.submit(build_record(ns, src, e["event"], e["flags"], e["data"], e["ts"]))
 
+    # Runs on the drain thread (tick_cb): reads are cheap, but the statlog flush is on the
+    # FIFO-drain critical path; a wedged disk could stall the drain (bounded, overflow-flagged).
     def snapshot():
         statlog.write(build_snapshot(
             now_utc(), time.monotonic(), src,

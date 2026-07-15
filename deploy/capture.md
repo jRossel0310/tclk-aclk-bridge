@@ -47,7 +47,11 @@ Per source it prints decoded (good events the PL enqueued), published, failed CR
 nulls/filtered, missed at the hardware (FIFO overflow) and at the publisher (queue+redis
 drops), reconnects, WR-lock health, and an overflow cross-check. `decoded`, `failed CRC`,
 `nulls`, and `filtered` are baseline-to-last deltas; the software counters are cumulative
-totals from the last snapshot.
+totals from the last snapshot. The report also prints an "undelivered" count (events still
+in the queue at stop, e.g. Redis down/backlog) and a "ledger check" line (decoded should
+equal published + missed + queued + unsync). If you re-run the capture into the same
+stats-*.jsonl, snapshots are appended; the report detects the restart and reconciles only
+the most recent run (delete or rename the log between runs to keep them separate).
 
 ## 5. Plots (on the PC)
 
@@ -66,4 +70,5 @@ full FIFO, so `missed @ HW = decodedDelta - drained - unsync` recovers overflow 
 number even though the hardware exposes overflow only as a sticky bit (STATUS bit1). The
 report cross-checks the two: if it computes loss but the overflow bit was never set (or
 vice versa) it prints a WARN. Tolerance is one FIFO depth (64) of residual at the final
-snapshot; a clean Ctrl-C stop drains first, so the equality is tight.
+snapshot, so a normal run stays in the clean band; a real in-window overflow sets the
+sticky bit and prints the WARN instead.
