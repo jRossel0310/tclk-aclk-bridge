@@ -9,8 +9,11 @@
 // transition iff the cell bit is 1. SAMPLES_PER_CELL clk cycles per cell (HALF each
 // half). The emitted line is bit-identical to tb/tclk_tx_model.biphase_samples.
 // frame_type: 0 = TCLK (1 byte), 1 = ACLK event (2 bytes), 2 = full packet
-// (12 bytes: event 0-1, data 2-9, CRC 10 = 0x00, control 11 = 0x00). A start while
-// busy is ignored.
+// (12 bytes: event 0-1, data 2-9, CRC 10, control 11). A start while busy is
+// ignored. NOTE: bytes 10 (CRC8) and 11 (control) are emitted as 0x00 placeholders,
+// NOT computed - the real ACLK-Lite CRC algorithm is unspecified by the ISD and the
+// in-repo decoder ignores byte 10 anyway (see the byte-assembly block below and
+// docs/aclk-lite-framing.md).
 
 `timescale 1ns / 1ps
 
@@ -57,8 +60,16 @@ module aclk_lite_encoder #(
                 byte_arr[7]  = data[23:16];
                 byte_arr[8]  = data[15:8];
                 byte_arr[9]  = data[7:0];
-                byte_arr[10] = 8'h00;         // CRC placeholder
-                byte_arr[11] = 8'h00;         // control placeholder
+                // Byte 10 is the frame CRC8 field. It is NOT computed here: the
+                // real ACLK-Lite CRC (poly/init/reflection/coverage) is unspecified
+                // by the ISD and 0x2F is unconfirmed (see docs/aclk-lite-framing.md).
+                // We emit 0x00 as an obvious "unpopulated" sentinel rather than a
+                // plausible-but-wrong checksum. This is safe in-repo because the
+                // decoder (clk_byte_framer.sv) captures byte 10 but IGNORES it and
+                // relies on per-byte even parity for error detection. Populate this
+                // only once the real CRC spec or a golden capture is available.
+                byte_arr[10] = 8'h00;         // CRC8: unpopulated placeholder (see above)
+                byte_arr[11] = 8'h00;         // control char: unpopulated placeholder
             end
         endcase
     end

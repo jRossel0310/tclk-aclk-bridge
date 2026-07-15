@@ -1,4 +1,4 @@
-# deploy/pinblink.md — verify the TCLK pin (H12) at 3.3V on the board
+# deploy/pinblink.md - verify the TCLK pin (H12) at 3.3V on the board
 
 Goal: prove the chosen TCLK input pin (**PMOD1 pin 1 = package `H12`, LVCMOS33**)
 physically toggles at 3.3V, *before* building the full TCLK design. The PL design
@@ -14,19 +14,19 @@ the existing overlay loads unchanged and `pltest.py` still works.
 ```powershell
 .\hw.ps1 build -Tcl vivado\build_pinblink.tcl -Name pinblink
 ```
-Output: `…\kria-builds\pinblink\pinblink.runs\impl_1\uart_echo_bd_wrapper.bit`
-(the wrapper is named `uart_echo_bd_wrapper` on purpose — it reuses the existing
+Output: `...\kria-builds\pinblink\pinblink.runs\impl_1\uart_echo_bd_wrapper.bit`
+(the wrapper is named `uart_echo_bd_wrapper` on purpose: it reuses the existing
 overlay, so you only swap the `.bit.bin`). If Vivado flakes on `couldn't read
-file …` mid-block-design, the wrapper just retries (antivirus on `C:\Xilinx`).
+file ...` mid-block-design, the wrapper just retries (antivirus on `C:\Xilinx`).
 
-## 2. Convert .bit → .bit.bin (PC, in a Vivado/Vitis shell)
+## 2. Convert .bit -> .bit.bin (PC, in a Vivado/Vitis shell)
 
 The existing `deploy/uart_echo.bif` already names `uart_echo_bd_wrapper.bit`, so
 reuse it. Copy it next to the `.bit`, then:
 ```bat
 bootgen -arch zynqmp -process_bitstream bin -image uart_echo.bif
 ```
-→ `uart_echo_bd_wrapper.bit.bin`
+-> `uart_echo_bd_wrapper.bit.bin`
 
 ## 3. Copy to the board
 
@@ -46,13 +46,13 @@ sudo fpgautil -b uart_echo_bd_wrapper.bit.bin -f Full   # program the PL
 Probe **PMOD1 pin 1** with a DMM (DC volts) or scope, ground referenced to a PMOD
 GND pin:
 - DMM: reading alternates between ~0 V and ~3.3 V once per second.
-- Scope/LED: a clean 0.5 Hz square wave swinging 0 ↔ 3.3 V.
+- Scope/LED: a clean 0.5 Hz square wave swinging between 0 and 3.3 V.
 
 That confirms the pin, the LVCMOS33 bank, and the carrier level-translator all
 pass a 3.3V signal on H12.
 
 > Confirm which physical connector position is "pin 1" against the carrier-card
-> silkscreen / schematic — the package pin (H12) is correct, but pin-number-to-
+> silkscreen / schematic. The package pin (H12) is correct, but pin-number-to-
 > position numbering differs across references.
 
 ## 6. (optional) Confirm the PL is configured + clocked
@@ -60,7 +60,7 @@ pass a 3.3V signal on H12.
 ```bash
 sudo python3 pltest.py /dev/uioN     # find N via: ls -l /dev/uio*
 ```
-The heartbeat counter increments → the PL is alive (same check as the pltest
+The heartbeat counter increments, so the PL is alive (same check as the pltest
 design). This is independent of the H12 measurement.
 
 ---
