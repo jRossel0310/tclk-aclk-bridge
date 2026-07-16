@@ -97,18 +97,21 @@ def _write_csv(d, t, ev):
     return p
 
 
-def test_make_figure_two_axes():
+def test_make_figures_single_axes_each():
     import matplotlib
     matplotlib.use("Agg")
-    from supercycle_plot import make_figure
+    from supercycle_plot import make_hist_figure, make_raster_figure
     rng = np.random.default_rng(1)
     off_t = rng.normal(10.0, 0.2, 200)
     row_t = rng.integers(0, 8, 200)
     off_r = np.tile(np.arange(60) + 0.5, 8)
     row_r = np.repeat(np.arange(8), 60)
-    fig = make_figure(off_t, row_t, off_r, row_r, n_rows=8, median_len=60.0,
-                      target=0x1E, refs=[0x8F], theme="default", bins=120)
-    assert len(fig.axes) == 2
+    fig_h = make_hist_figure(off_t, off_r, n_rows=8, median_len=60.0,
+                             target=0x1E, refs=[0x8F], theme="default", bins=120)
+    fig_r = make_raster_figure(off_t, row_t, off_r, row_r, n_rows=8,
+                               median_len=60.0, target=0x1E, refs=[0x8F])
+    assert len(fig_h.axes) == 1
+    assert len(fig_r.axes) == 1
 
 
 def test_main_reports_missing_target_with_available_codes():
@@ -126,25 +129,27 @@ def test_main_reports_missing_target_with_available_codes():
         assert "Available codes" in msg and "0x1E:" in msg  # listing really printed
 
 
-def test_main_renders_png():
+def test_main_renders_svg_pair():
     import io
     from contextlib import redirect_stdout
     from supercycle_plot import main
     t, ev = _synthetic()
     with tempfile.TemporaryDirectory() as d:
         p = _write_csv(d, t, ev)
-        out_png = os.path.join(d, "sc.png")
+        out = os.path.join(d, "sc.svg")
         cap = io.StringIO()
         with redirect_stdout(cap):
-            rc = main([p, "--target", "1E", "--ref", "8F", "-o", out_png])
+            rc = main([p, "--target", "1E", "--ref", "8F", "-o", out])
         assert rc == 0
-        assert os.path.exists(out_png) and os.path.getsize(out_png) > 0
-        svg = out_png.rsplit(".", 1)[0] + ".svg"
-        assert os.path.exists(svg) and os.path.getsize(svg) > 0   # sibling SVG required
+        for suffix in ("_hist.svg", "_raster.svg"):
+            f = os.path.join(d, "sc" + suffix)
+            assert os.path.exists(f) and os.path.getsize(f) > 0
+        assert not [f for f in os.listdir(d) if f.endswith(".png")]   # SVG only
         report = cap.getvalue()
         assert "cycles: 8 kept / 1 rejected" in report
         assert "target 0x1E: 8 events; per cycle min/median/max = 1/1/1" in report
         assert "mode near" in report
+        assert "sc_hist.svg" in report and "sc_raster.svg" in report
 
 
 if __name__ == "__main__":
