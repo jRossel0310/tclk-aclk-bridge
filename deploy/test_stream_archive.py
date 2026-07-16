@@ -124,6 +124,46 @@ def test_follow_writes_and_persists_state_then_stops():
             assert len(list(csv.reader(f))) == 6          # header + 5
 
 
+def test_follow_retries_redis_errors():
+    from stream_archive import main, RedisError
+
+    class FlakyRedis(FakeStreamRedis):
+        def __init__(self, entries):
+            super().__init__(entries)
+            self.calls = 0
+
+        def xrange(self, stream, min="-", max="+", count=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise RedisError("transient")
+            return super().xrange(stream, min=min, max=max, count=count)
+
+    fake = FlakyRedis(_entries(3))
+    with tempfile.TemporaryDirectory() as d:
+        rc = main(["--src", "tclk", "--outdir", d, "--poll", "0", "--max-loops", "3"],
+                  connect=lambda h, p: fake)
+        assert rc == 0
+        state = json.load(open(os.path.join(d, "archive-state.json")))
+        assert state == {"tclk": "1002-0"}     # recovered after the transient error
+
+
+def test_follow_crashes_on_non_redis_error():
+    from stream_archive import main
+
+    class BrokenRedis(FakeStreamRedis):
+        def xrange(self, *a, **k):
+            raise RuntimeError("bug")
+
+    with tempfile.TemporaryDirectory() as d:
+        try:
+            main(["--src", "tclk", "--outdir", d, "--poll", "0", "--max-loops", "2"],
+                 connect=lambda h, p: BrokenRedis([]))
+            raised = False
+        except RuntimeError:
+            raised = True
+        assert raised           # crash propagates: launcher restart contract
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

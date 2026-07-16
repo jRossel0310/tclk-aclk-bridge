@@ -23,6 +23,15 @@ import os
 import sys
 import time
 
+# Redis errors are retried in-process (see main's follow loop); anything else
+# crashes so the launcher's until-loop restarts us. The guarded import keeps the
+# module importable on machines without redis-py (PC unit tests inject a stub).
+try:
+    from redis.exceptions import RedisError
+except ImportError:
+    class RedisError(Exception):
+        """Placeholder when redis-py is absent; production uses the real one."""
+
 HEADER = ["id", "sec", "ns", "event", "data"]
 
 
@@ -161,7 +170,7 @@ def main(argv, connect=None):
                     if n:
                         state[s] = last
                         save_state(state_path, state)
-            except Exception as e:   # Redis down/hiccup: log, back off, reconnect
+            except RedisError as e:   # Redis down/hiccup: log, back off, reconnect
                 print("# archiver: redis error (%s); retrying" % e, flush=True)
                 client = None
             loops += 1
