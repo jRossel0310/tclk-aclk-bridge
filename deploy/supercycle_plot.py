@@ -145,7 +145,9 @@ def make_hist_figure(off_t, ref_offs, n_rows, median_len, target, refs,
     edges = np.linspace(0.0, median_len, bins + 1)
     ax.hist(off_t, bins=edges, color=C_TARGET, zorder=3,
             label="target " + _hex(target))
-    ax.legend(loc="upper right", fontsize=10, frameon=False)
+    # legend ABOVE the axes (right-aligned, one row) so it never sits on data
+    ax.legend(loc="lower right", bbox_to_anchor=(1.0, 1.02), ncol=2,
+              fontsize=10, frameon=False, borderaxespad=0.0)
     ax.set_xlim(0.0, median_len)
     ax.set_xlabel("offset into supercycle (s)", fontsize=11, color=MUTED)
     ax.set_ylabel("events / bin", fontsize=10, color=MUTED)
@@ -160,7 +162,7 @@ def make_raster_figure(off_t, row_t, off_r, row_r, n_rows, median_len,
     events as dots, reference events as a faint backdrop."""
     fig, _ = _new_fig(theme, (11, 6.0), (12.5, 7.0), target, n_rows, median_len,
                       ", cycle by cycle")
-    ax = fig.add_axes([0.085, 0.11, 0.89, 0.70])
+    ax = fig.add_axes([0.085, 0.10, 0.89, 0.68])
 
     if len(off_r):
         ax.scatter(off_r, row_r, s=2, color=C_REF, alpha=0.25,
@@ -168,7 +170,10 @@ def make_raster_figure(off_t, row_t, off_r, row_r, n_rows, median_len,
                    label="ref " + ", ".join(_hex(r) for r in refs))
     ax.scatter(off_t, row_t, s=14, color=C_TARGET, linewidths=0, zorder=3,
                label="target " + _hex(target))
-    ax.legend(loc="upper right", fontsize=10, frameon=False)
+    # legend ABOVE the axes (right-aligned, one row) so it never sits on data
+    ax.legend(loc="lower right", bbox_to_anchor=(1.0, 1.02), ncol=2,
+              fontsize=10, frameon=False, borderaxespad=0.0,
+              markerscale=2.5)
     ax.set_xlim(0.0, median_len)
     ax.set_ylim(-0.5, n_rows - 0.5)
     ax.invert_yaxis()                         # first cycle at the top
