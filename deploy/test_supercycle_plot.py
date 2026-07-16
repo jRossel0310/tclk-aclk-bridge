@@ -84,6 +84,52 @@ def test_assign_offsets_no_kept_cycles_returns_all_false():
     assert len(mask) == len(row) == len(off) == len(t)
 
 
+def _write_csv(d, t, ev):
+    p = os.path.join(d, "events-tclk-x.csv")
+    with open(p, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["id", "sec", "ns", "event", "data"])
+        for i, (tt, e) in enumerate(zip(t, ev)):
+            sec = int(tt)
+            ns = int(round((tt - sec) * 1e9))
+            w.writerow(["%d-%d" % (int(tt * 1000), i), str(sec), str(ns),
+                        str(int(e)), "0"])
+    return p
+
+
+def test_make_figure_two_axes():
+    import matplotlib
+    matplotlib.use("Agg")
+    from supercycle_plot import make_figure
+    rng = np.random.default_rng(1)
+    off_t = rng.normal(10.0, 0.2, 200)
+    row_t = rng.integers(0, 8, 200)
+    off_r = np.tile(np.arange(60) + 0.5, 8)
+    row_r = np.repeat(np.arange(8), 60)
+    fig = make_figure(off_t, row_t, off_r, row_r, n_rows=8, median_len=60.0,
+                      target=0x1E, refs=[0x8F], theme="default", bins=120)
+    assert len(fig.axes) == 2
+
+
+def test_main_reports_missing_target_with_available_codes(capsys=None):
+    from supercycle_plot import main
+    t, ev = _synthetic()
+    with tempfile.TemporaryDirectory() as d:
+        p = _write_csv(d, t, ev)
+        rc = main([p, "--target", "AB", "-o", os.path.join(d, "x.png")])
+        assert rc != 0                                     # 0xAB never occurs
+
+
+def test_main_renders_png():
+    from supercycle_plot import main
+    t, ev = _synthetic()
+    with tempfile.TemporaryDirectory() as d:
+        p = _write_csv(d, t, ev)
+        out = os.path.join(d, "sc.png")
+        rc = main([p, "--target", "1E", "--ref", "8F", "-o", out])
+        assert rc == 0 and os.path.exists(out) and os.path.getsize(out) > 0
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
