@@ -81,6 +81,23 @@ def segment_start(t, gap=10.0):
     return 0 if len(cuts) == 0 else int(cuts[-1]) + 1
 
 
+def rel_deltas(t_tgt, t_ref):
+    """Signed time from each target event to its NEAREST reference event, in
+    seconds. Positive = target after the ref. This cancels wander common to
+    both signals (e.g. line-frequency drift vs the $00 anchor) and leaves the
+    genuine target-to-ref phase relationship."""
+    t_tgt = np.asarray(t_tgt, dtype=np.float64)
+    t_ref = np.asarray(t_ref, dtype=np.float64)
+    if len(t_ref) == 0 or len(t_tgt) == 0:
+        return np.zeros(0, dtype=np.float64)
+    i = np.searchsorted(t_ref, t_tgt)
+    lo = np.clip(i - 1, 0, len(t_ref) - 1)
+    hi = np.clip(i, 0, len(t_ref) - 1)
+    d_lo = t_tgt - t_ref[lo]
+    d_hi = t_tgt - t_ref[hi]
+    return np.where(np.abs(d_lo) <= np.abs(d_hi), d_lo, d_hi)
+
+
 # blue-and-white theme (matches the other poster figures)
 INK, MUTED, FAINT, SURF = "#1b1b1b", "#6f6f6f", "#dfe6ee", "#ffffff"
 C_TARGET, C_REF = "#1b5a8f", "#9aa7b4"
@@ -217,6 +234,62 @@ def make_raster_figure(off_t, row_t, off_r, row_r, n_rows, median_len,
     return fig
 
 
+def _rel_range(d_ms, window):
+    if window is not None:
+        return window
+    lo, hi = np.percentile(d_ms, [0.1, 99.9])
+    pad = max(0.05 * (hi - lo), 0.01)
+    return (float(lo - pad), float(hi + pad))
+
+
+def make_rel_hist_figure(d_ms, n_rows, median_len, target, ref,
+                         theme="default", bins=600, window=None):
+    """Distribution of the target-to-nearest-ref delta (ms), folded across all
+    kept cycles: the phase-lock quality between the two signals."""
+    lo, hi = _rel_range(d_ms, window)
+    fig, _ = _new_fig(theme, (11, 4.2), (12.5, 4.8), target, n_rows, median_len,
+                      ", relative to nearest %s" % _hex(ref))
+    ax = fig.add_axes([0.085, 0.17, 0.89, 0.60])
+    ax.axvline(0.0, color=C_REF, alpha=0.8, linewidth=1.0, zorder=1,
+               label="%s (ref = 0)" % _hex(ref))
+    ax.hist(d_ms, bins=np.linspace(lo, hi, bins + 1), color=C_TARGET, zorder=3,
+            label="target " + _hex(target))
+    ax.legend(loc="lower right", bbox_to_anchor=(1.0, 1.02), ncol=2,
+              fontsize=10, frameon=False, borderaxespad=0.0)
+    ax.set_xlim(lo, hi)
+    ax.set_xlabel("t(%s) - t(nearest %s)  (ms)" % (_hex(target), _hex(ref)),
+                  fontsize=11, color=MUTED)
+    ax.set_ylabel("events / bin", fontsize=10, color=MUTED)
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
+    return fig
+
+
+def make_rel_raster_figure(d_ms, row_t, n_rows, median_len, target, ref,
+                           theme="default", window=None):
+    """Cycle-by-cycle view of the target-to-nearest-ref delta (ms)."""
+    lo, hi = _rel_range(d_ms, window)
+    keep = (d_ms >= lo) & (d_ms <= hi)
+    fig, _ = _new_fig(theme, (11, 6.0), (12.5, 7.0), target, n_rows, median_len,
+                      ", relative to nearest %s, cycle by cycle" % _hex(ref))
+    ax = fig.add_axes([0.085, 0.10, 0.89, 0.68])
+    ax.axvline(0.0, color=C_REF, alpha=0.8, linewidth=1.0, zorder=1,
+               label="%s (ref = 0)" % _hex(ref))
+    ax.scatter(d_ms[keep], row_t[keep], s=14, color=C_TARGET, linewidths=0,
+               zorder=3, label="target " + _hex(target))
+    ax.legend(loc="lower right", bbox_to_anchor=(1.0, 1.02), ncol=2,
+              fontsize=10, frameon=False, borderaxespad=0.0, markerscale=2.5)
+    ax.set_xlim(lo, hi)
+    ax.set_ylim(-0.5, n_rows - 0.5)
+    ax.invert_yaxis()
+    ax.set_xlabel("t(%s) - t(nearest %s)  (ms)" % (_hex(target), _hex(ref)),
+                  fontsize=11, color=MUTED)
+    ax.set_ylabel("supercycle (time order)", fontsize=11, color=MUTED)
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
+    return fig
+
+
 def _parse_codes(s):
     return [int(c, 16) for c in s.split(",") if c.strip()]
 
@@ -235,6 +308,10 @@ def main(argv):
     ap.add_argument("--last-segment", action="store_true",
                     help="analyze only the final continuous capture segment "
                          "(drop everything before the last >10 s event gap)")
+    ap.add_argument("--rel", action="store_true",
+                    help="plot t(target) - t(nearest ref) in ms instead of the "
+                         "offset from $00 (requires exactly one --ref; --window "
+                         "is then in ms of delta)")
     ap.add_argument("--theme", choices=("default", "poster"), default="default")
     ap.add_argument("--topn-report", type=int, default=5)
     ap.add_argument("-o", "--out", default="supercycle.svg",
@@ -283,14 +360,14 @@ def main(argv):
         try:
             lo, hi = (float(x) for x in args.window.split(","))
         except ValueError:
-            print("bad --window %r; expected LO,HI in seconds (e.g. 0,5)"
+            print("bad --window %r; expected LO,HI (e.g. 0,5)"
                   % args.window, file=sys.stderr)
             return 2
-        lo = max(0.0, lo)
-        hi = min(stats["median_len"], hi)
+        if not args.rel:                      # cycle-offset mode: clip to the cycle
+            lo = max(0.0, lo)
+            hi = min(stats["median_len"], hi)
         if not lo < hi:
-            print("empty --window %r after clipping to the cycle (0-%.3f s)"
-                  % (args.window, stats["median_len"]), file=sys.stderr)
+            print("empty --window %r" % args.window, file=sys.stderr)
             return 2
         window = (lo, hi)
 
@@ -300,31 +377,55 @@ def main(argv):
     stem = args.out.rsplit(".", 1)[0] if "." in args.out.rsplit("/", 1)[-1] else args.out
     out_hist = stem + "_hist.svg"
     out_raster = stem + "_raster.svg"
-    fig_h = make_hist_figure(off[is_t], ref_offs, n_rows=stats["n_kept"],
-                             median_len=stats["median_len"], target=target,
-                             refs=refs, theme=args.theme, bins=args.bins,
-                             window=window)
-    fig_h.savefig(out_hist, facecolor=SURF, bbox_inches="tight")
-    fig_r = make_raster_figure(off[is_t], row[is_t], off[is_r], row[is_r],
-                               n_rows=stats["n_kept"], median_len=stats["median_len"],
-                               target=target, refs=refs, theme=args.theme,
-                               window=window)
-    fig_r.savefig(out_raster, facecolor=SURF, bbox_inches="tight")
-
     lens = ends - starts
-    per_cycle = np.bincount(row[is_t], minlength=stats["n_kept"])
-    hist, edges = np.histogram(off[is_t],
-                               bins=np.linspace(0, stats["median_len"], args.bins + 1))
-    top = np.argsort(hist)[::-1][:args.topn_report]
-    top = [i for i in top if hist[i] > 0]
     print("cycles: %d kept / %d rejected (median %.6f s, sigma %.6f s)"
           % (stats["n_kept"], stats["n_rejected"], stats["median_len"],
              float(np.std(lens))))
-    print("target %s: %d events; per cycle min/median/max = %d/%d/%d"
-          % (_hex(target), int(is_t.sum()), per_cycle.min(),
-             int(np.median(per_cycle)), per_cycle.max()))
-    for i in sorted(top, key=lambda i: edges[i]):
-        print("  mode near %8.3f s: %d events" % (edges[i], int(hist[i])))
+
+    if args.rel:
+        if len(refs) != 1:
+            print("--rel needs exactly one --ref code", file=sys.stderr)
+            return 2
+        t_ref = t[mask & (ev == refs[0])]
+        if len(t_ref) == 0:
+            print("no ref events %s inside kept cycles" % _hex(refs[0]),
+                  file=sys.stderr)
+            return 2
+        d_ms = rel_deltas(t[is_t], t_ref) * 1e3
+        fig_h = make_rel_hist_figure(d_ms, stats["n_kept"], stats["median_len"],
+                                     target, refs[0], theme=args.theme,
+                                     bins=args.bins, window=window)
+        fig_h.savefig(out_hist, facecolor=SURF, bbox_inches="tight")
+        fig_r = make_rel_raster_figure(d_ms, row[is_t], stats["n_kept"],
+                                       stats["median_len"], target, refs[0],
+                                       theme=args.theme, window=window)
+        fig_r.savefig(out_raster, facecolor=SURF, bbox_inches="tight")
+        print("target %s vs %s: %d events; delta mean %+.3f ms, sigma %.3f ms, "
+              "span %+.3f to %+.3f ms"
+              % (_hex(target), _hex(refs[0]), len(d_ms), float(np.mean(d_ms)),
+                 float(np.std(d_ms)), float(np.min(d_ms)), float(np.max(d_ms))))
+    else:
+        fig_h = make_hist_figure(off[is_t], ref_offs, n_rows=stats["n_kept"],
+                                 median_len=stats["median_len"], target=target,
+                                 refs=refs, theme=args.theme, bins=args.bins,
+                                 window=window)
+        fig_h.savefig(out_hist, facecolor=SURF, bbox_inches="tight")
+        fig_r = make_raster_figure(off[is_t], row[is_t], off[is_r], row[is_r],
+                                   n_rows=stats["n_kept"],
+                                   median_len=stats["median_len"],
+                                   target=target, refs=refs, theme=args.theme,
+                                   window=window)
+        fig_r.savefig(out_raster, facecolor=SURF, bbox_inches="tight")
+        per_cycle = np.bincount(row[is_t], minlength=stats["n_kept"])
+        hist, edges = np.histogram(
+            off[is_t], bins=np.linspace(0, stats["median_len"], args.bins + 1))
+        top = np.argsort(hist)[::-1][:args.topn_report]
+        top = [i for i in top if hist[i] > 0]
+        print("target %s: %d events; per cycle min/median/max = %d/%d/%d"
+              % (_hex(target), int(is_t.sum()), per_cycle.min(),
+                 int(np.median(per_cycle)), per_cycle.max()))
+        for i in sorted(top, key=lambda i: edges[i]):
+            print("  mode near %8.3f s: %d events" % (edges[i], int(hist[i])))
     print("wrote %s and %s" % (out_hist, out_raster))
     return 0
 

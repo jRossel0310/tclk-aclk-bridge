@@ -110,6 +110,44 @@ def test_comb_medians_recovers_teeth():
     assert len(comb_medians(np.array([]), 60.0, 25)) == 0    # empty: no teeth
 
 
+def test_rel_deltas_nearest_signed():
+    from supercycle_plot import rel_deltas
+    ref = np.array([10.0, 20.0, 30.0])
+    tgt = np.array([10.002, 19.999, 25.0, 31.0, 5.0])
+    d = rel_deltas(tgt, ref)
+    assert np.allclose(d, [0.002, -0.001, 5.0, 1.0, -5.0])
+    assert len(rel_deltas(tgt, np.array([]))) == 0
+
+
+def test_rel_mode_renders_and_reports():
+    import io
+    from contextlib import redirect_stdout, redirect_stderr
+    from supercycle_plot import main
+    # target 0x1E fires 5 ms after every 4th ref tooth; ref 0x8F is a 1 Hz comb
+    t, ev = _synthetic()
+    with tempfile.TemporaryDirectory() as d:
+        p = _write_csv(d, t, ev)
+        out = os.path.join(d, "rel.svg")
+        cap = io.StringIO()
+        with redirect_stdout(cap):
+            rc = main([p, "--target", "1E", "--ref", "8F", "-o", out, "--rel"])
+        assert rc == 0
+        for suffix in ("_hist.svg", "_raster.svg"):
+            assert os.path.getsize(os.path.join(d, "rel" + suffix)) > 0
+        rep = cap.getvalue()
+        assert "target 0x1E vs 0x8F:" in rep and "sigma" in rep
+        # _synthetic: targets at X.0 s, nearest 0x8F tooth at X-0.5 or X+0.5:
+        # every delta is exactly +-500 ms
+        assert "span -500.000 to +500.000 ms" in rep or \
+               "span +500.000 to +500.000 ms" in rep or \
+               "span -500.000 to -500.000 ms" in rep
+        # two refs must be rejected
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            rc2 = main([p, "--target", "1E", "--ref", "8F,00", "-o", out, "--rel"])
+        assert rc2 == 2 and "exactly one" in err.getvalue()
+
+
 def test_segment_start_finds_last_gap():
     from supercycle_plot import segment_start
     t = np.array([0.0, 1.0, 2.0, 100.0, 101.0, 300.0, 301.0, 302.0])
