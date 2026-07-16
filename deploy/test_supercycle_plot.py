@@ -62,10 +62,26 @@ def test_assign_offsets_masks_and_measures():
     tgt = mask & (ev == 0x1E)
     offs = np.sort(np.unique(np.round(off[tgt], 6)))
     assert list(offs) == [10.0, 20.0]            # the two modes survive
-    assert row[tgt].min() >= 0 and row[tgt].max() < len(starts)
+    # every kept cycle holds exactly ONE target event, and each row's offset
+    # matches the even/odd schedule (10 s / 20 s): pins real attribution,
+    # not just index bounds.
+    assert np.array_equal(np.bincount(row[tgt], minlength=len(starts)),
+                          np.ones(len(starts), dtype=np.int64))
+    order = np.argsort(row[tgt], kind="stable")
+    assert np.allclose(np.round(off[tgt][order], 6), [10.0, 20.0] * 4)
     # events inside the rejected (folded) window are masked out entirely
     in_rejected = (t >= 4 * 60.0) & (t < 6 * 60.0) & (ev == 0x1E)
     assert not mask[in_rejected].any()
+
+
+def test_assign_offsets_no_kept_cycles_returns_all_false():
+    anchors = np.array([0.0, 10.0, 1000.0])    # wildly uneven: every window rejected
+    starts, ends, stats = cycles_from_anchors(anchors)
+    assert stats["n_kept"] == 0
+    t = np.array([1.0, 500.0])
+    mask, row, off = assign_offsets(t, starts, ends)
+    assert not mask.any()
+    assert len(mask) == len(row) == len(off) == len(t)
 
 
 if __name__ == "__main__":

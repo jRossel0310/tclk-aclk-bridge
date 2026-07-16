@@ -56,6 +56,10 @@ def cycles_from_anchors(anchor_t, tol=0.01):
 def assign_offsets(t, starts, ends):
     """Per event: (mask in-a-kept-cycle, dense row index, offset seconds).
     row/off are full-length arrays, meaningful only where mask is True."""
+    if len(starts) == 0:                     # no usable cycles: nothing maps
+        return (np.zeros(len(t), dtype=bool),
+                np.zeros(len(t), dtype=np.int64),
+                np.zeros(len(t), dtype=np.float64))
     idx = np.searchsorted(starts, t, side="right") - 1
     idx_c = np.clip(idx, 0, len(starts) - 1)
     mask = (idx >= 0) & (t < ends[idx_c])
