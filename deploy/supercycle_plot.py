@@ -124,31 +124,44 @@ def comb_medians(offsets, median_len, n_cycles):
                        for kk in np.unique(k)])
 
 
+def _window_suffix(window, median_len):
+    lo, hi = window
+    if lo <= 0.0 and hi >= median_len:
+        return ""
+    return ", window %g-%g s" % (lo, hi)
+
+
 def make_hist_figure(off_t, ref_offs, n_rows, median_len, target, refs,
-                     theme="default", bins=600):
+                     theme="default", bins=600, window=None):
     """The distribution 'shape': target offsets folded across all kept cycles.
     References are NOT histogrammed (their per-bin counts would dominate the
     y axis and squash the target): each ref comb tooth is drawn as a thin gray
     full-height line at its median position, in axes coordinates, so the y
     scale is set by the target alone. ref_offs is a list of offset arrays,
-    one per code in refs (clustered per code: interleaved combs would merge)."""
-    fig, _ = _new_fig(theme, (11, 4.2), (12.5, 4.8), target, n_rows, median_len, "")
+    one per code in refs (clustered per code: interleaved combs would merge).
+    window=(lo, hi) crops the x axis; `bins` always spans the WINDOW, so
+    zooming in refines the binning automatically."""
+    window = (0.0, median_len) if window is None else window
+    lo, hi = window
+    fig, _ = _new_fig(theme, (11, 4.2), (12.5, 4.8), target, n_rows, median_len,
+                      _window_suffix(window, median_len))
     ax = fig.add_axes([0.085, 0.17, 0.89, 0.60])
 
     teeth = np.concatenate([comb_medians(o, median_len, n_rows)
                             for o in ref_offs]) if ref_offs else np.asarray([])
+    teeth = teeth[(teeth >= lo) & (teeth <= hi)]
     if len(teeth):
         ax.vlines(teeth, 0, 1, transform=ax.get_xaxis_transform(),
                   color=C_REF, alpha=0.35, linewidth=0.6, zorder=1,
                   label="ref %s (tooth medians)"
                         % ", ".join(_hex(r) for r in refs))
-    edges = np.linspace(0.0, median_len, bins + 1)
+    edges = np.linspace(lo, hi, bins + 1)
     ax.hist(off_t, bins=edges, color=C_TARGET, zorder=3,
             label="target " + _hex(target))
     # legend ABOVE the axes (right-aligned, one row) so it never sits on data
     ax.legend(loc="lower right", bbox_to_anchor=(1.0, 1.02), ncol=2,
               fontsize=10, frameon=False, borderaxespad=0.0)
-    ax.set_xlim(0.0, median_len)
+    ax.set_xlim(lo, hi)
     ax.set_xlabel("offset into supercycle (s)", fontsize=11, color=MUTED)
     ax.set_ylabel("events / bin", fontsize=10, color=MUTED)
     for sp in ("top", "right"):
@@ -157,11 +170,19 @@ def make_hist_figure(off_t, ref_offs, n_rows, median_len, target, refs,
 
 
 def make_raster_figure(off_t, row_t, off_r, row_r, n_rows, median_len,
-                       target, refs, theme="default"):
+                       target, refs, theme="default", window=None):
     """The per-cycle evidence: one row per supercycle (oldest at top), target
-    events as dots, reference events as a faint backdrop."""
+    events as dots, reference events as a faint backdrop. window=(lo, hi)
+    crops the x axis (events outside are dropped, which also keeps the SVG
+    small on tight zooms)."""
+    window = (0.0, median_len) if window is None else window
+    lo, hi = window
+    keep_t = (off_t >= lo) & (off_t <= hi)
+    keep_r = (off_r >= lo) & (off_r <= hi)
+    off_t, row_t = off_t[keep_t], row_t[keep_t]
+    off_r, row_r = off_r[keep_r], row_r[keep_r]
     fig, _ = _new_fig(theme, (11, 6.0), (12.5, 7.0), target, n_rows, median_len,
-                      ", cycle by cycle")
+                      ", cycle by cycle" + _window_suffix(window, median_len))
     ax = fig.add_axes([0.085, 0.10, 0.89, 0.68])
 
     if len(off_r):
@@ -174,7 +195,7 @@ def make_raster_figure(off_t, row_t, off_r, row_r, n_rows, median_len,
     ax.legend(loc="lower right", bbox_to_anchor=(1.0, 1.02), ncol=2,
               fontsize=10, frameon=False, borderaxespad=0.0,
               markerscale=2.5)
-    ax.set_xlim(0.0, median_len)
+    ax.set_xlim(lo, hi)
     ax.set_ylim(-0.5, n_rows - 0.5)
     ax.invert_yaxis()                         # first cycle at the top
     ax.set_xlabel("offset into supercycle (s)", fontsize=11, color=MUTED)
@@ -195,7 +216,10 @@ def main(argv):
     ap.add_argument("--ref", default="0C,BA", help="reference codes, hex CSV")
     ap.add_argument("--anchor", default="00", help="cycle anchor code, hex")
     ap.add_argument("--tol", type=float, default=0.01)
-    ap.add_argument("--bins", type=int, default=600)
+    ap.add_argument("--bins", type=int, default=600,
+                    help="histogram bins ACROSS THE WINDOW (zooming refines them)")
+    ap.add_argument("--window", default=None,
+                    help="x-axis zoom in seconds, e.g. 0,5 (default: whole cycle)")
     ap.add_argument("--theme", choices=("default", "poster"), default="default")
     ap.add_argument("--topn-report", type=int, default=5)
     ap.add_argument("-o", "--out", default="supercycle.svg",
@@ -231,6 +255,22 @@ def main(argv):
     is_r = mask & np.isin(ev, refs)
     ref_offs = [off[mask & (ev == r)] for r in refs]   # per code, for tooth medians
 
+    window = None
+    if args.window:
+        try:
+            lo, hi = (float(x) for x in args.window.split(","))
+        except ValueError:
+            print("bad --window %r; expected LO,HI in seconds (e.g. 0,5)"
+                  % args.window, file=sys.stderr)
+            return 2
+        lo = max(0.0, lo)
+        hi = min(stats["median_len"], hi)
+        if not lo < hi:
+            print("empty --window %r after clipping to the cycle (0-%.3f s)"
+                  % (args.window, stats["median_len"]), file=sys.stderr)
+            return 2
+        window = (lo, hi)
+
     # Two separate SVGs: the folded distribution (the 'shape') and the per-cycle
     # raster (the evidence: slot changes, drift, anomalous cycles). SVG only:
     # they scale losslessly and drop straight into the poster/docs.
@@ -239,11 +279,13 @@ def main(argv):
     out_raster = stem + "_raster.svg"
     fig_h = make_hist_figure(off[is_t], ref_offs, n_rows=stats["n_kept"],
                              median_len=stats["median_len"], target=target,
-                             refs=refs, theme=args.theme, bins=args.bins)
+                             refs=refs, theme=args.theme, bins=args.bins,
+                             window=window)
     fig_h.savefig(out_hist, facecolor=SURF, bbox_inches="tight")
     fig_r = make_raster_figure(off[is_t], row[is_t], off[is_r], row[is_r],
                                n_rows=stats["n_kept"], median_len=stats["median_len"],
-                               target=target, refs=refs, theme=args.theme)
+                               target=target, refs=refs, theme=args.theme,
+                               window=window)
     fig_r.savefig(out_raster, facecolor=SURF, bbox_inches="tight")
 
     lens = ends - starts

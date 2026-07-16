@@ -110,6 +110,32 @@ def test_comb_medians_recovers_teeth():
     assert len(comb_medians(np.array([]), 60.0, 25)) == 0    # empty: no teeth
 
 
+def test_window_zoom_sets_xlim_and_renders():
+    import io
+    from contextlib import redirect_stdout
+    import matplotlib
+    matplotlib.use("Agg")
+    from supercycle_plot import main, make_hist_figure
+    # unit: the hist axes really crop to the window
+    fig = make_hist_figure(np.array([1.0, 2.0, 7.0]), [], n_rows=8,
+                           median_len=60.0, target=0x1E, refs=[], bins=50,
+                           window=(0.0, 5.0))
+    assert fig.axes[0].get_xlim() == (0.0, 5.0)
+    # integration: --window through the CLI still renders the SVG pair
+    t, ev = _synthetic()
+    with tempfile.TemporaryDirectory() as d:
+        p = _write_csv(d, t, ev)
+        out = os.path.join(d, "zoom.svg")
+        with redirect_stdout(io.StringIO()):
+            rc = main([p, "--target", "1E", "--ref", "8F", "-o", out,
+                       "--window", "5,15"])
+        assert rc == 0
+        for suffix in ("_hist.svg", "_raster.svg"):
+            assert os.path.getsize(os.path.join(d, "zoom" + suffix)) > 0
+        rc_bad = main([p, "--target", "1E", "-o", out, "--window", "9,9"])
+        assert rc_bad == 2                       # empty window rejected
+
+
 def test_make_figures_single_axes_each():
     import matplotlib
     matplotlib.use("Agg")
