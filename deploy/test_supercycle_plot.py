@@ -110,6 +110,45 @@ def test_comb_medians_recovers_teeth():
     assert len(comb_medians(np.array([]), 60.0, 25)) == 0    # empty: no teeth
 
 
+def test_segment_start_finds_last_gap():
+    from supercycle_plot import segment_start
+    t = np.array([0.0, 1.0, 2.0, 100.0, 101.0, 300.0, 301.0, 302.0])
+    assert segment_start(t) == 5                     # after the 101 -> 300 gap
+    assert segment_start(np.array([1.0, 1.5, 2.0])) == 0
+    assert segment_start(np.array([])) == 0
+
+
+def test_last_segment_flag_drops_pre_seam_cycles():
+    import io
+    from contextlib import redirect_stdout
+    from supercycle_plot import main
+    # segment A: 4 clean cycles, then a 10 min capture hole, then segment B
+    # (the _synthetic set: 8 kept + 1 folded-rejected cycle)
+    tb, evb = _synthetic()
+    ta, eva = [], []
+    for i in range(5):                                # 5 anchors -> 4 cycles
+        ta += [i * 60.0, i * 60.0 + 10.0, i * 60.0 + 30.5]
+        eva += [0x00, 0x1E, 0x8F]
+    shift = ta[-1] + 600.0                            # the capture hole
+    t = np.concatenate([np.asarray(ta), tb + shift])
+    ev = np.concatenate([np.asarray(eva, dtype=np.int64), evb])
+    o = np.argsort(t, kind="stable")
+    t, ev = t[o], ev[o]
+    with tempfile.TemporaryDirectory() as d:
+        p = _write_csv(d, t, ev)
+        out = os.path.join(d, "seg.svg")
+        cap = io.StringIO()
+        with redirect_stdout(cap):
+            rc = main([p, "--target", "1E", "--ref", "8F", "-o", out,
+                       "--last-segment"])
+        assert rc == 0
+        rep = cap.getvalue()
+        assert "last-segment: dropped 15 earlier events" in rep
+        # only segment B analyzed: its internal folded window still rejects,
+        # but segment A's 4 cycles and the seam window are gone
+        assert "cycles: 8 kept / 1 rejected" in rep
+
+
 def test_window_zoom_sets_xlim_and_renders():
     import io
     from contextlib import redirect_stdout

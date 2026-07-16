@@ -16,6 +16,7 @@ are rejected (a missed anchor would fold two cycles).
 import argparse
 import csv
 import sys
+import time
 
 import numpy as np
 
@@ -67,6 +68,17 @@ def assign_offsets(t, starts, ends):
     mask = (idx >= 0) & (t < ends[idx_c])
     off = t - starts[idx_c]
     return mask, idx_c, off
+
+
+def segment_start(t, gap=10.0):
+    """Index where the LAST continuous capture segment begins. Healthy capture
+    never has inter-event gaps beyond tens of ms (the 15/20 Hz combs always
+    run), so any gap larger than `gap` seconds marks a capture seam (a run
+    restart, a Redis wipe, an outage). t must be time-sorted (load_events is)."""
+    if len(t) == 0:
+        return 0
+    cuts = np.where(np.diff(t) > gap)[0]
+    return 0 if len(cuts) == 0 else int(cuts[-1]) + 1
 
 
 # blue-and-white theme (matches the other poster figures)
@@ -220,6 +232,9 @@ def main(argv):
                     help="histogram bins ACROSS THE WINDOW (zooming refines them)")
     ap.add_argument("--window", default=None,
                     help="x-axis zoom in seconds, e.g. 0,5 (default: whole cycle)")
+    ap.add_argument("--last-segment", action="store_true",
+                    help="analyze only the final continuous capture segment "
+                         "(drop everything before the last >10 s event gap)")
     ap.add_argument("--theme", choices=("default", "poster"), default="default")
     ap.add_argument("--topn-report", type=int, default=5)
     ap.add_argument("-o", "--out", default="supercycle.svg",
@@ -231,6 +246,14 @@ def main(argv):
     anchor = int(args.anchor, 16)
 
     t, ev = load_events(args.csvs)
+    if args.last_segment:
+        i0 = segment_start(t)
+        if i0:
+            print("last-segment: dropped %d earlier events; analyzing %d events "
+                  "from %s UTC"
+                  % (i0, len(t) - i0,
+                     time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(t[i0]))))
+            t, ev = t[i0:], ev[i0:]
     for code, what in [(anchor, "anchor"), (target, "target")]:
         if not (ev == code).any():
             uniq, cnt = np.unique(ev, return_counts=True)
