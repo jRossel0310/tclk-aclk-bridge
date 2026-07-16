@@ -104,3 +104,76 @@ def save_state(path, state):
     with open(tmp, "w") as f:
         json.dump(state, f)
     os.replace(tmp, path)
+
+
+def _default_connect(host, port):
+    import redis   # lazy: module imports without redis-py (PC unit tests)
+    return redis.Redis(host=host, port=port, decode_responses=True,
+                       socket_connect_timeout=2.0, socket_timeout=5.0)
+
+
+def main(argv, connect=None):
+    ap = argparse.ArgumentParser(description="Archive KR260 Redis streams to CSV.")
+    ap.add_argument("--src", nargs="+", default=["tclk", "aclk"])
+    ap.add_argument("--namespace", default="KR260")
+    ap.add_argument("--redis-host", default="127.0.0.1")
+    ap.add_argument("--redis-port", type=int, default=6379)
+    ap.add_argument("--poll", type=float, default=5.0)
+    ap.add_argument("--outdir", default=".")
+    ap.add_argument("--batch", type=int, default=10000)
+    ap.add_argument("--once", action="store_true",
+                    help="dump the full retained stream to -o FILE and exit")
+    ap.add_argument("-o", "--out", default=None, help="output file for --once")
+    ap.add_argument("--max-loops", type=int, default=0,
+                    help="follow mode: stop after N polls (0 = forever; tests only)")
+    args = ap.parse_args(argv)
+    connect = connect or _default_connect
+
+    if args.once:
+        if len(args.src) != 1 or not args.out:
+            print("--once requires exactly one --src and -o FILE", file=sys.stderr)
+            return 2
+        client = connect(args.redis_host, args.redis_port)
+        stream = "%s:%s" % (args.namespace, args.src[0])
+        with open(args.out, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(HEADER)
+            _, n = drain_source(client, stream, None, w.writerows, batch=args.batch)
+        print("wrote %d events from %s to %s" % (n, stream, args.out))
+        return 0
+
+    state_path = os.path.join(args.outdir, "archive-state.json")
+    state = load_state(state_path)
+    writers = {s: DailyCsv(args.outdir, s) for s in args.src}
+    client = None
+    loops = 0
+    print("# archiving %s under %s every %gs (state: %s). Ctrl-C to stop."
+          % (",".join(args.src), args.outdir, args.poll, state_path), flush=True)
+    try:
+        while True:
+            try:
+                if client is None:
+                    client = connect(args.redis_host, args.redis_port)
+                for s in args.src:
+                    stream = "%s:%s" % (args.namespace, s)
+                    last, n = drain_source(client, stream, state.get(s),
+                                           writers[s].write_rows, batch=args.batch)
+                    if n:
+                        state[s] = last
+                        save_state(state_path, state)
+            except Exception as e:   # Redis down/hiccup: log, back off, reconnect
+                print("# archiver: redis error (%s); retrying" % e, flush=True)
+                client = None
+            loops += 1
+            if args.max_loops and loops >= args.max_loops:
+                return 0
+            time.sleep(args.poll)
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        for w in writers.values():
+            w.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

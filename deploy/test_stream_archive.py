@@ -89,6 +89,41 @@ def test_state_roundtrip_and_missing():
         assert json.load(open(p)) == {"tclk": "5-0"}
 
 
+def test_once_dumps_full_retention_to_file():
+    from stream_archive import main
+    fake = FakeStreamRedis(_entries(7))
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "tail.csv")
+        rc = main(["--once", "--src", "tclk", "-o", out], connect=lambda h, p: fake)
+        assert rc == 0
+        with open(out, newline="") as f:
+            rows = list(csv.reader(f))
+        assert rows[0] == HEADER and len(rows) == 8       # header + 7 events
+        assert rows[1][0] == "1000-0" and rows[-1][0] == "1006-0"
+
+
+def test_once_requires_exactly_one_src():
+    from stream_archive import main
+    rc = main(["--once", "--src", "tclk", "aclk", "-o", "x.csv"],
+              connect=lambda h, p: FakeStreamRedis([]))
+    assert rc != 0
+
+
+def test_follow_writes_and_persists_state_then_stops():
+    from stream_archive import main
+    fake = FakeStreamRedis(_entries(5))
+    with tempfile.TemporaryDirectory() as d:
+        rc = main(["--src", "tclk", "--outdir", d, "--poll", "0", "--max-loops", "2"],
+                  connect=lambda h, p: fake)
+        assert rc == 0
+        state = json.load(open(os.path.join(d, "archive-state.json")))
+        assert state == {"tclk": "1004-0"}
+        files = [f for f in os.listdir(d) if f.startswith("events-tclk-")]
+        assert len(files) == 1
+        with open(os.path.join(d, files[0]), newline="") as f:
+            assert len(list(csv.reader(f))) == 6          # header + 5
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
