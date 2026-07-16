@@ -111,23 +111,40 @@ def test_make_figure_two_axes():
     assert len(fig.axes) == 2
 
 
-def test_main_reports_missing_target_with_available_codes(capsys=None):
+def test_main_reports_missing_target_with_available_codes():
+    import io
+    from contextlib import redirect_stderr
     from supercycle_plot import main
     t, ev = _synthetic()
     with tempfile.TemporaryDirectory() as d:
         p = _write_csv(d, t, ev)
-        rc = main([p, "--target", "AB", "-o", os.path.join(d, "x.png")])
-        assert rc != 0                                     # 0xAB never occurs
+        err = io.StringIO()
+        with redirect_stderr(err):
+            rc = main([p, "--target", "AB", "-o", os.path.join(d, "x.png")])
+        assert rc == 2                                     # 0xAB never occurs
+        msg = err.getvalue()
+        assert "Available codes" in msg and "0x1E:" in msg  # listing really printed
 
 
 def test_main_renders_png():
+    import io
+    from contextlib import redirect_stdout
     from supercycle_plot import main
     t, ev = _synthetic()
     with tempfile.TemporaryDirectory() as d:
         p = _write_csv(d, t, ev)
-        out = os.path.join(d, "sc.png")
-        rc = main([p, "--target", "1E", "--ref", "8F", "-o", out])
-        assert rc == 0 and os.path.exists(out) and os.path.getsize(out) > 0
+        out_png = os.path.join(d, "sc.png")
+        cap = io.StringIO()
+        with redirect_stdout(cap):
+            rc = main([p, "--target", "1E", "--ref", "8F", "-o", out_png])
+        assert rc == 0
+        assert os.path.exists(out_png) and os.path.getsize(out_png) > 0
+        svg = out_png.rsplit(".", 1)[0] + ".svg"
+        assert os.path.exists(svg) and os.path.getsize(svg) > 0   # sibling SVG required
+        report = cap.getvalue()
+        assert "cycles: 8 kept / 1 rejected" in report
+        assert "target 0x1E: 8 events; per cycle min/median/max = 1/1/1" in report
+        assert "mode near" in report
 
 
 if __name__ == "__main__":
