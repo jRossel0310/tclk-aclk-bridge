@@ -25,6 +25,42 @@ Optional copy to the board:
 .\hw.ps1 deploy -Name tclk -DeployHost ubuntu@kria
 ```
 
+## Copying files to `aclk-timestamper` (Fermilab network, Kerberos)
+
+The board on the lab network (`aclk-timestamper.fnal.gov`) authenticates via
+GSSAPI/Kerberos, and Git Bash's `ssh`/`scp` cannot see the MIT Kerberos ticket,
+so they fail to authenticate. Use PuTTY's `pscp` instead (typically
+`C:\Program Files\PuTTY\pscp.exe`; add PuTTY to PATH to call it bare). It uses
+the same GSSAPI path as the working PuTTY session, so with a valid ticket there
+is no password prompt.
+
+Prerequisites: on the lab network or VPN (to reach the board and the KDC), and
+a live ticket (`klist` shows `krbtgt/FNAL.GOV`; renew with `kinit jrossel`).
+An expired ticket is the usual cause of GSSAPI/permission failures.
+
+```powershell
+# laptop -> board
+pscp -scp "C:\path\to\localfile.txt" ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/
+
+# board -> laptop
+pscp -scp ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/somefile.log "C:\Users\jacob\Downloads\"
+
+# whole directory
+pscp -scp -r "C:\path\to\folder" ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/
+```
+
+`-scp` forces the SCP protocol (pscp may default to SFTP; either works, `-scp`
+keeps it predictable). If a saved PuTTY session named `aclk-timestamper` exists
+(with the username and GSSAPI options configured), the session name can replace
+the full `user@host`:
+
+```powershell
+pscp -scp "localfile.txt" aclk-timestamper:/home/ubuntu/
+```
+
+GUI alternative: WinSCP also supports GSSAPI/Kerberos (enable GSSAPI in its SSH
+settings) and is what Fermilab's docs recommend for drag-and-drop transfers.
+
 ## Load on the board (UIO + overlay, preferred)
 
 ```bash

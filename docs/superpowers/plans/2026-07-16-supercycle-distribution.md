@@ -894,7 +894,10 @@ git commit -m "feat(analysis): supercycle folded-raster figure + CLI + mode repo
 - [ ] **Step 1: Copy the archiver to the board**
 
 ```powershell
-scp deploy\stream_archive.py deploy\run_pipeline.sh ubuntu@aclk-timestamper:~/aclk_pipeline/
+# PuTTY's pscp, not Git Bash scp: the board uses GSSAPI/Kerberos and Git Bash
+# scp cannot see the MIT ticket. Needs a live ticket (klist; kinit jrossel).
+# See deploy/README.md "Copying files to aclk-timestamper".
+pscp -scp deploy\stream_archive.py deploy\run_pipeline.sh ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/aclk_pipeline/
 ```
 
 - [ ] **Step 2: Quick-look dump of the retained overnight tail (board)**
@@ -909,7 +912,7 @@ python3 stream_archive.py --once --src tclk -o overnight-tail-tclk.csv
 - [ ] **Step 3: Copy the dump back and plot (PC)**
 
 ```powershell
-scp ubuntu@aclk-timestamper:~/aclk_pipeline/overnight-tail-tclk.csv deploy\
+pscp -scp ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/aclk_pipeline/overnight-tail-tclk.csv deploy\
 cd deploy
 ..\.venv\Scripts\python supercycle_plot.py overnight-tail-tclk.csv --target 1E --ref 0C,BA -o supercycle_1E.png
 ```
