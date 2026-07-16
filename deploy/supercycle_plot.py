@@ -102,17 +102,47 @@ def _new_fig(theme, figsize_default, figsize_poster, target, n_rows, median_len,
     return fig, plt
 
 
-def make_hist_figure(off_t, off_r, n_rows, median_len, target, refs,
+def comb_medians(offsets, median_len, n_cycles):
+    """Median position of each tooth of ONE periodic reference comb. The comb's
+    period is estimated from the data (pitch = median_len / events-per-cycle)
+    and each event is assigned to its nearest period index, so the per-tooth
+    medians stay correct even when the comb's phase relative to the anchor
+    wanders by tens of ms deep into the cycle (the 15/20 Hz codes are
+    line-frequency-locked, the supercycle anchor is not exactly so)."""
+    offsets = np.asarray(offsets, dtype=np.float64)
+    if len(offsets) == 0 or n_cycles <= 0:
+        return np.asarray([], dtype=np.float64)
+    per_cycle = max(1, int(round(len(offsets) / n_cycles)))
+    pitch = median_len / per_cycle
+    # Anchor the period grid on the comb's own phase (circular mean of offset
+    # mod pitch) so period boundaries land between teeth for ANY comb phase;
+    # a plain round(offset/pitch) splits teeth sitting near half-pitch.
+    ang = offsets * (2.0 * np.pi / pitch)
+    phi = np.arctan2(np.mean(np.sin(ang)), np.mean(np.cos(ang))) * pitch / (2.0 * np.pi)
+    k = np.round((offsets - phi) / pitch).astype(np.int64)
+    return np.asarray([float(np.median(offsets[k == kk]))
+                       for kk in np.unique(k)])
+
+
+def make_hist_figure(off_t, ref_offs, n_rows, median_len, target, refs,
                      theme="default", bins=600):
-    """The distribution 'shape': target offsets folded across all kept cycles,
-    reference comb faint behind."""
+    """The distribution 'shape': target offsets folded across all kept cycles.
+    References are NOT histogrammed (their per-bin counts would dominate the
+    y axis and squash the target): each ref comb tooth is drawn as a thin gray
+    full-height line at its median position, in axes coordinates, so the y
+    scale is set by the target alone. ref_offs is a list of offset arrays,
+    one per code in refs (clustered per code: interleaved combs would merge)."""
     fig, _ = _new_fig(theme, (11, 4.2), (12.5, 4.8), target, n_rows, median_len, "")
     ax = fig.add_axes([0.085, 0.17, 0.89, 0.60])
 
+    teeth = np.concatenate([comb_medians(o, median_len, n_rows)
+                            for o in ref_offs]) if ref_offs else np.asarray([])
+    if len(teeth):
+        ax.vlines(teeth, 0, 1, transform=ax.get_xaxis_transform(),
+                  color=C_REF, alpha=0.35, linewidth=0.6, zorder=1,
+                  label="ref %s (tooth medians)"
+                        % ", ".join(_hex(r) for r in refs))
     edges = np.linspace(0.0, median_len, bins + 1)
-    if len(off_r):
-        ax.hist(off_r, bins=edges, color=C_REF, alpha=0.45, zorder=2,
-                label="ref " + ", ".join(_hex(r) for r in refs))
     ax.hist(off_t, bins=edges, color=C_TARGET, zorder=3,
             label="target " + _hex(target))
     ax.legend(loc="upper right", fontsize=10, frameon=False)
@@ -194,6 +224,7 @@ def main(argv):
     mask, row, off = assign_offsets(t, starts, ends)
     is_t = mask & (ev == target)
     is_r = mask & np.isin(ev, refs)
+    ref_offs = [off[mask & (ev == r)] for r in refs]   # per code, for tooth medians
 
     # Two separate SVGs: the folded distribution (the 'shape') and the per-cycle
     # raster (the evidence: slot changes, drift, anomalous cycles). SVG only:
@@ -201,7 +232,7 @@ def main(argv):
     stem = args.out.rsplit(".", 1)[0] if "." in args.out.rsplit("/", 1)[-1] else args.out
     out_hist = stem + "_hist.svg"
     out_raster = stem + "_raster.svg"
-    fig_h = make_hist_figure(off[is_t], off[is_r], n_rows=stats["n_kept"],
+    fig_h = make_hist_figure(off[is_t], ref_offs, n_rows=stats["n_kept"],
                              median_len=stats["median_len"], target=target,
                              refs=refs, theme=args.theme, bins=args.bins)
     fig_h.savefig(out_hist, facecolor=SURF, bbox_inches="tight")

@@ -97,6 +97,19 @@ def _write_csv(d, t, ev):
     return p
 
 
+def test_comb_medians_recovers_teeth():
+    from supercycle_plot import comb_medians
+    rng = np.random.default_rng(2)
+    # a 1 Hz comb at the WORST phase (teeth at half-pitch, where naive
+    # round(off/pitch) splits every tooth across two period indices)
+    teeth = np.arange(0.5, 60.0, 1.0)
+    offs = np.repeat(teeth, 25) + rng.normal(0, 0.0005, 25 * len(teeth))
+    got = comb_medians(offs, median_len=60.0, n_cycles=25)
+    assert len(got) == len(teeth)
+    assert np.allclose(np.sort(got), teeth, atol=0.002)
+    assert len(comb_medians(np.array([]), 60.0, 25)) == 0    # empty: no teeth
+
+
 def test_make_figures_single_axes_each():
     import matplotlib
     matplotlib.use("Agg")
@@ -106,7 +119,7 @@ def test_make_figures_single_axes_each():
     row_t = rng.integers(0, 8, 200)
     off_r = np.tile(np.arange(60) + 0.5, 8)
     row_r = np.repeat(np.arange(8), 60)
-    fig_h = make_hist_figure(off_t, off_r, n_rows=8, median_len=60.0,
+    fig_h = make_hist_figure(off_t, [off_r], n_rows=8, median_len=60.0,
                              target=0x1E, refs=[0x8F], theme="default", bins=120)
     fig_r = make_raster_figure(off_t, row_t, off_r, row_r, n_rows=8,
                                median_len=60.0, target=0x1E, refs=[0x8F])
