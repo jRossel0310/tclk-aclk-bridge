@@ -237,7 +237,7 @@ all:
             "aclkgt_loop"     = @("aclkgt_read.py", "aclkgt_monitor.py", "aclkgt_sweep.py", "tclk_filter.py", "readout_common.py")
             "aclkgt_rx"       = @("aclkgt_read.py", "aclkgt_monitor.py", "aclkgt_sweep.py", "tclk_filter.py", "readout_common.py")
             "aclkgt_selftest" = @("aclkgt_read.py", "aclkgt_monitor.py", "aclkgt_sweep.py", "tclk_filter.py", "readout_common.py")
-            "aclk_pipeline"   = @("tclk_read.py", "aclkgt_read.py", "wr_time.py", "tclk_filter.py", "readout_common.py", "redis_sink.py", "redis_publish.py", "stats_log.py", "stats_report.py", "run_pipeline.sh", "requirements-board.txt", "redis-kr260.conf", "aclk_pipeline.dts", "capture.md")
+            "aclk_pipeline"   = @("tclk_read.py", "aclkgt_read.py", "wr_time.py", "tclk_filter.py", "readout_common.py", "redis_sink.py", "redis_publish.py", "stats_log.py", "stats_report.py", "stream_archive.py", "run_pipeline.sh", "requirements-board.txt", "redis-kr260.conf", "aclk_pipeline.dts", "capture.md")
             "uart_echo"       = @("uart_echo_test.py")
         }
         $pyFiles = @()

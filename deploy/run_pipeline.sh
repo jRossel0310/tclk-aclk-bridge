@@ -22,6 +22,10 @@ DROP="${DROP-07}"      # PL drop-mask codes (hex, comma-separated). Default: 0x0
                       # PERSISTS across launches (clears only on PL reload): launching with
                       # DROP="" does not un-drop codes a previous launch set; clear the bit
                       # explicitly (io.wr(FILTER_CFG, code) with bit8=0) or reload the PL.
+ARCHIVE="${ARCHIVE-1}"  # 1 = also run stream_archive.py (daily CSVs of every published
+                        # event, ~260 MB/day/source; needed for supercycle analysis of
+                        # runs longer than the ~2.8 h Redis stream retention).
+                        # Set ARCHIVE="" to disable.
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 # --- pre-flight: Redis ---
@@ -51,12 +55,24 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
 fi
 
 # --- launch (exec bash keeps each window open after Ctrl-C so final stats stay visible) ---
+# Publishers run under `until` so a CRASH (nonzero exit) restarts them after 5 s -- on
+# restart the drop-mask is re-applied and the stats log appends a new run. A clean
+# Ctrl-C exits 0 and ends the loop, so the manual stop flow is unchanged.
+# The wr window runs `wr_time.py guard`: the STRICT timebase unlocks permanently on any
+# WR reference blip (or ACLK GT relock) and every event stamps UNSYNC until re-armed;
+# the guard auto-re-arms so a blip costs seconds, not the rest of a multi-day run.
 tmux new-session -d -s "$SESSION" -n tclk \
-    "cd '$HERE' && python3 redis_publish.py $TCLK_DEV --src tclk --drop '$DROP' --statlog stats-tclk.jsonl; exec bash"
+    "cd '$HERE' && until python3 redis_publish.py $TCLK_DEV --src tclk --drop '$DROP' --statlog stats-tclk.jsonl; do echo '# publisher exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
 tmux new-window -t "$SESSION" -n aclk \
-    "cd '$HERE' && python3 redis_publish.py $ACLK_DEV --src aclk --drop '$DROP' --statlog stats-aclk.jsonl; exec bash"
+    "cd '$HERE' && until python3 redis_publish.py $ACLK_DEV --src aclk --drop '$DROP' --statlog stats-aclk.jsonl; do echo '# publisher exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
+tmux new-window -t "$SESSION" -n wr \
+    "cd '$HERE' && python3 wr_time.py $WR_DEV guard; exec bash"
+if [ -n "$ARCHIVE" ]; then
+    tmux new-window -t "$SESSION" -n archive \
+        "cd '$HERE' && until nice -n 10 python3 stream_archive.py; do echo '# archiver exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
+fi
 
-echo "# launched tmux session '$SESSION' (windows: tclk, aclk)."
+echo "# launched tmux session '$SESSION' (windows: tclk, aclk, wr guard${ARCHIVE:+, archive})."
 echo "#   attach : sudo tmux attach -t $SESSION      (detach with Ctrl-b d)"
 echo "#   stop   : sudo tmux send-keys -t $SESSION:tclk C-c ; sudo tmux send-keys -t $SESSION:aclk C-c"
 echo "#            (Ctrl-C makes each publisher write its FINAL snapshot), then:"
