@@ -66,7 +66,7 @@ tmux new-session -d -s "$SESSION" -n tclk \
 tmux new-window -t "$SESSION" -n aclk \
     "cd '$HERE' && until python3 redis_publish.py $ACLK_DEV --src aclk --drop '$DROP' --statlog stats-aclk.jsonl; do echo '# publisher exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
 tmux new-window -t "$SESSION" -n wr \
-    "cd '$HERE' && python3 wr_time.py $WR_DEV guard; exec bash"
+    "cd '$HERE' && until python3 wr_time.py $WR_DEV guard; do echo '# wr guard exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
 if [ -n "$ARCHIVE" ]; then
     tmux new-window -t "$SESSION" -n archive \
         "cd '$HERE' && until nice -n 10 python3 stream_archive.py; do echo '# archiver exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"

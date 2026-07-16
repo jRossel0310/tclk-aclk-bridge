@@ -5,6 +5,7 @@
     sudo python3 wr_time.py /dev/uio6 arm        # arm the next-PPS Unix label from NTP time
     sudo python3 wr_time.py /dev/uio6 disarm     # force unlock (CTRL[1])
     sudo python3 wr_time.py /dev/uio6 clear      # clear the lost_lock sticky (CTRL[0])
+    sudo python3 wr_time.py /dev/uio6 guard      # unattended: auto re-arm on any unlock
 
 Arm protocol: the PS system clock is NTP-disciplined; mid-second (to avoid racing
 the PPS boundary) we write floor(now)+1, the label of the NEXT PPS, to SEC_ARM.
@@ -99,6 +100,58 @@ def cmd_arm(io):
     cmd_status(io)
 
 
+def cmd_guard(io, interval=2.0, arm_retry=5.0, logpath="wr-guard.log"):
+    """Unattended lock guard for multi-day runs. The timebase is deliberately STRICT:
+    ~400 ns of missing 10 MHz edges, ~1 s of missing PPS, or a GT relock (which resets
+    the ACLK replica) unlocks it PERMANENTLY until a fresh arm, and every event stamped
+    while unlocked is UNSYNC-dropped by the publisher. This loop polls STATUS and
+    re-arms automatically, turning a WR blip into a seconds-long UNSYNC gap instead of
+    a dead remainder-of-run. Re-arm labels come from the system clock, so keep NTP
+    (chrony) running. Lock transitions are logged (timestamped) to wr-guard.log; the
+    lost_lock sticky is left latched as evidence. Ctrl-C to stop."""
+    def log(msg):
+        line = "%s %s" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), msg)
+        say(line)
+        try:
+            with open(logpath, "a") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
+
+    log("# guard: start (poll %.0fs; log -> %s)" % (interval, logpath))
+    was_full = None
+    down_mono = None
+    last_arm = 0.0
+    rearms = 0
+    try:
+        while True:
+            s = decode_status(io.rd(WR_STATUS))
+            full = s["locked_mon"] and s["locked_tclk"] and s["locked_aclk"]
+            if full != was_full:
+                if full:
+                    if down_mono is not None:
+                        log("# guard: LOCKED again after %.0f s (re-arms so far: %d)"
+                            % (time.monotonic() - down_mono, rearms))
+                    else:
+                        log("# guard: locked.")
+                    down_mono = None
+                else:
+                    down_mono = time.monotonic()
+                    log("# guard: UNLOCKED: " +
+                        "  ".join("%s=%d" % (k, int(v)) for k, v in s.items()))
+                was_full = full
+            # Re-arm when unlocked, but never spam: an arm stays pending in hardware
+            # until a PPS consumes it, and repeat attempts are throttled to arm_retry.
+            if not full and not s["arm_pending"] and (time.monotonic() - last_arm) >= arm_retry:
+                rearms += 1
+                last_arm = time.monotonic()
+                log("# guard: re-arming (attempt %d)" % rearms)
+                cmd_arm(io)
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        log("# guard: stopped (re-arms: %d)" % rearms)
+
+
 def main(argv):
     rc.line_buffer_stdout()
     pos, _flags = rc.parse_args(argv)
@@ -116,8 +169,10 @@ def main(argv):
     elif cmd == "clear":
         io.wr(WR_CTRL, 0x1)
         say("# lost_lock sticky cleared.")
+    elif cmd == "guard":
+        cmd_guard(io)
     else:
-        say("usage: wr_time.py /dev/uioN [status|arm|disarm|clear]")
+        say("usage: wr_time.py /dev/uioN [status|arm|disarm|clear|guard]")
 
 
 if __name__ == "__main__":
