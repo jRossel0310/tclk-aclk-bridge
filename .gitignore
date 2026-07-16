@@ -70,3 +70,9 @@ docs/generated/*.html
 .vscode/*
 !.vscode/tasks.json
 !.vscode/extensions.json
+
+poster/
+# capture-analysis artifacts (data pulled from the board + generated figures)
+deploy/events-*.csv
+deploy/overnight-*.csv
+deploy/supercycle_*.svg
