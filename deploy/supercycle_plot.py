@@ -345,6 +345,12 @@ def main(argv):
                     help="override the figure title text")
     ap.add_argument("--color", default=None,
                     help="target color override, e.g. '#2b8cc4' (ACLK blue)")
+    ap.add_argument("--png", action="store_true",
+                    help="also write PNGs at --dpi (Google Slides and friends "
+                         "do not accept SVG)")
+    ap.add_argument("--dpi", type=int, default=300,
+                    help="PNG resolution; 300 on the poster-size canvas is "
+                         "print quality (~5000 px wide)")
     ap.add_argument("--theme", choices=("default", "poster"), default="default")
     ap.add_argument("--topn-report", type=int, default=5)
     ap.add_argument("-o", "--out", default="supercycle.svg",
@@ -416,6 +422,18 @@ def main(argv):
     stem = args.out.rsplit(".", 1)[0] if "." in args.out.rsplit("/", 1)[-1] else args.out
     out_hist = stem + "_hist.svg"
     out_raster = stem + "_raster.svg"
+
+    def _save(fig, svg_path):
+        """SVG always; matching PNG at --dpi when --png is given."""
+        fig.savefig(svg_path, facecolor=SURF, bbox_inches="tight")
+        written = [svg_path]
+        if args.png:
+            png_path = svg_path.rsplit(".", 1)[0] + ".png"
+            fig.savefig(png_path, dpi=args.dpi, facecolor=SURF,
+                        bbox_inches="tight")
+            written.append(png_path)
+        return written
+
     lens = ends - starts
     print("cycles: %d kept / %d rejected (median %.6f s, sigma %.6f s)"
           % (stats["n_kept"], stats["n_rejected"], stats["median_len"],
@@ -434,11 +452,11 @@ def main(argv):
         fig_h = make_rel_hist_figure(d_ms, stats["n_kept"], stats["median_len"],
                                      target, refs[0], theme=args.theme,
                                      bins=args.bins, window=window)
-        fig_h.savefig(out_hist, facecolor=SURF, bbox_inches="tight")
+        written = _save(fig_h, out_hist)
         fig_r = make_rel_raster_figure(d_ms, row[is_t], stats["n_kept"],
                                        stats["median_len"], target, refs[0],
                                        theme=args.theme, window=window)
-        fig_r.savefig(out_raster, facecolor=SURF, bbox_inches="tight")
+        written += _save(fig_r, out_raster)
         print("target %s vs %s: %d events; delta mean %+.3f ms, sigma %.3f ms, "
               "span %+.3f to %+.3f ms"
               % (_hex(target), _hex(refs[0]), len(d_ms), float(np.mean(d_ms)),
@@ -449,14 +467,14 @@ def main(argv):
                                  refs=refs, theme=args.theme, bins=args.bins,
                                  window=window, title=args.title,
                                  color=args.color)
-        fig_h.savefig(out_hist, facecolor=SURF, bbox_inches="tight")
+        written = _save(fig_h, out_hist)
         fig_r = make_raster_figure(off[is_t], row[is_t], off[is_r], row[is_r],
                                    n_rows=stats["n_kept"],
                                    median_len=stats["median_len"],
                                    target=target, refs=refs, theme=args.theme,
                                    window=window, title=args.title,
                                    color=args.color)
-        fig_r.savefig(out_raster, facecolor=SURF, bbox_inches="tight")
+        written += _save(fig_r, out_raster)
         per_cycle = np.bincount(row[is_t], minlength=stats["n_kept"])
         hist, edges = np.histogram(
             off[is_t], bins=np.linspace(0, stats["median_len"], args.bins + 1))
@@ -467,7 +485,7 @@ def main(argv):
                  int(np.median(per_cycle)), per_cycle.max()))
         for i in sorted(top, key=lambda i: edges[i]):
             print("  mode near %8.3f s: %d events" % (edges[i], int(hist[i])))
-    print("wrote %s and %s" % (out_hist, out_raster))
+    print("wrote " + " and ".join(written))
     return 0
 
 

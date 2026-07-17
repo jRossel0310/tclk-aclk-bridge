@@ -177,7 +177,7 @@ def test_cycles_limit_title_and_color():
         with redirect_stdout(cap):
             rc = main([p, "--target", "1E", "--ref", "8F", "-o", out,
                        "--cycles", "5", "--title", "Custom Title",
-                       "--color", "#2b8cc4"])
+                       "--color", "#2b8cc4", "--png", "--dpi", "72"])
         assert rc == 0
         rep = cap.getvalue()
         assert "limiting to the last 5 of 8 kept cycles" in rep
@@ -186,6 +186,8 @@ def test_cycles_limit_title_and_color():
             svg = f.read()
         assert "Custom Title" in svg          # title override reached the figure
         assert "#2b8cc4" in svg               # color override reached the dots
+        for suffix in ("_hist.png", "_raster.png"):   # --png writes rasters too
+            assert os.path.getsize(os.path.join(d, "lim" + suffix)) > 0
 
 
 def test_segment_start_finds_last_gap():
