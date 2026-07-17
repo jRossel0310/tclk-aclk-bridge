@@ -165,6 +165,29 @@ def test_load_events_globs_patterns():
         assert raised                            # unmatched pattern is an error
 
 
+def test_cycles_limit_title_and_color():
+    import io
+    from contextlib import redirect_stdout
+    from supercycle_plot import main
+    t, ev = _synthetic()
+    with tempfile.TemporaryDirectory() as d:
+        p = _write_csv(d, t, ev)
+        out = os.path.join(d, "lim.svg")
+        cap = io.StringIO()
+        with redirect_stdout(cap):
+            rc = main([p, "--target", "1E", "--ref", "8F", "-o", out,
+                       "--cycles", "5", "--title", "Custom Title",
+                       "--color", "#2b8cc4"])
+        assert rc == 0
+        rep = cap.getvalue()
+        assert "limiting to the last 5 of 8 kept cycles" in rep
+        assert "cycles: 5 kept" in rep
+        with open(os.path.join(d, "lim_raster.svg")) as f:
+            svg = f.read()
+        assert "Custom Title" in svg          # title override reached the figure
+        assert "#2b8cc4" in svg               # color override reached the dots
+
+
 def test_segment_start_finds_last_gap():
     from supercycle_plot import segment_start
     t = np.array([0.0, 1.0, 2.0, 100.0, 101.0, 300.0, 301.0, 302.0])

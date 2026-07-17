@@ -116,8 +116,19 @@ def _hex(code):
     return "0x%02X" % code if code <= 0xFF else "0x%04X" % code
 
 
+def _theme_sizes(theme):
+    """Font/marker sizing per theme. Poster sizes follow the printed-inches
+    convention of the other poster figures (fonts are literal points on the
+    36x48 print): headings ~27, labels ~20, ticks ~18."""
+    if theme == "poster":
+        return {"tick": 18, "title": 27, "subtitle": 20, "label": 20,
+                "legend": 18, "dot_t": 30, "dot_r": 4}
+    return {"tick": 11, "title": 19, "subtitle": 12, "label": 11,
+            "legend": 10, "dot_t": 14, "dot_r": 2}
+
+
 def _new_fig(theme, figsize_default, figsize_poster, target, n_rows, median_len,
-             subtitle_suffix):
+             subtitle_suffix, title=None):
     """Shared figure scaffold: Agg backend, theme rcParams, title + subtitle.
     Returns (fig, plt)."""
     import matplotlib
@@ -125,18 +136,19 @@ def _new_fig(theme, figsize_default, figsize_poster, target, n_rows, median_len,
     import matplotlib.pyplot as plt
 
     poster = (theme == "poster")
+    sz = _theme_sizes(theme)
     plt.rcParams.update({"font.family": "DejaVu Sans",
-                         "font.size": 14 if poster else 11,
+                         "font.size": sz["tick"],
                          "svg.fonttype": "none"})
     fig = plt.figure(figsize=figsize_poster if poster else figsize_default,
                      dpi=300, facecolor=SURF)
-    fig.suptitle("Event %s within the TCLK supercycle" % _hex(target),
-                 x=0.085, y=0.945, ha="left", fontsize=19, fontweight="bold",
-                 color=INK)
+    fig.suptitle(title or ("Event %s within the TCLK supercycle" % _hex(target)),
+                 x=0.085, y=0.945, ha="left", fontsize=sz["title"],
+                 fontweight="bold", color=INK)
     fig.text(0.085, 0.865,
              "%d supercycles folded on $00, median length %.3f s%s"
              % (n_rows, median_len, subtitle_suffix),
-             ha="left", fontsize=12, color=MUTED)
+             ha="left", fontsize=sz["subtitle"], color=MUTED)
     return fig, plt
 
 
@@ -170,7 +182,8 @@ def _window_suffix(window, median_len):
 
 
 def make_hist_figure(off_t, ref_offs, n_rows, median_len, target, refs,
-                     theme="default", bins=600, window=None):
+                     theme="default", bins=600, window=None, title=None,
+                     color=None):
     """The distribution 'shape': target offsets folded across all kept cycles.
     References are NOT histogrammed (their per-bin counts would dominate the
     y axis and squash the target): each ref comb tooth is drawn as a thin gray
@@ -181,8 +194,9 @@ def make_hist_figure(off_t, ref_offs, n_rows, median_len, target, refs,
     zooming in refines the binning automatically."""
     window = (0.0, median_len) if window is None else window
     lo, hi = window
-    fig, _ = _new_fig(theme, (11, 4.2), (12.5, 4.8), target, n_rows, median_len,
-                      _window_suffix(window, median_len))
+    sz = _theme_sizes(theme)
+    fig, _ = _new_fig(theme, (11, 4.2), (16.5, 6.5), target, n_rows, median_len,
+                      _window_suffix(window, median_len), title=title)
     ax = fig.add_axes([0.085, 0.17, 0.89, 0.60])
 
     teeth = np.concatenate([comb_medians(o, median_len, n_rows)
@@ -194,21 +208,22 @@ def make_hist_figure(off_t, ref_offs, n_rows, median_len, target, refs,
                   label="ref %s (tooth medians)"
                         % ", ".join(_hex(r) for r in refs))
     edges = np.linspace(lo, hi, bins + 1)
-    ax.hist(off_t, bins=edges, color=C_TARGET, zorder=3,
+    ax.hist(off_t, bins=edges, color=color or C_TARGET, zorder=3,
             label="target " + _hex(target))
     # legend ABOVE the axes (right-aligned, one row) so it never sits on data
     ax.legend(loc="lower right", bbox_to_anchor=(1.0, 1.02), ncol=2,
-              fontsize=10, frameon=False, borderaxespad=0.0)
+              fontsize=sz["legend"], frameon=False, borderaxespad=0.0)
     ax.set_xlim(lo, hi)
-    ax.set_xlabel("offset into supercycle (s)", fontsize=11, color=MUTED)
-    ax.set_ylabel("events / bin", fontsize=10, color=MUTED)
+    ax.set_xlabel("offset into supercycle (s)", fontsize=sz["label"], color=MUTED)
+    ax.set_ylabel("events / bin", fontsize=sz["label"], color=MUTED)
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
     return fig
 
 
 def make_raster_figure(off_t, row_t, off_r, row_r, n_rows, median_len,
-                       target, refs, theme="default", window=None):
+                       target, refs, theme="default", window=None, title=None,
+                       color=None):
     """The per-cycle evidence: one row per supercycle (oldest at top), target
     events as dots, reference events as a faint backdrop. window=(lo, hi)
     crops the x axis (events outside are dropped, which also keeps the SVG
@@ -219,25 +234,27 @@ def make_raster_figure(off_t, row_t, off_r, row_r, n_rows, median_len,
     keep_r = (off_r >= lo) & (off_r <= hi)
     off_t, row_t = off_t[keep_t], row_t[keep_t]
     off_r, row_r = off_r[keep_r], row_r[keep_r]
-    fig, _ = _new_fig(theme, (11, 6.0), (12.5, 7.0), target, n_rows, median_len,
-                      ", cycle by cycle" + _window_suffix(window, median_len))
+    sz = _theme_sizes(theme)
+    fig, _ = _new_fig(theme, (11, 6.0), (16.5, 9.0), target, n_rows, median_len,
+                      ", cycle by cycle" + _window_suffix(window, median_len),
+                      title=title)
     ax = fig.add_axes([0.085, 0.10, 0.89, 0.68])
 
     if len(off_r):
-        ax.scatter(off_r, row_r, s=2, color=C_REF, alpha=0.25,
+        ax.scatter(off_r, row_r, s=sz["dot_r"], color=C_REF, alpha=0.25,
                    linewidths=0, zorder=2,
                    label="ref " + ", ".join(_hex(r) for r in refs))
-    ax.scatter(off_t, row_t, s=14, color=C_TARGET, linewidths=0, zorder=3,
-               label="target " + _hex(target))
+    ax.scatter(off_t, row_t, s=sz["dot_t"], color=color or C_TARGET,
+               linewidths=0, zorder=3, label="target " + _hex(target))
     # legend ABOVE the axes (right-aligned, one row) so it never sits on data
     ax.legend(loc="lower right", bbox_to_anchor=(1.0, 1.02), ncol=2,
-              fontsize=10, frameon=False, borderaxespad=0.0,
+              fontsize=sz["legend"], frameon=False, borderaxespad=0.0,
               markerscale=2.5)
     ax.set_xlim(lo, hi)
     ax.set_ylim(-0.5, n_rows - 0.5)
     ax.invert_yaxis()                         # first cycle at the top
-    ax.set_xlabel("offset into supercycle (s)", fontsize=11, color=MUTED)
-    ax.set_ylabel("supercycle (time order)", fontsize=11, color=MUTED)
+    ax.set_xlabel("offset into supercycle (s)", fontsize=sz["label"], color=MUTED)
+    ax.set_ylabel("supercycle (time order)", fontsize=sz["label"], color=MUTED)
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
     return fig
@@ -321,6 +338,13 @@ def main(argv):
                     help="plot t(target) - t(nearest ref) in ms instead of the "
                          "offset from $00 (requires exactly one --ref; --window "
                          "is then in ms of delta)")
+    ap.add_argument("--cycles", type=int, default=0,
+                    help="limit to the LAST N kept cycles (0 = all; keeps "
+                         "poster rasters readable)")
+    ap.add_argument("--title", default=None,
+                    help="override the figure title text")
+    ap.add_argument("--color", default=None,
+                    help="target color override, e.g. '#2b8cc4' (ACLK blue)")
     ap.add_argument("--theme", choices=("default", "poster"), default="default")
     ap.add_argument("--topn-report", type=int, default=5)
     ap.add_argument("-o", "--out", default="supercycle.svg",
@@ -358,6 +382,12 @@ def main(argv):
         print("only %d usable cycles (need >= 5); capture longer or check the "
               "anchor code" % stats["n_kept"], file=sys.stderr)
         return 2
+    if args.cycles and stats["n_kept"] > args.cycles:
+        print("limiting to the last %d of %d kept cycles"
+              % (args.cycles, stats["n_kept"]))
+        starts = starts[-args.cycles:]
+        ends = ends[-args.cycles:]
+        stats["n_kept"] = args.cycles
 
     mask, row, off = assign_offsets(t, starts, ends)
     is_t = mask & (ev == target)
@@ -417,13 +447,15 @@ def main(argv):
         fig_h = make_hist_figure(off[is_t], ref_offs, n_rows=stats["n_kept"],
                                  median_len=stats["median_len"], target=target,
                                  refs=refs, theme=args.theme, bins=args.bins,
-                                 window=window)
+                                 window=window, title=args.title,
+                                 color=args.color)
         fig_h.savefig(out_hist, facecolor=SURF, bbox_inches="tight")
         fig_r = make_raster_figure(off[is_t], row[is_t], off[is_r], row[is_r],
                                    n_rows=stats["n_kept"],
                                    median_len=stats["median_len"],
                                    target=target, refs=refs, theme=args.theme,
-                                   window=window)
+                                   window=window, title=args.title,
+                                   color=args.color)
         fig_r.savefig(out_raster, facecolor=SURF, bbox_inches="tight")
         per_cycle = np.bincount(row[is_t], minlength=stats["n_kept"])
         hist, edges = np.histogram(
