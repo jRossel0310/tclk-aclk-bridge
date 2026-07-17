@@ -151,8 +151,8 @@ reconciliation, and the plotting.
 
 ## History (specs + plans)
 
-Each feature went through brainstorm -> spec -> plan -> subagent-driven TDD. The records
-live under `docs/superpowers/specs/` and `docs/superpowers/plans/`: the TCLK readout
-bring-up and event filter, the ACLK-Lite readout and signal generator, the unified clk
-decoder, the GT/SFP ACLK readout, the White Rabbit timestamp, the Redis publisher and
-convention alignment, and the single-board pipeline integration.
+Each feature went through brainstorm -> spec -> plan -> subagent-driven TDD: the TCLK
+readout bring-up and event filter, the ACLK-Lite readout and signal generator, the
+unified clk decoder, the GT/SFP ACLK readout, the White Rabbit timestamp, the Redis
+publisher and convention alignment, and the single-board pipeline integration. The
+process records themselves are not part of the tracked repo.

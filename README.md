@@ -104,8 +104,7 @@ constraints/        kr260_aclk_pipeline.xdc pin/timing file
 vivado/             build_aclk_pipeline.tcl (the one build) + ip/ (the aclkgt_gt GT IP)
 deploy/             board-side Python readers/publishers + runbooks (capture.md, redis.md, wr.md)
 docs/               OPERATIONS.md (runbook), PROJECT.md (architecture),
-                    aclk-lite-framing.md (authoritative framing), generated/ (interface guide),
-                    superpowers/ (per-feature specs + plans)
+                    aclk-lite-framing.md (authoritative framing), generated/ (interface guide)
 resources/          Fermilab timing docs: Aclk/ (ACLK-Lite spec, PIP-II ISD), Tclk/ (TCLK docs)
 sim.sh / sim.ps1    simulation wrappers (bash / PowerShell)
 hw.sh  / hw.ps1     Vivado build + deploy wrappers
