@@ -135,7 +135,7 @@ def test_rel_mode_renders_and_reports():
         for suffix in ("_hist.svg", "_raster.svg"):
             assert os.path.getsize(os.path.join(d, "rel" + suffix)) > 0
         rep = cap.getvalue()
-        assert "target 0x1E vs 0x8F:" in rep and "sigma" in rep
+        assert "target $1E vs $8F:" in rep and "sigma" in rep
         # _synthetic: targets at X.0 s, nearest 0x8F tooth at X-0.5 or X+0.5:
         # every delta is exactly +-500 ms
         assert "span -500.000 to +500.000 ms" in rep or \
@@ -284,7 +284,7 @@ def test_main_reports_missing_target_with_available_codes():
             rc = main([p, "--target", "AB", "-o", os.path.join(d, "x.png")])
         assert rc == 2                                     # 0xAB never occurs
         msg = err.getvalue()
-        assert "Available codes" in msg and "0x1E:" in msg  # listing really printed
+        assert "Available codes" in msg and "$1E:" in msg  # listing really printed
 
 
 def test_main_renders_svg_pair():
@@ -305,7 +305,7 @@ def test_main_renders_svg_pair():
         assert not [f for f in os.listdir(d) if f.endswith(".png")]   # SVG only
         report = cap.getvalue()
         assert "cycles: 8 kept / 1 rejected" in report
-        assert "target 0x1E: 8 events; per cycle min/median/max = 1/1/1" in report
+        assert "target $1E: 8 events; per cycle min/median/max = 1/1/1" in report
         assert "mode near" in report
         assert "sc_hist.svg" in report and "sc_raster.svg" in report
 
