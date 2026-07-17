@@ -65,11 +65,14 @@ tmux new-session -d -s "$SESSION" -n tclk \
     "cd '$HERE' && until python3 redis_publish.py $TCLK_DEV --src tclk --drop '$DROP' --statlog stats-tclk.jsonl; do echo '# publisher exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
 tmux new-window -t "$SESSION" -n aclk \
     "cd '$HERE' && until python3 redis_publish.py $ACLK_DEV --src aclk --drop '$DROP' --statlog stats-aclk.jsonl; do echo '# publisher exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
+# The guard and archiver restart UNCONDITIONALLY (even after a clean Ctrl-C):
+# a stray Ctrl-C in one of these panes once silently ended archiving for hours.
+# Their intended stop is killing the session, which is the normal stop flow.
 tmux new-window -t "$SESSION" -n wr \
-    "cd '$HERE' && until python3 wr_time.py $WR_DEV guard; do echo '# wr guard exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
+    "cd '$HERE' && while true; do python3 wr_time.py $WR_DEV guard; echo '# wr guard exited; restarting in 5 s'; sleep 5; done"
 if [ -n "$ARCHIVE" ]; then
     tmux new-window -t "$SESSION" -n archive \
-        "cd '$HERE' && until nice -n 10 python3 stream_archive.py; do echo '# archiver exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
+        "cd '$HERE' && while true; do nice -n 10 python3 stream_archive.py; echo '# archiver exited; restarting in 5 s'; sleep 5; done"
 fi
 
 echo "# launched tmux session '$SESSION' (windows: tclk, aclk, wr guard${ARCHIVE:+, archive})."
