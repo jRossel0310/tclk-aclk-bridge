@@ -231,12 +231,7 @@ all:
         $pyMap = @{
             "tclk"            = @("tclk_read.py", "tclk_filter.py", "readout_common.py")
             "aclk"            = @("aclk_read.py", "tclk_filter.py", "readout_common.py")
-            "clk"             = @("clk_read.py", "tclk_filter.py", "readout_common.py")
-            "aclkgt_loop"     = @("aclkgt_read.py", "aclkgt_monitor.py", "aclkgt_sweep.py", "tclk_filter.py", "readout_common.py")
-            "aclkgt_rx"       = @("aclkgt_read.py", "aclkgt_monitor.py", "aclkgt_sweep.py", "tclk_filter.py", "readout_common.py")
-            "aclkgt_selftest" = @("aclkgt_read.py", "aclkgt_monitor.py", "aclkgt_sweep.py", "tclk_filter.py", "readout_common.py")
-            "aclk_pipeline"   = @("tclk_read.py", "aclkgt_read.py", "wr_time.py", "tclk_filter.py", "readout_common.py", "redis_sink.py", "redis_publish.py", "stats_log.py", "stats_report.py", "stream_archive.py", "run_pipeline.sh", "requirements-board.txt", "redis-kr260.conf", "aclk_pipeline.dts", "capture.md")
-            "uart_echo"       = @("uart_echo_test.py")
+            "aclk_pipeline"   = @("tclk_read.py", "aclk_read.py", "wr_time.py", "tclk_filter.py", "readout_common.py", "redis_sink.py", "redis_publish.py", "stats_log.py", "stats_report.py", "stream_archive.py", "run_pipeline.sh", "requirements-board.txt", "redis-kr260.conf", "aclk_pipeline.dts", "capture.md")
         }
         $pyFiles = @()
         if ($pyMap.ContainsKey($Name)) {
@@ -257,7 +252,7 @@ all:
         Write-Host "==> copied. Board load (manual, UIO + overlay):" -ForegroundColor Green
         Write-Host "    md5sum ~/$($bin.Name)"
         Write-Host "    sudo xmutil unloadapp"
-        Write-Host "    sudo fpgautil -b ~/$($bin.Name) -o uart_echo.dtbo"
+        Write-Host "    sudo fpgautil -b ~/$($bin.Name) -o aclk_pipeline.dtbo"
     }
     "help" { Get-Help $PSCommandPath -Detailed }
 }
