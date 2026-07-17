@@ -36,8 +36,11 @@ wr_timebase @ 0x8002_0000. Match /dev/uioN indices via
 
 ## Read events on the WR timeline
 
-    sudo python3 tclk_read.py /dev/uio4 --wr
-    sudo python3 aclkgt_read.py /dev/uio5 --wr
+    sudo python3 tclk_read.py /dev/uio4 --wr    # TCLK events with their WR {sec, ns}
+
+`tclk_read.py` supports `--wr`. `aclk_read.py` prints only a raw hardware tick
+timestamp (it has no `--wr` flag); WR-timestamped ACLK events come from the capture
+path (`redis_publish.py --src aclk`, see redis.md / capture.md).
 
 ## Gotchas
 

@@ -1,154 +1,158 @@
 # Project status and architecture
 
-Snapshot of the kria-2-hardware timing-readout project as of 2026-06-22: what each
-piece is, how they fit together, which builds exist, and what is hardware-verified
-vs. simulation-only vs. legacy. For the bit-level on-wire framing, see the
-authoritative reference [aclk-lite-framing.md](aclk-lite-framing.md).
+The kria-2-hardware repo is one product: the **aclk_pipeline** bitstream plus the
+board-side capture software. This page describes that pipeline, how the RTL blocks fit
+together, the one build target, and what is hardware-verified vs. simulation-only. For
+the operator runbook (load, wire, run a capture, get the data out) see
+[OPERATIONS.md](OPERATIONS.md). For the bit-level ACLK-Lite on-wire framing see the
+authoritative reference [aclk-lite-framing.md](aclk-lite-framing.md). For the full
+register maps of both readouts and the WR monitor slave, see the generated interface
+guide at `generated/tclk-aclk-pipeline-hardware-interface-guide.pdf`.
 
 ## The goal
 
-Receive Fermilab accelerator timing events on a KR260 and get them to software:
-- **TCLK** - the legacy 10 MHz Manchester (biphase-mark) event clock; 8-bit events.
-- **ACLK-Lite** - the PIP-II down-converted timing stream, same Manchester line code
-  as TCLK; 16-bit events optionally carrying a 64-bit data packet.
+Receive Fermilab accelerator timing events on one KR260, put an absolute time on each,
+and get them to software, while also republishing the stream over the accelerator's
+timing-link transports so the whole loop can be exercised on a single board:
 
-Both arrive on one baseband line (Pmod pin **H12**, LVCMOS33). A single decoder reads
-either, timestamps each event in the PL, buffers it across the clock-domain crossing,
-and exposes it to the PS over AXI4-Lite (read via a UIO device in Linux).
+- **TCLK** - the legacy ~10 MHz Manchester (biphase-mark) event clock; 8-bit event
+  codes (written `$XX`).
+- **ACLK** - the gigabit timing stream, carried here over the SFP+ GT transceiver.
+- **ACLK-Lite** - the PIP-II down-converted Manchester stream, mirrored out a Pmod pin
+  as a scope probe.
+- **White Rabbit** - a 10 MHz + PPS reference that disciplines the shared `{sec, ns}`
+  UTC timebase stamped onto every event.
 
-## End-to-end architecture (the current `build_clk` path)
+## End-to-end architecture (the `build_aclk_pipeline` path)
 
 ```
-H12 line ─► serdec4_9MHz ─► clk_byte_framer ─► clk_readout_top ─► aclk_readout_axi ─► AXI4-Lite ─► PS/UIO ─► clk_read.py
-            (80 MHz, bit     (40 MHz, byte      (adapter +          (timestamp +
-             recovery)        framing +          flags)              async FIFO +
-                              length detect)                         register block)
+TCLK (H12) + WR 10 MHz (E10) + WR PPS (E12)
+  -> tclk_readout_top       decode TCLK, WR-timestamp each event
+       -> aclk_readout_axi (S_AXI @ 0x8000_0000)  -> PS/UIO  (tclk_read.py, redis_publish.py --src tclk)
+       -> aclk_tclk_encoder re-encode TCLK events into ACLK frames
+            -> aclkgt_gt (GTH TX) -> SFP+ --external fiber loop--> aclkgt_gt (GTH RX)
+                 -> aclk_gt_readout_top    decode ACLK, WR-timestamp on the same timeline
+                      -> aclk_readout_axi (S_AXI2 @ 0x8001_0000) -> PS/UIO (aclk_read.py, redis_publish.py --src aclk)
+                      -> aclk_lite_bridge -> aclk_lite_encoder -> ACLK-Lite Manchester out (B10)
+
+wr_timebase (x2 replicas) + wr_timebase_axi (S_AXI3 @ 0x8002_0000, wr_time.py)
+  disciplines the shared {sec, ns} that both readouts stamp.
 ```
 
-- **`rtl/aclk_bridge/serdec4_9MHz.v`** - inherited, hardware-proven biphase-mark bit
-  recovery. Oversamples the line at 80 MHz and emits a recovered bit clock (`SCLK`) +
-  data (`SDATA`). Frame-agnostic: it just recovers cells.
-- **`rtl/aclk_lite/clk_byte_framer.sv`** - the length-aware byte framer (40 MHz).
-  Accumulates bytes (each = start + 8 data MSB-first + even parity) until the
-  2-terminal-idle-cell stop, then dispatches by byte count: 1 byte = TCLK event
-  `{0x00, b0}`; 2 = ACLK event `{b0, b1}`; 12 = ACLK event + 64-bit data (bytes 2-9;
-  the CRC byte 10 and control byte 11 are captured but ignored). Outputs
-  `event_valid / event_id[15:0] / data_valid / data[63:0] / parity_error / is_tclk`.
-- **`rtl/aclk_lite/clk_rcv.sv`** - thin wrapper = `serdec4_9MHz` + `clk_byte_framer`.
-- **`rtl/aclk_lite/clk_readout_top.sv`** - adapter (sets `flags = {is_tclk, has_data}`)
-  + the shared readout; `DROP_NULL=0` (no on-wire null code, keep every event).
-- **`rtl/aclk_readout/aclk_readout_core.sv`** - 64-bit hardware timestamp counter
-  (free-running in the rx domain, latched per event; a `pps` input can zero it) +
-  null-drop packer + dual-clock `async_fifo`. Packs a 160-bit FIFO word
-  `{FLAGS, TS[63:0], EVENT[15:0], DATA[63:0]}`.
-- **`rtl/aclk_readout/aclk_readout_axi.sv`** - the AXI4-Lite face: a small read-mostly
-  register block + a 256-bit event drop-mask filter. **Registers are spaced 16 bytes
-  apart** (a hardware quirk: the hand-written module-reference AXI4-Lite slave only
-  returns data at 16-byte-aligned offsets on the KR260 LPD path). Map:
+- **TCLK decode.** `serdec4_9MHz` recovers biphase-mark cells (80 MHz oversample);
+  `TCLK_DESERIALIZER2` + `TCLK_RCV` frame them into 8-bit TCLK events.
+  `tclk_readout_top` wraps that decoder plus the shared readout and the WR timestamp.
+- **WR timebase.** `wr_timebase` turns the WR 10 MHz + PPS into a free-running
+  `{sec, ns}` counter with strict validity (a timestamp of 0 means "not WR-synced when
+  stamped", surfaced to software as UNSYNC). Two `wr_timebase` replicas feed the two
+  readouts; `wr_timebase_axi` is the monitor / arm register slave.
+- **Readout.** Both readouts share `aclk_readout_core.sv` (64-bit hardware timestamp
+  latched per event + a null-drop packer + a dual-clock `async_fifo`) and
+  `aclk_readout_axi.sv` (the AXI4-Lite register block + a 256-bit event drop-mask
+  filter). Registers are spaced **16 bytes apart** because the hand-written
+  module-reference AXI4-Lite slave only returns data at 16-byte-aligned offsets on the
+  KR260 LPD path.
+- **TCLK -> ACLK re-encode.** `aclk_tclk_encoder` gearboxes decoded TCLK events into
+  ACLK frames (8b10b, CRC-8, the gearbox pair) for the GT.
+- **GT / SFP.** `aclkgt_gt` is the Xilinx GT wizard IP (GTH, 1.25 Gbps, 8b10b, 156.25
+  MHz refclk), committed as a generated `.xci` under `vivado/ip/aclkgt_gt/`. It TX's the
+  re-encoded ACLK out the SFP+; an external fiber jumper loops TX back to RX.
+- **ACLK decode.** `ACLK_REV.v` (`ACLK_RCV`) + the gearboxes + `crc8_calc` decode the
+  received ACLK; `aclk_gt_readout_top` wraps that with the second readout and WR stamp.
+- **ACLK-Lite mirror.** `aclk_lite_bridge` adapts decoded ACLK events into the ACLK-Lite
+  encoder's interface; `aclk_lite_encoder` drives the biphase-mark Manchester output on
+  Pmod pin B10 as a scope probe.
 
-  | Offset | Reg | | Offset | Reg |
-  |--------|-----|-|--------|-----|
-  | 0x00 | STATUS (empty, overflow) | | 0x80 | NULL_COUNT |
-  | 0x10 | EVENT `{FLAGS, EVENT}` | | 0x90 | ERROR_COUNT |
-  | 0x20 | DATA_HI | | 0xA0 | DEBUG (line activity) |
-  | 0x30 | DATA_LO | | 0xB0 | HEARTBEAT (rx clock alive) |
-  | 0x40 | TS_HI | | 0xC0 | LOCK (MMCM locked) |
-  | 0x50 | TS_LO | | 0xD0 | FILTER_CFG (W: drop-mask) |
-  | 0x60 | POP (W) | | 0xE0 | FILTERED_COUNT |
-  | 0x70 | EVENT_COUNT | | | |
+The three AXI4-Lite slaves (`S_AXI`, `S_AXI2`, `S_AXI3`) are inferred from the integrated
+`aclk_pipeline_bd_top.v` and fanned out from the PS LPD master by a single SmartConnect.
+The pinout is in [OPERATIONS.md](OPERATIONS.md) section 5.
 
-## Decoders in the tree (and which one is current)
+### `aclk_readout_axi` register map (both readouts, 16-byte spacing)
 
-| Decoder | What | Status |
-|---------|------|--------|
-| `clk_byte_framer` + `clk_rcv` | **Unified** real-line decoder (TCLK + ACLK-Lite via serdec) | **Current; HW-verified** |
-| `aclk_bridge/TCLK_RCV.v` (serdec + `TCLK_DESERIALIZER2`) | Biphase TCLK, 1-byte events | HW-proven; reused by `build_tclk` |
-| `aclk_lite/aclk_lite_decoder.sv` | Clean-room Manchester ADM (own recovery, single parity) | Legacy; decodes only the old clean-room generator, not the real line |
-| `aclk_bridge/ACLK_REV.v` (`ACLK_RCV`) | Gigabit ACLK over a GT transceiver (8b10b, gearbox, CRC-8) | Sim-only; no GT front-end wired on the KR260 |
+| Offset | Reg | | Offset | Reg |
+|--------|-----|-|--------|-----|
+| 0x00 | STATUS (empty, overflow) | | 0x80 | NULL_COUNT |
+| 0x10 | EVENT `{FLAGS, EVENT}` | | 0x90 | ERROR_COUNT |
+| 0x20 | DATA_HI | | 0xA0 | DEBUG (line / GT activity) |
+| 0x30 | DATA_LO | | 0xB0 | HEARTBEAT (rx clock alive) |
+| 0x40 | TS_HI | | 0xC0 | LOCK (MMCM / WR locked) |
+| 0x50 | TS_LO | | 0xD0 | FILTER_CFG (W: drop-mask) |
+| 0x60 | POP (W) | | 0xE0 | FILTERED_COUNT |
+| 0x70 | EVENT_COUNT | | | |
 
-The clean-room `aclk_lite_decoder` is now superseded by `clk_byte_framer` and kept
-only for reference; retiring it (and its `manchester_tx_model.py`) is open cleanup.
+Full field-level detail for every register (both readouts, the WR monitor slave, the
+GT-health DEBUG word, the GT_CTRL bits) is in the generated interface guide.
 
-## The ACLK-Lite signal generator (`build_aclkgen`)
+## Build target (`vivado/`)
 
-A second KR260 transmits a hardcoded test stream so the receiver can be exercised
-without the real accelerator. **HW-verified board-to-board** against `build_clk`.
+There is **one** build. `hw.ps1 build` defaults to it; a bare `.\hw.ps1 build` is all
+you need.
 
-- **`rtl/aclk_lite/aclk_lite_encoder.sv`** - biphase-mark cell engine emitting the real
-  ISD framing (per-byte start + 8 MSB-first + even parity, byte-oriented, idle =
-  continuous 1-cells), `frame_type` selects 1/2/12-byte frames; CRC/control bytes are
-  fixed 0x00 placeholders (the decoder ignores them).
-- **`rtl/aclk_lite/aclk_lite_gen_timeline.sv`** - drives the encoder with a repeating
-  trio: TCLK `0x55`, ACLK event `0xABCD`, full packet `0x1234` + `0xDEADBEEFCAFE0001`;
-  emits a `frame_sync` scope trigger; one-shot warm-up lets the receiver's serdec lock.
-- Output on H12; wire the generator board's H12 to the receiver board's H12.
+| TCL | Name | What it builds |
+|-----|------|----------------|
+| `build_aclk_pipeline.tcl` | aclk_pipeline | The integrated single-board TCLK -> WR-timestamp -> ACLK(SFP loop) -> ACLK-Lite pipeline, three AXI4-Lite readout/monitor slaves |
 
-## Build targets (`vivado/`)
+The block design keeps the historical internal name `design_name = uart_echo_bd`, so the
+bitstream file is **`uart_echo_bd_wrapper.bit.bin`** and the board overlay/UIO identity is
+unchanged. The name is cosmetic. The build derives its 80/40 MHz event-domain clocks and a
+50 MHz GT free-run clock from `pl_clk0` with clk_wiz MMCMs (a runtime `fpgautil` load does
+not reprogram PS PL clocks), ties the proc_sys_reset `dcm_locked` high, and uses an AXI
+SmartConnect on the LPD master (the auto interconnect corrupts AXI4->AXI4-Lite read data on
+this hardware).
 
-All builds reuse `design_name = uart_echo_bd`, so every bitstream is named
-`uart_echo_bd_wrapper.bit.bin` and loads with the same overlay. **md5-check on the
-board to tell builds apart.** Each build derives its PL clocks from `pl_clk0` with a
-clk_wiz MMCM (a runtime fpgautil load does not reprogram PS PL clocks), ties the
-proc_sys_reset `dcm_locked` high, and uses an AXI SmartConnect on the LPD master.
+## Module-to-file map (what the bitstream is built from)
 
-| TCL | Name | What it builds | Status |
-|-----|------|----------------|--------|
-| `build_clk.tcl` | clk | **Unified TCLK/ACLK receiver** (serdec + clk_byte_framer + readout), H12 in | **Current; HW-verified** |
-| `build_aclkgen.tcl` | aclkgen | **ACLK-Lite generator**, H12 out (no AXI) | **Current; HW-verified** |
-| `build_tclk.tcl` | tclk | TCLK-only receiver (TCLK_RCV + readout) | Superseded by clk; HW-proven |
-| `build_aclk.tcl` | aclk | ACLK-Lite receiver via the clean-room `aclk_lite_decoder` | Superseded; reads only the old generator |
-| `build_pltest.tcl` | pltest | PL heartbeat / AXI bring-up smoke test | Bring-up scaffold |
-| `build_pinblink.tcl` | pinblink | LED/pin blink | Bring-up scaffold |
-| `build.tcl` + `uart_echo_bd.tcl` | uart_echo | Original UART echo loopback | Origin skeleton |
+`vivado/build_aclk_pipeline.tcl` sources exactly these RTL files plus the GT IP:
 
-## Deploy + readers (`deploy/`)
+| File | Role |
+|------|------|
+| `rtl/aclk_bridge/serdec4_9MHz.v` | biphase-mark bit recovery (80 MHz oversample) |
+| `rtl/aclk_bridge/TCLK_DESERIALIZER2.v`, `TCLK_RCV.v` | TCLK byte framing -> 8-bit events |
+| `rtl/aclk_bridge/ACLK_REV.v` (`ACLK_RCV`) | gigabit ACLK decode over the GT (8b10b) |
+| `rtl/aclk_bridge/GEARBOX_16_TO_96.v`, `gearbox_96_to_16.v`, `crc8_calc.v` | ACLK encode/decode gearboxes + CRC-8 |
+| `rtl/aclk_lite/tclk_readout_top.sv` | TCLK decode + WR timestamp + readout top |
+| `rtl/aclk_gt/aclk_gt_readout_top.sv` | ACLK decode + WR timestamp + readout top |
+| `rtl/aclk_gt/aclk_tclk_encoder.v` | TCLK event -> ACLK frame re-encoder |
+| `rtl/aclk_lite_bridge.v` | ACLK event -> ACLK-Lite encoder adapter |
+| `rtl/aclk_lite/aclk_lite_encoder.sv` | ACLK-Lite biphase-mark Manchester output |
+| `rtl/wr_timebase.sv`, `wr_timebase_axi.sv` | shared WR `{sec, ns}` timebase + monitor slave |
+| `rtl/aclk_readout/aclk_readout_core.sv`, `aclk_readout_axi.sv` | shared readout core + AXI4-Lite face |
+| `rtl/synchronizer.sv`, `async_fifo.sv`, `cdc_gray_count.sv`, `cdc_word_pulse.sv` | CDC primitives |
+| `rtl/aclk_pipeline_bd_top.v` | integrated block-design top (infers the 3 AXI slaves) |
+| `vivado/ip/aclkgt_gt/aclkgt_gt.xci` | GT wizard IP (GTH, 1.25 Gbps, 8b10b, 156.25 MHz refclk) |
 
-- **`clk_read.py`** - current reader for `build_clk`; drains the register block, prints
-  events with `is_tclk` / `has_data`, 40 MHz (25 ns) timestamp tick. `--drop 07,0F`
-  sets the hardware drop-mask via `tclk_filter.py`. Runbook: `deploy/clk.md`.
-- `tclk_read.py` / `aclk_read.py` - per-build readers for the superseded tclk/aclk
-  builds (40 MHz / 120 MHz ticks respectively).
-- `tclk_filter.py` (+ `test_tclk_filter.py`) - drop-mask helpers, shared by the readers.
-- `diag.py`, `probe.py`, `pltest.py`, `uart_echo_test.py` - bring-up diagnostics from
-  earlier phases (kept for reference).
-- `uart_echo.dts`, `*.bif`, `template.bif` - device-tree overlay source + bootgen
-  recipes. `hw.ps1` writes the `.bif` automatically during packaging.
-
-## Testing
-
-Simulation is the inner loop: cocotb 2.0 + Icarus, one `tb/<module>/` per module,
-each emitting a matplotlib plot. The load-bearing timing testbenches:
-
-| Testbench | Covers |
-|-----------|--------|
-| `tb/clk_rcv` | unified decoder: 1/2/12-byte frames + parity errors via a real-framing TX model |
-| `tb/clk_readout` | full chain decoder -> readout -> AXI |
-| `tb/aclk_lite_encoder` | generator encoder waveform == golden biphase model |
-| `tb/aclk_lite_gen_loopback` | generator -> serdec -> clk_byte_framer (proves TX/RX agree) |
-| `tb/tclk_rcv`, `tb/aclk_rcv` | the inherited TCLK / GT-ACLK decoders |
-| `tb/aclk_readout_axi`, `tb/async_fifo` | the readout + CDC FIFO |
-
-Shared models: `tb/tclk_tx_model.py` (biphase-mark cells), `tb/clk_tx_model.py`
-(real multi-byte framing), `tb/manchester_tx_model.py` (legacy clean-room),
-`tb/axi_lite_bfm.py`. `aclk_lite_decoder`'s `aclk_lite_readout` chain still simulates
-against the clean-room model.
+**Testbench-support only (not in the bitstream):** `rtl/aclk_lite/clk_rcv.sv` +
+`rtl/aclk_lite/clk_byte_framer.sv` are a unified TCLK/ACLK-Lite baseband decoder used by
+`tb/aclk_lite_bridge` to feed the bridge with realistically framed events. They are not
+sourced by the build and are not part of the pipeline hardware.
 
 ## What is verified, where
 
-- **HW-verified:** the unified receiver decodes the real lab TCLK line; the generator
-  and receiver decode the ACLK-Lite trio board-to-board on H12.
-- **Sim-only:** the GT-based `ACLK_RCV` gigabit path (no transceiver front-end wired).
-- **Deferred / open:**
-  - CRC8 validation in `clk_byte_framer` (poly unconfirmed for ACLK-Lite; decoder
-    ignores the CRC byte for now - see aclk-lite-framing.md).
-  - Retiring the legacy clean-room `aclk_lite_decoder` + `build_aclk` + the old
-    single-protocol readers once `build_clk` fully replaces them.
-  - The PS-side bridge that drains the FIFO and publishes events (e.g. to Redis).
-  - A real ACLK-Lite source from the accelerator (today only the generator board).
+- **HW-verified:** the full pipeline ran a **15.6 h dual-source capture on 2026-07-16**
+  (5.55 M events/source, zero loss), decoding real Fermilab TCLK, looping ACLK over the
+  SFP fiber, and publishing both readouts on the shared WR timeline into Redis. This is
+  the load-bearing hardware validation. TCLK decode, the WR timebase arm/lock, the GT
+  SFP loop, and both readouts are all exercised by it.
+- **Sim-only:** the cocotb suite is the inner loop. `tb/aclk_pipeline_chain` exercises
+  the end-to-end chain; per-block testbenches cover `tclk_rcv`, `aclk_rcv`,
+  `aclk_readout_axi`, `async_fifo`, `aclk_lite_encoder`, `aclk_lite_bridge`,
+  `wr_timebase`, and the encoders.
+- **Deferred / open:** ACLK CRC-8 poly confirmation against a real accelerator ACLK
+  source (today ACLK is exercised only via the board's own re-encode + fiber loop, not a
+  live upstream ACLK feed).
+
+## Testing
+
+Simulation is the inner loop: cocotb 2.0 + Icarus, one `tb/<module>/` per module, each
+emitting a matplotlib plot. `.\sim.ps1 list` lists the testbenches; `.\sim.ps1 run
+-Module <tb>` runs one. The board-side Python has its own unit tests: `pytest deploy` on
+the PC exercises the readout register map, the Redis sink/publisher, the stats
+reconciliation, and the plotting.
 
 ## History (specs + plans)
 
-Each feature went through brainstorm -> spec -> plan -> subagent-driven TDD. The
-records live under `docs/superpowers/specs/` and `docs/superpowers/plans/`:
-TCLK board bring-up, the TCLK event filter, the ACLK-Lite readout build, the ACLK-Lite
-signal generator, the unified clk decoder, and the generator real-framing re-alignment.
+Each feature went through brainstorm -> spec -> plan -> subagent-driven TDD. The records
+live under `docs/superpowers/specs/` and `docs/superpowers/plans/`: the TCLK readout
+bring-up and event filter, the ACLK-Lite readout and signal generator, the unified clk
+decoder, the GT/SFP ACLK readout, the White Rabbit timestamp, the Redis publisher and
+convention alignment, and the single-board pipeline integration.

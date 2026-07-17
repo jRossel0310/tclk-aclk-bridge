@@ -414,7 +414,3 @@ python supercycle_plot.py tail.csv --target 1F --theme poster -o bes.svg
   slave, the GT-health DEBUG word, the `GT_CTRL` bits) is in
   docs/generated/tclk-aclk-pipeline-hardware-interface-guide.pdf. Section 10 of
   that guide has a full status/error/recovery table.
-- **Raw AXI sanity poke:** `deploy/diag.py` is a bare `/dev/uio` mmap read/write
-  probe carried over from the earlier uart_echo demo; it exercises UART-Lite
-  registers, not the pipeline register map, so treat it only as a "can I mmap and
-  touch this UIO node at all" check, not a pipeline diagnostic.
