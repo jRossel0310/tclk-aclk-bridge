@@ -13,10 +13,10 @@
 //   Pmod pin (aclk_lite_out).
 //
 // GT block, SFP wiring, RX self-healing recovery FSM (SEARCH/LOCKED/RECOVER), per-domain
-// resets, dec_rstn, and the GT-health DEBUG word are copied verbatim from
-// aclk_gt_selftest_bd_top.v. The ONLY datapath change versus the selftest top is that
-// gtwiz_userdata_tx_in is driven by aclk_tclk_encoder (live TCLK re-encode), not by the
-// stand-alone aclk_gt_frame_gen.
+// resets, dec_rstn, and the GT-health DEBUG word are the standard GT-RX bring-up setup.
+// The datapath point of this top is that gtwiz_userdata_tx_in is driven by
+// aclk_tclk_encoder (live TCLK re-encode), so the board broadcasts real decoded TCLK
+// events over the SFP rather than a canned test pattern.
 //
 // Design points:
 //   1. ONE TCLK decoder: tclk_readout_top owns the only TCLK_RCV; the encoder is fed from
@@ -202,7 +202,7 @@ module aclk_pipeline_bd_top (
 
     // =====================================================================
     // GT transceiver (normal mode, real SFP RX). TX is the re-encoded ACLK
-    // stream from aclk_tclk_encoder (gen_data16/gen_k), not aclk_gt_frame_gen.
+    // stream from aclk_tclk_encoder (gen_data16/gen_k).
     // =====================================================================
     wire        rx_usrclk2;
     wire        tx_usrclk2;

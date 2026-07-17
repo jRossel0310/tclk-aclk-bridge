@@ -7,7 +7,7 @@
 // Dispatches by accumulated byte count: 1 = TCLK event {0x00,b0}; 2 = ACLK event
 // {b0,b1}; 12 = full packet event {b0,b1} + data {b2..b9} (bytes 10/11 = CRC/control,
 // captured but ignored). A per-byte parity failure or any other byte count -> a
-// one-cycle parity_error with no event. Output interface matches aclk_lite_decoder.
+// one-cycle parity_error with no event.
 // See docs/aclk-lite-framing.md.
 
 `timescale 1ns / 1ps

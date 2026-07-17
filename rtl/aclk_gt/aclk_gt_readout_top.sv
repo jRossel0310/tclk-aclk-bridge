@@ -2,10 +2,9 @@
 //
 // Gigabit-ACLK RX readout brain: the inherited ACLK_RCV decoder (fed by a GT
 // transceiver's 16-bit + K word stream on the recovered RX clock) through a
-// trivial adapter into the shared decoder-agnostic aclk_readout_axi. Mirrors
-// rtl/aclk_lite/aclk_lite_readout_top.sv. The GT transceiver itself lives in the
-// Phase B integration top (aclk_gt_*_top); this module is pure RTL so it sims in
-// Icarus exactly as the ACLK-Lite readout top does.
+// trivial adapter into the shared decoder-agnostic aclk_readout_axi. The GT
+// transceiver itself is instantiated in the pipeline top (aclk_pipeline_bd_top);
+// this module is pure RTL so it sims in Icarus without the transceiver.
 //
 // Adapter: every aligned 96-bit packet carries EVENT[15:0] + DATA[63:0], so
 // flags = has_data=1, is_tclk=0; DROP_NULL=1 drops the 0xFF-low-byte nulls.
