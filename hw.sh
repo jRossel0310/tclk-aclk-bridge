@@ -4,7 +4,7 @@
 # (PowerShell users: use .\hw.ps1 instead.)
 #
 # Usage:
-#   ./hw.sh build         # RTL -> bitstream via vivado/build.tcl (batch)
+#   ./hw.sh build         # pipeline bitstream via vivado/build_aclk_pipeline.tcl (batch)
 #   ./hw.sh gui           # open the generated project in the Vivado GUI
 #   ./hw.sh clean         # delete the build dir
 #
@@ -14,14 +14,14 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_TCL="$ROOT/vivado/build.tcl"
+BUILD_TCL="$ROOT/vivado/build_aclk_pipeline.tcl"
 
 # Repo-local default to match hw.ps1 (./build/kria/<name>); override with
 # $KRIA_BUILD_DIR. NOTE: Vivado's IP Integrator breaks on spaces in the project
 # path (this repo may live under "Summer 2026"); the build runs from a space-free
 # parent, but set $KRIA_BUILD_DIR to a space-free dir if you still hit it.
 # hw.ps1 is the full-featured wrapper (also does bootgen packaging + deploy).
-BUILD_DIR_NATIVE="${KRIA_BUILD_DIR:-$ROOT/build/kria/uart_echo}"
+BUILD_DIR_NATIVE="${KRIA_BUILD_DIR:-$ROOT/build/kria/aclk_pipeline}"
 PARENT_NATIVE="$(dirname "$BUILD_DIR_NATIVE")"
 
 # Under git-bash/MSYS on Windows, Vivado is a Windows .exe and needs Windows-style
@@ -64,7 +64,7 @@ case "$task" in
             ( cd "$PARENT_NATIVE" && "$vivado" -mode batch -source "$BUILD_TCL_ARG" -nojournal -log "$LOG_ARG" )
             rc=$?
             if [[ $rc -eq 0 ]]; then
-                echo "==> done. Bitstream: $BUILD_DIR_NATIVE/uart_echo.runs/impl_1/uart_echo_bd_wrapper.bit"
+                echo "==> done. Bitstream: $BUILD_DIR_NATIVE/aclk_pipeline.runs/impl_1/uart_echo_bd_wrapper.bit"
                 exit 0
             fi
             if [[ $attempt -lt $max ]] && grep -qE "$BD_FLAKE_RE" "$LOG_NATIVE" 2>/dev/null; then
@@ -77,7 +77,7 @@ case "$task" in
         ;;
     gui)
         vivado="$(resolve_vivado)"
-        xpr_native="$BUILD_DIR_NATIVE/uart_echo.xpr"
+        xpr_native="$BUILD_DIR_NATIVE/aclk_pipeline.xpr"
         [[ -f "$xpr_native" ]] || { echo "No project at $xpr_native - run: ./hw.sh build" >&2; exit 1; }
         echo "==> opening $xpr_native"
         "$vivado" "$(to_win "$xpr_native")" &

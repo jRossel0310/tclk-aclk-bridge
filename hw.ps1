@@ -4,10 +4,8 @@
   counterpart to sim.ps1. (git bash users: use ./hw.sh instead.)
 
 .EXAMPLE
-  .\hw.ps1 build                # RTL -> bitstream + bootgen + hash via vivado/build.tcl
-  .\hw.ps1 build -Tcl vivado\build_tclk.tcl -Name tclk           # build + bootgen + hash
-  .\hw.ps1 build -Tcl vivado\build_pinblink.tcl -Name pinblink   # a different design
-  .\hw.ps1 deploy -Name tclk -DeployHost ubuntu@kria             # scp .bit.bin + readers
+  .\hw.ps1 build                                  # pipeline bitstream + bootgen + hash
+  .\hw.ps1 deploy -DeployHost ubuntu@aclk-timestamper.fnal.gov
   .\hw.ps1 gui                  # open the generated project in the Vivado GUI
   .\hw.ps1 clean                # delete the build dir
 
@@ -29,11 +27,11 @@ param(
 
     [string]$Vivado = "",
 
-    # Which build tcl to run (default vivado\build.tcl) and the project name used
-    # for the build dir / runs folder. Lets the same AV-retry wrapper drive other
-    # designs, e.g. -Tcl vivado\build_pinblink.tcl -Name pinblink.
+    # Which build tcl to run (default vivado\build_aclk_pipeline.tcl) and the
+    # project name used for the build dir / runs folder. Lets the same AV-retry
+    # wrapper drive other designs by passing -Tcl / -Name explicitly.
     [string]$Tcl  = "",
-    [string]$Name = "uart_echo",
+    [string]$Name = "aclk_pipeline",
 
     # Where build artifacts land. Default is repo-local ./build/kria; the per-design
     # dir is $BuildRoot\$Name. Override -BuildRoot to relocate (e.g. a space-free
@@ -49,7 +47,7 @@ $Root     = $PSScriptRoot
 if ($Tcl) {
     $BuildTcl = if ([System.IO.Path]::IsPathRooted($Tcl)) { $Tcl } else { Join-Path $Root $Tcl }
 } else {
-    $BuildTcl = Join-Path $Root "vivado\build.tcl"
+    $BuildTcl = Join-Path $Root "vivado\build_aclk_pipeline.tcl"
 }
 # Build dir is repo-local by default (./build/kria/<Name>), one dir per design.
 # The build task exports it as KRIA_BUILD_DIR, which the build tcls honor.
