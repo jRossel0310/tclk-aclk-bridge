@@ -15,6 +15,7 @@ are rejected (a missed anchor would fold two cycles).
 """
 import argparse
 import csv
+import glob
 import sys
 import time
 
@@ -23,10 +24,18 @@ import numpy as np
 
 def load_events(paths):
     """CSV file(s) -> (t seconds float64, event int), deduped by stream id,
-    stably time-sorted."""
+    stably time-sorted. Each path is glob-expanded (PowerShell passes * through
+    literally, unlike bash); a pattern with no match raises FileNotFoundError
+    naming the pattern."""
+    expanded = []
+    for p in paths:
+        hits = sorted(glob.glob(p))
+        if not hits:
+            raise FileNotFoundError("no files match %r" % p)
+        expanded.extend(hits)
     seen = set()
     t, ev = [], []
-    for p in paths:
+    for p in expanded:
         with open(p, newline="") as f:
             for row in csv.DictReader(f):
                 eid = row["id"]

@@ -148,6 +148,23 @@ def test_rel_mode_renders_and_reports():
         assert rc2 == 2 and "exactly one" in err.getvalue()
 
 
+def test_load_events_globs_patterns():
+    with tempfile.TemporaryDirectory() as d:
+        rows = [["id", "sec", "ns", "event", "data"], ["1-0", "5", "0", "7", "0"]]
+        for name in ("events-tclk-20260716.csv", "events-tclk-20260717.csv"):
+            with open(os.path.join(d, name), "w", newline="") as f:
+                w = csv.writer(f)
+                w.writerows([rows[0], ["%s-0" % name[-6:-4], "5", "0", "7", "0"]])
+        t, ev = load_events([os.path.join(d, "events-tclk-2026071*.csv")])
+        assert len(t) == 2                       # both files matched
+        try:
+            load_events([os.path.join(d, "nope-*.csv")])
+            raised = False
+        except FileNotFoundError:
+            raised = True
+        assert raised                            # unmatched pattern is an error
+
+
 def test_segment_start_finds_last_gap():
     from supercycle_plot import segment_start
     t = np.array([0.0, 1.0, 2.0, 100.0, 101.0, 300.0, 301.0, 302.0])
