@@ -113,24 +113,32 @@ C_TARGET, C_REF = "#1b5a8f", "#9aa7b4"
 
 
 def _hex(code):
-    return "0x%02X" % code if code <= 0xFF else "0x%04X" % code
+    # $XX, the notation the TCLK event-code definitions use
+    return "$%02X" % code if code <= 0xFF else "$%04X" % code
 
 
 def _theme_sizes(theme):
-    """Font/marker sizing per theme. Poster sizes follow the printed-inches
-    convention of the other poster figures (fonts are literal points on the
-    36x48 print): headings ~27, labels ~20, ticks ~18."""
+    """Font/marker sizing per theme. Poster sizes are oversized ~1.5x relative
+    to the printed-inches convention because the poster places this figure at
+    roughly 2/3 of its canvas width (~10.5 in): set 28 measures ~18-19 pt on
+    the 36x48 print (rev0.2 feedback)."""
     if theme == "poster":
-        return {"tick": 18, "title": 27, "subtitle": 20, "label": 20,
-                "legend": 18, "dot_t": 30, "dot_r": 4}
+        return {"tick": 22, "title": 36, "subtitle": 28, "label": 26,
+                "legend": 28, "dot_t": 45, "dot_r": 6,
+                "title_y": 0.96, "sub_y": 0.87,
+                "ax_hist": (0.085, 0.17, 0.89, 0.52),
+                "ax_raster": (0.085, 0.10, 0.89, 0.64)}
     return {"tick": 11, "title": 19, "subtitle": 12, "label": 11,
-            "legend": 10, "dot_t": 14, "dot_r": 2}
+            "legend": 10, "dot_t": 14, "dot_r": 2,
+            "title_y": 0.945, "sub_y": 0.865,
+            "ax_hist": (0.085, 0.17, 0.89, 0.60),
+            "ax_raster": (0.085, 0.10, 0.89, 0.68)}
 
 
 def _new_fig(theme, figsize_default, figsize_poster, target, n_rows, median_len,
-             subtitle_suffix, title=None):
+             subtitle_suffix, title=None, sub_text=None):
     """Shared figure scaffold: Agg backend, theme rcParams, title + subtitle.
-    Returns (fig, plt)."""
+    sub_text overrides the whole subtitle line when given. Returns (fig, plt)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -143,13 +151,20 @@ def _new_fig(theme, figsize_default, figsize_poster, target, n_rows, median_len,
     fig = plt.figure(figsize=figsize_poster if poster else figsize_default,
                      dpi=300, facecolor=SURF)
     fig.suptitle(title or ("Event %s within the TCLK supercycle" % _hex(target)),
-                 x=0.085, y=0.945, ha="left", fontsize=sz["title"],
+                 x=0.085, y=sz["title_y"], ha="left", fontsize=sz["title"],
                  fontweight="bold", color=INK)
-    fig.text(0.085, 0.865,
-             "%d supercycles folded on $00, median length %.3f s%s"
-             % (n_rows, median_len, subtitle_suffix),
-             ha="left", fontsize=sz["subtitle"], color=MUTED)
+    fig.text(0.085, sz["sub_y"],
+             sub_text or ("%d supercycles folded on $00, median length %.3f s%s"
+                          % (n_rows, median_len, subtitle_suffix)),
+             ha="left", va="top", fontsize=sz["subtitle"], color=MUTED)
     return fig, plt
+
+
+def _solid_legend(leg):
+    """Legend swatches at full opacity: the ref series draws at low alpha and
+    its inherited legend marker is otherwise near-invisible."""
+    for h in getattr(leg, "legend_handles", None) or leg.legendHandles:
+        h.set_alpha(1.0)
 
 
 def comb_medians(offsets, median_len, n_cycles):
@@ -197,7 +212,7 @@ def make_hist_figure(off_t, ref_offs, n_rows, median_len, target, refs,
     sz = _theme_sizes(theme)
     fig, _ = _new_fig(theme, (11, 4.2), (16.5, 6.5), target, n_rows, median_len,
                       _window_suffix(window, median_len), title=title)
-    ax = fig.add_axes([0.085, 0.17, 0.89, 0.60])
+    ax = fig.add_axes(sz["ax_hist"])
 
     teeth = np.concatenate([comb_medians(o, median_len, n_rows)
                             for o in ref_offs]) if ref_offs else np.asarray([])
@@ -211,8 +226,9 @@ def make_hist_figure(off_t, ref_offs, n_rows, median_len, target, refs,
     ax.hist(off_t, bins=edges, color=color or C_TARGET, zorder=3,
             label="target " + _hex(target))
     # legend ABOVE the axes (right-aligned, one row) so it never sits on data
-    ax.legend(loc="lower right", bbox_to_anchor=(1.0, 1.02), ncol=2,
-              fontsize=sz["legend"], frameon=False, borderaxespad=0.0)
+    _solid_legend(ax.legend(loc="lower right", bbox_to_anchor=(1.0, 1.02),
+                            ncol=2, fontsize=sz["legend"], frameon=False,
+                            borderaxespad=0.0))
     ax.set_xlim(lo, hi)
     ax.set_xlabel("offset into supercycle (s)", fontsize=sz["label"], color=MUTED)
     ax.set_ylabel("events / bin", fontsize=sz["label"], color=MUTED)
@@ -235,10 +251,14 @@ def make_raster_figure(off_t, row_t, off_r, row_r, n_rows, median_len,
     off_t, row_t = off_t[keep_t], row_t[keep_t]
     off_r, row_r = off_r[keep_r], row_r[keep_r]
     sz = _theme_sizes(theme)
+    # poster subtitle drops the fine print (median length, cycle by cycle,
+    # window); the diagnostic default theme keeps it
     fig, _ = _new_fig(theme, (11, 6.0), (16.5, 9.0), target, n_rows, median_len,
                       ", cycle by cycle" + _window_suffix(window, median_len),
-                      title=title)
-    ax = fig.add_axes([0.085, 0.10, 0.89, 0.68])
+                      title=title,
+                      sub_text=("%d supercycles folded on $00" % n_rows
+                                if theme == "poster" else None))
+    ax = fig.add_axes(sz["ax_raster"])
 
     if len(off_r):
         ax.scatter(off_r, row_r, s=sz["dot_r"], color=C_REF, alpha=0.25,
@@ -247,9 +267,9 @@ def make_raster_figure(off_t, row_t, off_r, row_r, n_rows, median_len,
     ax.scatter(off_t, row_t, s=sz["dot_t"], color=color or C_TARGET,
                linewidths=0, zorder=3, label="target " + _hex(target))
     # legend ABOVE the axes (right-aligned, one row) so it never sits on data
-    ax.legend(loc="lower right", bbox_to_anchor=(1.0, 1.02), ncol=2,
-              fontsize=sz["legend"], frameon=False, borderaxespad=0.0,
-              markerscale=2.5)
+    _solid_legend(ax.legend(loc="lower right", bbox_to_anchor=(1.0, 1.02),
+                            ncol=2, fontsize=sz["legend"], frameon=False,
+                            borderaxespad=0.0, markerscale=2.5))
     ax.set_xlim(lo, hi)
     ax.set_ylim(-0.5, n_rows - 0.5)
     ax.invert_yaxis()                         # first cycle at the top
