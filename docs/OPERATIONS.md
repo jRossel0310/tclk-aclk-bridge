@@ -155,8 +155,9 @@ sudo fpgautil -b ~/uart_echo_bd_wrapper.bit.bin -o aclk_pipeline.dtbo
   does not release reset, so every AXI access bus-errors.
 - A cosmetic `OF: overlay: WARNING: memory leak will occur ...` on load is
   harmless.
-- `shell.json` (deployed alongside) is the xmutil accelerator-slot descriptor;
-  the fpgautil path above does not need it, but keep it with the app files.
+- `shell.json` (lives in `deploy/` in the repo, not part of the deploy set copied
+  to the board) is the xmutil accelerator-slot descriptor; the fpgautil path
+  above does not need it.
 
 Three UIO nodes appear: `tclk_readout` @ 0x8000_0000, `aclk_readout` @
 0x8001_0000, and `wr_timebase` @ 0x8002_0000. Map their `/dev/uioN` indices

@@ -66,8 +66,9 @@ settings) and is what Fermilab's docs recommend for drag-and-drop transfers.
 
 ```bash
 md5sum ~/uart_echo_bd_wrapper.bit.bin     # must equal the PC MD5
+dtc -@ -O dtb -o aclk_pipeline.dtbo aclk_pipeline.dts
 sudo xmutil unloadapp
-sudo fpgautil -b ~/uart_echo_bd_wrapper.bit.bin -o uart_echo.dtbo
+sudo fpgautil -b ~/uart_echo_bd_wrapper.bit.bin -o aclk_pipeline.dtbo
 ls -l /dev/uio*
 ```
 

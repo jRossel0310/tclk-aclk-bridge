@@ -1,4 +1,4 @@
-# vivado/ — Kria KR260 hardware build
+# vivado/ - Kria KR260 hardware build
 
 Scripted RTL → bitstream flow for the Kria KR260 (Zynq UltraScale+ MPSoC,
 part `xck26-sfvc784-2LV-c`). UltraScale+ has no open-source bitstream path, so
@@ -42,13 +42,15 @@ IP Integrator breaks on spaces in the project path.
   applies the board preset when present and warns if it's missing.
 - **Verify the PMOD/SFP package pins** in
   [`../constraints/kr260_aclk_pipeline.xdc`](../constraints/kr260_aclk_pipeline.xdc)
-  against the official KR260 master XDC — the pins there are starter values.
+  against the official KR260 master XDC (the pins there are starter values).
 - **Match the Vivado version to the board's Linux image** if you intend to use the
-  `xmutil` app flow — the device-tree-overlay deployment is version-sensitive.
+  `xmutil` app flow: the device-tree-overlay deployment is version-sensitive.
 
 ## Deployment
 
 Getting the bitstream onto the board is handled separately (not scripted here).
-Options: Vivado Hardware Manager over JTAG, `fpgautil -b <bit.bin> -f Full`, or the
-Kria app flow (`xmutil unloadapp` / `loadapp` with a `.bit.bin` + `.dtbo` +
-`shell.json` under `/lib/firmware/xilinx/<app>/`).
+Options: Vivado Hardware Manager over JTAG, `fpgautil -b <bit.bin> -o <overlay>.dtbo`
+(see docs/OPERATIONS.md section 4; do not use `-f Full`, it creates no UIO device
+and every AXI access bus-errors), or the Kria app flow (`xmutil unloadapp` /
+`loadapp` with a `.bit.bin` + `.dtbo` + `shell.json` under
+`/lib/firmware/xilinx/<app>/`).

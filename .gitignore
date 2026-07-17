@@ -25,7 +25,7 @@ vivado/*.jou
 project_1/
 *.xpr
 
-# Compiled/loadable deploy artifacts — the deploy/ SOURCES (.dts/.bif/.json/.py)
+# Compiled/loadable deploy artifacts. The deploy/ SOURCES (.dts/.bif/.json/.py)
 # ARE tracked; these generated outputs are not.
 *.dtbo
 *.bit.bin

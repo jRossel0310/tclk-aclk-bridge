@@ -14,7 +14,7 @@
     1. -Vivado <path-to-vivado.bat/exe>
     2. $env:VIVADO       (full path to the vivado launcher)
     3. vivado already on PATH
-  Loading the bitstream onto the board is intentionally NOT handled here — do
+  Loading the bitstream onto the board is intentionally NOT handled here: do
   that yourself (JTAG Hardware Manager, fpgautil, or xmutil loadapp).
   If running scripts is blocked, invoke as:
       powershell -ExecutionPolicy Bypass -File .\hw.ps1 build

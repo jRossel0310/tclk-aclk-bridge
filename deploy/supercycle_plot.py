@@ -11,7 +11,7 @@ behind both. Cycles whose length deviates from the median by more than --tol
 are rejected (a missed anchor would fold two cycles).
 
     python supercycle_plot.py events-tclk-*.csv --target 1E --ref 0C,BA
-    python supercycle_plot.py tail.csv --target 1F --theme poster -o bes
+    python supercycle_plot.py tail.csv --target 1F --theme poster -o bes.svg
 """
 import argparse
 import csv
