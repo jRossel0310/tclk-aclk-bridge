@@ -5,9 +5,10 @@ Source: answers extracted from `ED0016516 PIP-II Timing ISD.pdf` and
 Synchronous for the Rest of Us"), cross-checked against the hardware-proven
 `rtl/aclk_bridge/serdec4_9MHz.v` + `TCLK_DESERIALIZER2.v`. Captured 2026-06-18.
 
-This is the framing a real-line-compatible decoder must implement. The existing
-`rtl/aclk_lite/aclk_lite_decoder.sv` is a clean-room approximation and does NOT
-match this (see "Gap vs current decoder" below).
+This is the framing a real-line-compatible decoder must implement. The kept
+pipeline decode path (`serdec4_9MHz` + `clk_byte_framer` / `TCLK_RCV`) is built
+to satisfy this spec; see "Requirements this framing places on a decoder" below
+for the properties any implementation must get right to work on the real line.
 
 ## Physical layer
 - ACLK-Lite uses the **same Manchester line code as legacy TCLK**, including for
@@ -92,14 +93,16 @@ Byte 11  : Control Character[7:0]
   local 10 MHz / beam-synchronous reference; pure oversampling has ~20 ns recovered-
   clock jitter).
 
-## Gap vs the current `aclk_lite_decoder.sv` (why it fails on the real line)
-The existing ADM is a clean-room approximation that disagrees with the real framing
-on three points, which is why it decoded zero events from a real TCLK line:
-1. It samples its **own** standard-Manchester with a **DC-high idle**; the real line
-   is `serdec`-recoverable Manchester with **logical-1-cell idle**.
-2. It uses **one parity bit over the whole payload**; the real frame uses
-   **per-byte parity**.
-3. It has **no CRC/control bytes**; the real full packet is 12 bytes.
+## Requirements this framing places on a decoder
+A clean-room decoder that assumes standard Manchester with a DC-high idle, one
+parity bit over the whole payload, and no CRC/control bytes will decode zero
+events from a real TCLK or ACLK-Lite line. To work on the real line a decoder
+must instead get all three of these right:
+1. Sample **`serdec`-recoverable Manchester with logical-1-cell idle** (not a
+   DC-high idle).
+2. Check **per-byte parity** (not one parity bit over the whole payload).
+3. Accumulate **byte-oriented frames with CRC/control bytes** for the full
+   12-byte packet (not a payload-only frame).
 
 ## Implied design
 A real-line-compatible decoder = **`serdec4_9MHz` (reused, proven)** + a new

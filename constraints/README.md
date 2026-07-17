@@ -6,11 +6,12 @@ standards, and define timing. Vivado reads these; the cocotb simulation does not
 
 | File | Target |
 |------|--------|
-| `kr260.xdc` | Kria KR260 — `serial_in`/`serial_out` on PMOD pins for the `uart_echo_top` bring-up |
+| `kr260_aclk_pipeline.xdc` | Kria KR260: pin/timing constraints for the single-board TCLK -> ACLK pipeline (TCLK on a PMOD pin, GT/SFP sideband ports, PL clocking) |
 
-> ⚠️ The PMOD package pins in `kr260.xdc` are **starter values** from the KR260
-> master pinout. Verify them against the official KR260 master XDC / carrier-card
-> schematic (AMD Kria K26 docs) before connecting an adapter to the board.
+> ⚠️ The PMOD/SFP package pins in `kr260_aclk_pipeline.xdc` are **starter values**
+> from the KR260 master pinout. Verify them against the official KR260 master XDC /
+> carrier-card schematic (AMD Kria K26 docs) before connecting an adapter to the board.
 
 The scripted Vivado build that consumes this file lives in
-[`../vivado/`](../vivado/) (`build.tcl`, run via `hw.ps1` / `hw.sh`).
+[`../vivado/`](../vivado/) (`build_aclk_pipeline.tcl`, run via `hw.ps1` / `hw.sh`
+with `KRIA_BUILD_DIR` honored for the output location).

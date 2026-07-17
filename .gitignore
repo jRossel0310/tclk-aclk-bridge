@@ -25,7 +25,7 @@ vivado/*.jou
 project_1/
 *.xpr
 
-# Compiled/loadable deploy artifacts — the deploy/ SOURCES (.dts/.bif/.json/.py)
+# Compiled/loadable deploy artifacts. The deploy/ SOURCES (.dts/.bif/.json/.py)
 # ARE tracked; these generated outputs are not.
 *.dtbo
 *.bit.bin
@@ -52,9 +52,6 @@ vivado/ip/aclkgt_gt/synth/
 /vivado.log
 # Stray GUI GT-configuration Vivado project (use the scripted vivado/ip flow)
 gt_configuration/
-# Evan's raw starter-code reference dump: duplicate module names vs rtl/aclk_bridge,
-# kept on disk but out of git to avoid a duplicate-module hazard.
-rtl/Li_Files/
 # GT IP generated products (regenerated from the tracked aclkgt_gt.xci)
 vivado/ip/_ref_*.veo.ports
 vivado/ip/aclkgt_gt/*.dcp
@@ -75,4 +72,5 @@ poster/
 # capture-analysis artifacts (data pulled from the board + generated figures)
 deploy/events-*.csv
 deploy/overnight-*.csv
-deploy/supercycle_*.svg
+deploy/sc_*.svg
+deploy/sc_*.png

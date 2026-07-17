@@ -87,7 +87,7 @@ External TCLK enters on H12 and is decoded by the single `TCLK_RCV` inside reado
 | `wr_timebase_axi` (u_tb_axi) | Monitor `wr_timebase` copy + AXI4-Lite register slave (S_AXI3); arms seconds, reports lock/health | s_axi_aclk | `rtl/wr_timebase_axi.sv` |
 | `aclk_readout_axi` / `_core` | Shared decoder-agnostic timestamping packer + dual-clock FIFO + AXI4-Lite register block (both readouts) | event domain / s_axi_aclk | `rtl/aclk_readout/` |
 
-**Note:** `global_timebase.v` still exists in the tree but is **not** instantiated by this top; the pipeline replaced the free-running PL tick counter with the WR timebase (grep: `global_timebase` absent from rtl/aclk_pipeline_bd_top.v).
+**Note:** `global_timebase.v` is **not** instantiated by this top; the pipeline replaced the free-running PL tick counter with the WR timebase (grep: `global_timebase` absent from rtl/aclk_pipeline_bd_top.v).
 
 ### 3.2 PS software blocks (on the board, not in the bitstream)
 
@@ -97,7 +97,7 @@ External TCLK enters on H12 and is decoded by the single `TCLK_RCV` inside reado
 | `wr_time.py` | Arms / monitors the WR timebase over `/dev/uio` (S_AXI3): `status`, `arm`, `disarm`, `clear` | `deploy/wr_time.py` |
 | `redis_publish.py` | Drains one readout UIO, drops UNSYNC events, builds one Redis record per event, hands it to a `RedisSink` | `deploy/redis_publish.py` |
 | `redis_sink.py` (`RedisSink`) | Background writer thread: bounded drop-oldest queue → batched `XADD` / `HSET` / `HINCRBY` pipeline, reconnect-with-backoff, status/watchdog liveness | `deploy/redis_sink.py` |
-| `tclk_read.py` / `aclkgt_read.py` | Human console readers of the same FIFOs (`--wr` prints the WR timeline); alternative to the publisher, not run at the same time on one UIO | `deploy/tclk_read.py`, `deploy/aclkgt_read.py` |
+| `tclk_read.py` / `aclk_read.py` | Human console readers of the same FIFOs (`tclk_read.py --wr` prints the WR timeline; `aclk_read.py` prints raw hardware tick timestamps); alternative to the publisher, not run at the same time on one UIO | `deploy/tclk_read.py`, `deploy/aclk_read.py` |
 
 ## 4. External Interface Summary
 

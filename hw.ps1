@@ -4,10 +4,8 @@
   counterpart to sim.ps1. (git bash users: use ./hw.sh instead.)
 
 .EXAMPLE
-  .\hw.ps1 build                # RTL -> bitstream + bootgen + hash via vivado/build.tcl
-  .\hw.ps1 build -Tcl vivado\build_tclk.tcl -Name tclk           # build + bootgen + hash
-  .\hw.ps1 build -Tcl vivado\build_pinblink.tcl -Name pinblink   # a different design
-  .\hw.ps1 deploy -Name tclk -DeployHost ubuntu@kria             # scp .bit.bin + readers
+  .\hw.ps1 build                                  # pipeline bitstream + bootgen + hash
+  .\hw.ps1 deploy -DeployHost ubuntu@aclk-timestamper.fnal.gov
   .\hw.ps1 gui                  # open the generated project in the Vivado GUI
   .\hw.ps1 clean                # delete the build dir
 
@@ -16,7 +14,7 @@
     1. -Vivado <path-to-vivado.bat/exe>
     2. $env:VIVADO       (full path to the vivado launcher)
     3. vivado already on PATH
-  Loading the bitstream onto the board is intentionally NOT handled here — do
+  Loading the bitstream onto the board is intentionally NOT handled here: do
   that yourself (JTAG Hardware Manager, fpgautil, or xmutil loadapp).
   If running scripts is blocked, invoke as:
       powershell -ExecutionPolicy Bypass -File .\hw.ps1 build
@@ -29,11 +27,11 @@ param(
 
     [string]$Vivado = "",
 
-    # Which build tcl to run (default vivado\build.tcl) and the project name used
-    # for the build dir / runs folder. Lets the same AV-retry wrapper drive other
-    # designs, e.g. -Tcl vivado\build_pinblink.tcl -Name pinblink.
+    # Which build tcl to run (default vivado\build_aclk_pipeline.tcl) and the
+    # project name used for the build dir / runs folder. Lets the same AV-retry
+    # wrapper drive other designs by passing -Tcl / -Name explicitly.
     [string]$Tcl  = "",
-    [string]$Name = "uart_echo",
+    [string]$Name = "aclk_pipeline",
 
     # Where build artifacts land. Default is repo-local ./build/kria; the per-design
     # dir is $BuildRoot\$Name. Override -BuildRoot to relocate (e.g. a space-free
@@ -49,7 +47,7 @@ $Root     = $PSScriptRoot
 if ($Tcl) {
     $BuildTcl = if ([System.IO.Path]::IsPathRooted($Tcl)) { $Tcl } else { Join-Path $Root $Tcl }
 } else {
-    $BuildTcl = Join-Path $Root "vivado\build.tcl"
+    $BuildTcl = Join-Path $Root "vivado\build_aclk_pipeline.tcl"
 }
 # Build dir is repo-local by default (./build/kria/<Name>), one dir per design.
 # The build task exports it as KRIA_BUILD_DIR, which the build tcls honor.
@@ -233,12 +231,7 @@ all:
         $pyMap = @{
             "tclk"            = @("tclk_read.py", "tclk_filter.py", "readout_common.py")
             "aclk"            = @("aclk_read.py", "tclk_filter.py", "readout_common.py")
-            "clk"             = @("clk_read.py", "tclk_filter.py", "readout_common.py")
-            "aclkgt_loop"     = @("aclkgt_read.py", "aclkgt_monitor.py", "aclkgt_sweep.py", "tclk_filter.py", "readout_common.py")
-            "aclkgt_rx"       = @("aclkgt_read.py", "aclkgt_monitor.py", "aclkgt_sweep.py", "tclk_filter.py", "readout_common.py")
-            "aclkgt_selftest" = @("aclkgt_read.py", "aclkgt_monitor.py", "aclkgt_sweep.py", "tclk_filter.py", "readout_common.py")
-            "aclk_pipeline"   = @("tclk_read.py", "aclkgt_read.py", "wr_time.py", "tclk_filter.py", "readout_common.py", "redis_sink.py", "redis_publish.py", "stats_log.py", "stats_report.py", "stream_archive.py", "run_pipeline.sh", "requirements-board.txt", "redis-kr260.conf", "aclk_pipeline.dts", "capture.md")
-            "uart_echo"       = @("uart_echo_test.py")
+            "aclk_pipeline"   = @("tclk_read.py", "aclk_read.py", "wr_time.py", "tclk_filter.py", "readout_common.py", "redis_sink.py", "redis_publish.py", "stats_log.py", "stats_report.py", "stream_archive.py", "run_pipeline.sh", "requirements-board.txt", "redis-kr260.conf", "aclk_pipeline.dts", "capture.md")
         }
         $pyFiles = @()
         if ($pyMap.ContainsKey($Name)) {
@@ -259,7 +252,7 @@ all:
         Write-Host "==> copied. Board load (manual, UIO + overlay):" -ForegroundColor Green
         Write-Host "    md5sum ~/$($bin.Name)"
         Write-Host "    sudo xmutil unloadapp"
-        Write-Host "    sudo fpgautil -b ~/$($bin.Name) -o uart_echo.dtbo"
+        Write-Host "    sudo fpgautil -b ~/$($bin.Name) -o aclk_pipeline.dtbo"
     }
     "help" { Get-Help $PSCommandPath -Detailed }
 }

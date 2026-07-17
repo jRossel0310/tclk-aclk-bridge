@@ -2,13 +2,15 @@
 
 Runs both publishers unattended in a tmux session, snapshots every counter to an on-disk
 JSONL log, and reconciles the log into an events-published / missed / failed-CRC report.
-Builds on the Redis publisher (see redis.md); the JSONL log is the durable record, so it
-survives a redis restart or reboot (Redis persistence stays off).
+Builds on the Redis publisher (see redis.md, in the repo's deploy/ directory on the PC);
+the JSONL log is the durable record, so it survives a redis restart or reboot (Redis
+persistence stays off).
 
 ## 1. Bring-up (once, per the pasted checklist)
 
     cd aclk_pipeline
-    # load the bitstream + overlay (see redis.md / the project runbook), then:
+    # load the bitstream + overlay (see redis.md / the project runbook, both in the
+    # repo's deploy/ directory on the PC), then:
     grep . /sys/class/uio/uio*/name          # note tclk_readout / aclk_readout / wr_timebase indices
     timedatectl                              # System clock synchronized: yes
     sudo python3 wr_time.py /dev/uio6 arm
@@ -61,7 +63,8 @@ the most recent run (delete or rename the log between runs to keep them separate
 ## Options
 
 `redis_publish.py` gains `--statlog <path>` (default `stats-<src>.jsonl`) and
-`--snapshot-interval <sec>` (default 60). Everything else is unchanged from redis.md.
+`--snapshot-interval <sec>` (default 60). Everything else is unchanged from redis.md
+(deploy/redis.md in the repo on the PC; not copied to the board).
 
 ## How "missed" is measured
 

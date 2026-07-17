@@ -1,8 +1,8 @@
 # deploy/ - load a KR260 PL bitstream and run a reader
 
-Generic flow for getting a Vivado design onto the KR260 and talking to its AXI
-slave at `0x8000_0000` from Linux on the board. (See `tclk.md` for the live-TCLK
-runbook and the "uart_echo example" section below for the original echo demo.)
+Generic flow for getting the pipeline bitstream onto the KR260 and talking to its
+AXI slaves from Linux on the board. For the full operator runbook (wiring, WR arm,
+running a capture, getting the data out) see [../docs/OPERATIONS.md](../docs/OPERATIONS.md).
 
 ## Artifacts in the flow
 
@@ -15,14 +15,15 @@ runbook and the "uart_echo example" section below for the original echo demo.)
 ## Build (PC)
 
 ```powershell
-.\hw.ps1 build -Tcl vivado\build_tclk.tcl -Name tclk
+.\hw.ps1 build
 ```
-Prints `BIT`, `BIN`, `MD5`, `SHA256` and writes `build-manifest.json`. Artifacts
-land repo-local under `build\kria\<name>\<name>.runs\impl_1\`.
+Defaults to the pipeline design (`vivado\build_aclk_pipeline.tcl`). Prints `BIT`,
+`BIN`, `MD5`, `SHA256` and writes `build-manifest.json`. Artifacts land repo-local
+under `build\kria\aclk_pipeline\aclk_pipeline.runs\impl_1\`.
 
 Optional copy to the board:
 ```powershell
-.\hw.ps1 deploy -Name tclk -DeployHost ubuntu@kria
+.\hw.ps1 deploy -Name aclk_pipeline -DeployHost ubuntu@kria
 ```
 
 ## Copying files to `aclk-timestamper` (Fermilab network, Kerberos)
@@ -65,8 +66,9 @@ settings) and is what Fermilab's docs recommend for drag-and-drop transfers.
 
 ```bash
 md5sum ~/uart_echo_bd_wrapper.bit.bin     # must equal the PC MD5
+dtc -@ -O dtb -o aclk_pipeline.dtbo aclk_pipeline.dts
 sudo xmutil unloadapp
-sudo fpgautil -b ~/uart_echo_bd_wrapper.bit.bin -o uart_echo.dtbo
+sudo fpgautil -b ~/uart_echo_bd_wrapper.bit.bin -o aclk_pipeline.dtbo
 ls -l /dev/uio*
 ```
 
@@ -101,29 +103,3 @@ available; the overlay path is preferred because it also releases PL reset.
 Compare the board-side `md5sum ~/<bit.bin>` against the `MD5` line printed by
 `hw.ps1 build` (also recorded in `build-manifest.json`). Mismatch means a stale
 copy on the board.
-
----
-
-## Example: uart_echo (original demo)
-
-The first design here, `uart_echo`, cross-wires an AXI UART Lite to the custom
-`uart_echo` RTL inside the PL so a byte sent from the PS echoes back:
-
-```
-   PS  --AXI-->  AXI UART Lite  --tx-->  uart_echo.serial_in
-                                <--rx--  uart_echo.serial_out
-```
-
-Build and run:
-```powershell
-.\hw.ps1 build            # design_name uart_echo
-```
-```bash
-sudo xmutil unloadapp
-sudo fpgautil -b ~/uart_echo_bd_wrapper.bit.bin -o uart_echo.dtbo
-sudo python3 uart_echo_test.py
-```
-`uart_echo_test.py` historically used `/dev/mem` (`-f Full` load); it still works
-that way, but the UIO + overlay flow above is the current default. Files
-`uart_echo.bif` / `uart_echo.dts` are kept for this example and as overlay
-sources; `template.bif` is the generic reference.
