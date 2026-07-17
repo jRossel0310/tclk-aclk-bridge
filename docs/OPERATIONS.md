@@ -310,7 +310,9 @@ redis-clock-server convention:
 - `XADD KR260:<src>` : the time-ordered event feed (`KR260:tclk`,
   `KR260:aclk`). The **entry ID is the event time in ms** (from the WR
   timestamp), guarded so a backward WR re-arm cannot make `XADD` error. Fields:
-  `sec, ns, utc, event, data, is_tclk, has_data, src`.
+  `sec, ns, event, data, is_tclk, has_data, src`. There is no per-entry `utc`
+  field here; derive it from `sec`/`ns` (building it per event measurably cost
+  sink throughput).
 - `HSET KR260:event:<src>:0x<CODE>` : a per-event-code index holding that code's
   latest `{sec, ns, utc, data}`.
 - `HINCRBY KR260:event:<src>:0x<CODE> count` : a running per-code count.
@@ -349,7 +351,7 @@ as SVGs:
 
 ```powershell
 python supercycle_plot.py events-tclk-*.csv --target 1E --ref 0C,BA
-python supercycle_plot.py tail.csv --target 1F --theme poster -o bes
+python supercycle_plot.py tail.csv --target 1F --theme poster -o bes.svg
 ```
 
 ## 9. Known failure modes
@@ -394,10 +396,13 @@ python supercycle_plot.py tail.csv --target 1F --theme poster -o bes
   recovery, which unlocks the ACLK replica.
 - **Watch the raw event stream:** the console readers read the same FIFOs as the
   publishers (do NOT run both on the same UIO node at once, both pop the FIFO).
-  `sudo python3 -u tclk_read.py /dev/uio4 --wr` and
-  `sudo python3 -u aclk_read.py /dev/uio5 --wr` print each event with its WR
-  timestamp; a `[stats]` line each second shows line activity so you can tell
-  "no signal on the pin" from "signal present, decoder not locking".
+  `sudo python3 -u tclk_read.py /dev/uio4 --wr` prints each TCLK event with its
+  WR timestamp. `sudo python3 -u aclk_read.py /dev/uio5` prints each ACLK-Lite
+  event with a raw hardware tick timestamp only; `aclk_read.py` has no `--wr`
+  flag, so passing one is silently ignored. For WR-timestamped ACLK events, use
+  the normal capture path (`redis_publish.py`, Section 8) instead. Either way a
+  `[stats]` line each second shows line activity so you can tell "no signal on
+  the pin" from "signal present, decoder not locking".
 - **Regression after RTL edits:** re-run the cocotb testbench suite before
   rebuilding hardware. `.\sim.ps1 list` shows the testbenches (the pipeline chain
   lives in `tb/aclk_pipeline_chain`), and `.\sim.ps1 run -Module <tb>` runs one
