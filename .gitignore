@@ -75,4 +75,5 @@ poster/
 # capture-analysis artifacts (data pulled from the board + generated figures)
 deploy/events-*.csv
 deploy/overnight-*.csv
-deploy/supercycle_*.svg
+deploy/sc_*.svg
+deploy/sc_*.png
