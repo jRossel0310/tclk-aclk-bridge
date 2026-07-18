@@ -75,3 +75,15 @@ report cross-checks the two: if it computes loss but the overflow bit was never 
 vice versa) it prints a WARN. Tolerance is one FIFO depth (64) of residual at the final
 snapshot, so a normal run stays in the clean band; a real in-window overflow sets the
 sticky bit and prints the WARN instead.
+
+## ACLK drain ceiling (rate-hardening check)
+
+With the ACLK line (or the loopback generator) actively producing events:
+
+    sudo python3 bench_drain.py /dev/uio5 --seconds 10
+
+Report is `<events> in <s>s = <rate>/s overflow=<bool>`. Interpretation:
+- overflow=False and rate >= your target sustained ACLK rate: the path keeps up.
+- overflow=True: events are being dropped; the 2048-deep FIFO absorbed the burst
+  but the sustained rate exceeds the drain ceiling. The lever is drain speed
+  (software), not more FIFO depth.
