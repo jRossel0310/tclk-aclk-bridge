@@ -43,7 +43,7 @@ module serdec4_9MHz #(
     // ---- TCLK delay shift register ----
     always @(posedge CLK_80M or negedge RESETn) begin
         if (!RESETn)
-            TCLK_del <= '0;
+            TCLK_del <= {DELW{1'b0}};
         else
             TCLK_del <= {TCLK_del[DELW-2:0], TCLK};
     end
