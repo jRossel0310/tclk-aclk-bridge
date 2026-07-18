@@ -95,4 +95,4 @@ The deployable 5 ns build (clk_40m=200 MHz, serdec OSR=40) is a NEW bitstream. T
 1. scp the new `uart_echo_bd_wrapper.bit.bin`; `md5sum` on the board must match the build manifest.
 2. `sudo xmutil unloadapp` ; `sudo fpgautil -b ~/<bin> -o aclk_pipeline.dtbo`
 3. Arm WR: `sudo python3 wr_time.py /dev/uio6 arm` ; confirm `locked_tclk=1` (the 200 MHz timebase constants were sim-proven, but confirm lock on the real 10 MHz + PPS).
-4. Confirm live TCLK still decodes: `EVENT_COUNT` climbs, `ERROR_COUNT` stays flat, and spot-check event codes vs the 25 ns build. Watch the real-line PERR / SIG_ERR rate vs the old build: the serdec immediate-edge glitch window is ~5x narrower at 400 MHz (a documented bring-up risk), so a rise in errors on the live line would point there.
+4. Confirm live TCLK still decodes: `EVENT_COUNT` climbs, `ERROR_COUNT` stays flat, and spot-check event codes vs the 25 ns build. Watch the real-line ERROR_COUNT rate (and whether the sticky SIG_ERR bit ever latches) vs the old build: the serdec immediate-edge glitch window is ~5x narrower at 400 MHz (a documented bring-up risk), so a rise in errors on the live line would point there.

@@ -112,7 +112,10 @@ module serdec4_9MHz #(
             end
             8'h10: begin SCLK_set = 1'b1; next_st_data = 8'h11; end
             8'h11: next_st_data = 8'h12;
-            8'h12: begin tclk_gate_cap = 1'b1; next_st_data = 8'h13; end
+            8'h12: begin
+                tclk_gate_cap = 1'b1; // empirically placed
+                next_st_data = 8'h13;
+            end
             8'h13: next_st_data = 8'h00;
             default: next_st_data = 8'h00;
         endcase
@@ -135,7 +138,8 @@ module serdec4_9MHz #(
 
     always @(posedge CLK_80M or negedge RESETn) begin
         if (!RESETn)            tclk_gate <= 1'b0;
-        else if (tclk_gate_cap) tclk_gate <= TCLK;
+        else if (tclk_gate_cap)
+            tclk_gate <= TCLK; // matches VHDL (not inverted)
     end
     assign TCLK_CAR = TCLK ^ tclk_gate;
 
