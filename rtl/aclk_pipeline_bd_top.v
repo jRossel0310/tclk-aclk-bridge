@@ -58,7 +58,8 @@ module aclk_pipeline_bd_top (
 
     // ---- TCLK / ACLK-Lite event-domain clocks (BD clk_wiz, as in tclk_readout_bd_top) ----
     input  wire        clk_80m,           // 80 MHz serdec oversample + ACLK-Lite enc clock
-    input  wire        clk_40m,           // 40 MHz TCLK deserializer + readout #1 clock
+    input  wire        clk_40m,           // 200 MHz deserializer + readout / TIMESTAMP clock
+                                           // (5 ns; name kept for portability)
 
     // ---- ACLK-Lite mirror output (Pmod pin, LVCMOS33 biphase-mark) ----
     output wire        aclk_lite_out,
@@ -470,7 +471,10 @@ module aclk_pipeline_bd_top (
         .ADDR_WIDTH (9),
         .AXI_ADDR_W (8),
         .USE_EXT_TS (1'b1),
-        .OSR        (40)
+        .OSR        (8)                // DECOUPLED: serdec keeps the proven 80 MHz oversample
+                                        // (400 MHz raw sampling resolved line noise: ~60% PERR
+                                        // on the real line); clk_40m=200 MHz still gives 5 ns
+                                        // timestamps, edge localization ~12.5 ns (80 MHz sampler)
     ) u_ro_tclk (
         .clk_80m       (clk_80m),
         .clk_40m       (clk_40m),

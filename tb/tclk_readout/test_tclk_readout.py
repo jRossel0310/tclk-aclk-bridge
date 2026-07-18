@@ -20,6 +20,7 @@ On completion an events-buffered vs events-read plot is written under
 sim_build/tclk_readout/plots/.
 """
 
+import os
 import warnings
 from pathlib import Path
 
@@ -31,7 +32,10 @@ from tclk_tx_model import biphase_samples, event_bits, drive_samples, SAMPLES_PE
 from axi_lite_bfm import axi_read, axi_write, _b
 
 CLK80_PERIOD_PS = 100_000 // SAMPLES_PER_CELL   # 80 MHz serdec oversample at OSR=8
-CLK40_PERIOD_PS = 200_000 // SAMPLES_PER_CELL   # 40 MHz deserializer/readout at OSR=8
+# DECOUPLED: default is the old 2:1 CLK80:CLK40 relationship (CLK40 derived from
+# CLK80); override with TCLK_CLK40_PS to prove the deserializer/timestamp clock
+# independently, e.g. TCLK_CLK40_PS=5000 for the 200 MHz board build.
+CLK40_PERIOD_PS = int(os.getenv("TCLK_CLK40_PS", str(200_000 // SAMPLES_PER_CELL)))
 AXI_PERIOD_NS = 14        # PS / AXI clock (independent, exercises the CDC)
 
 WARMUP_CELLS = 40

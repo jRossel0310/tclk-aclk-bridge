@@ -9,6 +9,8 @@ to the carrier, so the warm-up is driven with PERR_CLR held and monitoring only
 begins once the link is settled (a real receiver clears PERR after init too).
 """
 
+import os
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
@@ -17,7 +19,10 @@ from tclk_tx_model import stream_samples, drive_samples, add_ringing, SAMPLES_PE
 from cocotb_helpers import _b
 
 CLK80_PERIOD_PS = 100_000 // SAMPLES_PER_CELL     # OSR*10 MHz  (12500 at OSR=8)
-CLK40_PERIOD_PS = 200_000 // SAMPLES_PER_CELL     # half that   (25000 at OSR=8)
+# DECOUPLED: default is the old 2:1 CLK80:CLK40 relationship (CLK40 derived from
+# CLK80); override with TCLK_CLK40_PS to prove the deserializer/timestamp clock
+# independently, e.g. TCLK_CLK40_PS=5000 for the 200 MHz board build.
+CLK40_PERIOD_PS = int(os.getenv("TCLK_CLK40_PS", str(200_000 // SAMPLES_PER_CELL)))
 WARMUP_CELLS = 40
 
 

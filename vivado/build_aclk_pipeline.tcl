@@ -136,12 +136,19 @@ connect_bd_intf_net [get_bd_intf_pins axi_sc/M00_AXI] [get_bd_intf_pins u_pipeli
 connect_bd_intf_net [get_bd_intf_pins axi_sc/M01_AXI] [get_bd_intf_pins u_pipeline/S_AXI2]
 connect_bd_intf_net [get_bd_intf_pins axi_sc/M02_AXI] [get_bd_intf_pins u_pipeline/S_AXI3]
 
-# ---- clk_wiz #1: 400 + 200 MHz event-domain clocks (deployable 5 ns TCLK build) ----
-# clk_40m -> 200 MHz gives 5 ns TCLK timestamp resolution (5x finer than the 25 ns baseline)
-# and ~5x TCLK event-rate headroom; clk_80m -> 400 MHz keeps the 2:1 serdec:deserializer
-# ratio. The serdec is OSR-parameterized (tclk_readout_top instantiated at OSR=40 below) so
-# the decode is functionally correct at this oversample, validated in cocotb (OSR=8 regression
-# + OSR=40 decode proof). The post-route WNS is dumped below to confirm timing closes.
+# ---- clk_wiz #1: DECOUPLED 80 + 200 MHz event-domain clocks (deployable 5 ns TCLK build) ----
+# clk_80m -> 80 MHz drives the serdec oversample (OSR=8, unchanged) and the ACLK-Lite
+# mirror encoder; clk_40m -> 200 MHz drives the deserializer/readout/TIMESTAMP clock,
+# giving 5 ns TCLK timestamp resolution (5x finer than the 25 ns baseline), with edge
+# localization set by the 80 MHz sampler (~12.5 ns). The two clocks are DECOUPLED (no
+# fixed ratio between them): board testing found that 400 MHz raw-line sampling (OSR=40)
+# picked up the real TCLK wire's analog ringing/slow edges as spurious edges (~60% PERR);
+# a 15 ns debounce did not help (the disturbance is wider than 15 ns). A control run of
+# 80 MHz sampling on the same line showed ERR=0, so the serdec stays at its proven-clean
+# 80 MHz oversample (tclk_readout_top instantiated at OSR=8 below) while only the
+# deserializer/timestamp clock runs fast. Validated in cocotb: the OSR=8 regression at the
+# default CLK80:CLK40 ratio, plus the decoupled 12.5 ns serdec / 5 ns timestamp proof via
+# TCLK_CLK40_PS. The post-route WNS is dumped below to confirm timing closes.
 # pl_clk0's realized rate is not exactly 100 MHz; clk_wiz makes clk_in1's FREQ_HZ
 # read-only and derives it from PRIM_IN_FREQ, so feed pl_clk0's EXACT Hz (6 decimals of
 # MHz) as PRIM_IN_FREQ or validate_bd_design trips BD 41-238. resetn from pl_resetn0 so
@@ -152,7 +159,7 @@ set clkw [create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:* clk_wiz_0]
 set_property -dict [list \
     CONFIG.PRIM_SOURCE {No_buffer} \
     CONFIG.PRIM_IN_FREQ $pl0_mhz \
-    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {400.000} \
+    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {80.000} \
     CONFIG.CLKOUT2_USED {true} \
     CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {200.000} \
     CONFIG.USE_LOCKED {true} \
@@ -260,9 +267,10 @@ wait_on_run impl_1
 # write_bitstream still succeeds with negative slack, so the pass/fail signal is WNS
 # (>= 0 = closed), not build success. STATS.* are populated on the completed project
 # run; also emit a full routed timing summary + the worst setup paths so we can see
-# WHICH clock/endpoint is binding (expect the clk_80m serdec sig_err cloud).
+# WHICH clock/endpoint is binding (clk_80m is back at 80 MHz, so expect the binding
+# domain to be clk_40m's 200 MHz deserializer/readout, not the serdec).
 puts "=========================================================="
-puts "TIMING VERIFY (impl_1, post-route): target clk_40m=200 MHz clk_80m=400 MHz"
+puts "TIMING VERIFY (impl_1, post-route): target clk_80m=80 MHz clk_40m=200 MHz (decoupled)"
 foreach s {WNS TNS FAILED_NETS WHS THS} {
     set val "n/a"
     catch { set val [get_property STATS.$s [get_runs impl_1]] }
