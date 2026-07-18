@@ -73,6 +73,20 @@ async def reset_dut(dut):
     dut.s_axi_aresetn.value = 1
     await ClockCycles(dut.s_axi_aclk, 4)
     await ClockCycles(dut.clk_40m, 5)
+    # Serdec lock-in settle, scaled to the oversample ratio. The whole serdec
+    # runs on clk_80m in units of the OSR-sample bit-cell (its TCLK_del decode
+    # pipeline is ~1.5*OSR deep), so the number of clk_80m cycles it needs to
+    # clear the reset transient and lock to the idle carrier before the decode
+    # FSM is correctly anchored grows with OSR. The fixed settle above is a full
+    # bit-cell-plus at the OSR=8 baseline but only a fraction of a cell at
+    # OSR=40, which lets the FSM mis-anchor and drop the first post-warmup event
+    # (see task-6-report). Give the serdec OSR-scaled lock time before any event
+    # is driven; this mirrors real hardware, where the continuous TCLK carrier
+    # gives the serdec ample microseconds to lock long before an event arrives.
+    # Zero at the default OSR=8, so that regression stays bit-identical.
+    lock_cycles = 2 * (SAMPLES_PER_CELL - 8)
+    if lock_cycles:
+        await ClockCycles(dut.clk_80m, lock_cycles)
 
 
 async def _tclk_driver(dut, events, acct, warmup_cells=WARMUP_CELLS, gap_cells=GAP_CELLS):
