@@ -16,7 +16,8 @@ parity_reg == parity_calc, which works out to parity = 1 ^ XOR(data bits).
 
 from cocotb.triggers import RisingEdge
 
-SAMPLES_PER_CELL = 8
+import os
+SAMPLES_PER_CELL = int(os.getenv("TCLK_OSR", "8"))
 HALF = SAMPLES_PER_CELL // 2
 
 

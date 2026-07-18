@@ -27,11 +27,11 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
-from tclk_tx_model import biphase_samples, event_bits, drive_samples
+from tclk_tx_model import biphase_samples, event_bits, drive_samples, SAMPLES_PER_CELL
 from axi_lite_bfm import axi_read, axi_write, _b
 
-CLK80_PERIOD_PS = 12500   # 80 MHz serdec oversample clock
-CLK40_PERIOD_PS = 25000   # 40 MHz deserializer + readout / timestamp clock
+CLK80_PERIOD_PS = 100_000 // SAMPLES_PER_CELL   # 80 MHz serdec oversample at OSR=8
+CLK40_PERIOD_PS = 200_000 // SAMPLES_PER_CELL   # 40 MHz deserializer/readout at OSR=8
 AXI_PERIOD_NS = 14        # PS / AXI clock (independent, exercises the CDC)
 
 WARMUP_CELLS = 40

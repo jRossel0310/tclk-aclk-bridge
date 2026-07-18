@@ -16,6 +16,8 @@ from cocotb.triggers import RisingEdge, ClockCycles, Timer
 from tclk_tx_model import stream_samples, drive_samples, SAMPLES_PER_CELL
 from cocotb_helpers import _b
 
+CLK80_PERIOD_PS = 100_000 // SAMPLES_PER_CELL     # OSR*10 MHz  (12500 at OSR=8)
+CLK40_PERIOD_PS = 200_000 // SAMPLES_PER_CELL     # half that   (25000 at OSR=8)
 WARMUP_CELLS = 40
 
 
@@ -46,8 +48,8 @@ async def monitor(dut, captured, perrs):
 
 
 def _start_clocks(dut):
-    cocotb.start_soon(Clock(dut.CLK_80M, 12500, unit="ps").start())
-    cocotb.start_soon(Clock(dut.CLK_40M, 25000, unit="ps").start())
+    cocotb.start_soon(Clock(dut.CLK_80M, CLK80_PERIOD_PS, unit="ps").start())
+    cocotb.start_soon(Clock(dut.CLK_40M, CLK40_PERIOD_PS, unit="ps").start())
 
 
 async def _warmup_then_monitor(dut, events, captured, perrs):

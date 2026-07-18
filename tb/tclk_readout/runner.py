@@ -2,6 +2,7 @@
 inherited biphase-mark receiver (TCLK_RCV = serdec4_9MHz + TCLK_DESERIALIZER2)
 feeding the decoder-agnostic AXI4-Lite readout (aclk_readout_axi), end to end.
 Shared plumbing: tb/runner_common.py."""
+import os
 import sys
 from pathlib import Path
 
@@ -24,6 +25,7 @@ def test_tclk_readout():
             "rtl/aclk_lite/tclk_readout_top.sv",
         ],
         hdl_toplevel="tclk_readout_top",
+        parameters={"OSR": int(os.getenv("TCLK_OSR", "8"))},
     )
 
 

@@ -1,6 +1,7 @@
 """Cocotb 2.0 Python runner for the inherited TCLK receiver (rtl/aclk_bridge):
 TCLK_RCV = serdec4_9MHz (biphase bit recovery) + TCLK_DESERIALIZER2 (byte
 assembly + parity). Shared plumbing: tb/runner_common.py."""
+import os
 import sys
 from pathlib import Path
 
@@ -17,6 +18,7 @@ def test_tclk_rcv():
             "rtl/aclk_bridge/TCLK_RCV.v",
         ],
         hdl_toplevel="TCLK_RCV",
+        parameters={"OSR": int(os.getenv("TCLK_OSR", "8"))},
     )
 
 
