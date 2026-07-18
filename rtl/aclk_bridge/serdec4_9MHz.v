@@ -40,18 +40,54 @@ module serdec4_9MHz #(
     reg        sig_err_detect;
     reg  [2:0] sig_err_stretch;
 
+    // Glitch-reject debounce on the raw TCLK line, scaled by OSR so the physical
+    // rejection window (~DB samples) stays near the baseline. At 400 MHz the raw
+    // sampler resolves real-line ringing that the 80 MHz sampler averaged out; those
+    // extra edges corrupt the biphase decode (high PERR on the live line). DB=0 at
+    // OSR<=8 makes this a pass-through, so OSR=8 decode is bit-identical to the
+    // original. TUNING KNOB: the /6 sets the window (OSR/6 = 6 samples = 15 ns at
+    // OSR=40); /4 (10 samples) over-filtered and cost clean-decode margin near the
+    // serdec lock-on transient, so this was walked back to /6. Lower it further if it
+    // still over-filters clean decode, raise it (carefully, re-verify the margin) if
+    // the real line turns out dirtier than the width=3 ringing case tb/tclk_rcv
+    // covers.
+    localparam integer DB = (OSR > 8) ? (OSR/6) : 0;
+    wire tclk_clean;
+    generate
+    if (DB == 0) begin : g_nofilt
+        assign tclk_clean = TCLK;
+    end else begin : g_filt
+        reg       tclk_db;
+        reg [7:0] db_cnt;
+        always @(posedge CLK_80M or negedge RESETn) begin
+            if (!RESETn) begin
+                tclk_db <= 1'b1;             // idle high, matching the TCLK idle
+                db_cnt  <= 8'd0;
+            end else if (TCLK == tclk_db) begin
+                db_cnt  <= 8'd0;            // agrees with debounced level: reset
+            end else if (db_cnt >= DB - 1) begin
+                tclk_db <= TCLK;            // held the new level DB samples: accept
+                db_cnt  <= 8'd0;
+            end else begin
+                db_cnt  <= db_cnt + 8'd1;   // differs but not yet stable long enough
+            end
+        end
+        assign tclk_clean = tclk_db;
+    end
+    endgenerate
+
     // ---- TCLK delay shift register ----
     always @(posedge CLK_80M or negedge RESETn) begin
         if (!RESETn)
             TCLK_del <= {DELW{1'b0}};
         else
-            TCLK_del <= {TCLK_del[DELW-2:0], TCLK};
+            TCLK_del <= {TCLK_del[DELW-2:0], tclk_clean};   // debounced input (glitch-rejected)
     end
 
-    // Immediate edge (transition "now", a fixed 1-sample detection pipeline). NOTE:
-    // its physical glitch-rejection window shrinks ~5x at 400 MHz; see the spec's
-    // "real-line edge-noise" risk. Kept at [1]/[2] for the clean-decode build; a
-    // parameterized debounce is a follow-up if bring-up shows line-noise sensitivity.
+    // Immediate edge (transition "now", a fixed 1-sample detection pipeline), taken
+    // on TCLK_del which is fed by tclk_clean (see the DB debounce above), not raw
+    // TCLK. Real-line ringing/edge-noise at 400 MHz is rejected upstream by that
+    // debounce, so this [1]/[2] edge detect only ever sees already-clean transitions.
     assign TCLK_posedge =  TCLK_del[1] & ~TCLK_del[2];
     assign TCLK_negedge =  TCLK_del[2] & ~TCLK_del[1];
 

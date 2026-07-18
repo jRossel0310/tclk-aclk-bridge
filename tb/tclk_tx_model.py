@@ -65,3 +65,24 @@ async def drive_samples(clk, tclk_sig, samples):
     for s in samples:
         await RisingEdge(clk)
         tclk_sig.value = s
+
+
+def add_ringing(samples, width):
+    """Simulate real-line ringing: right after each level transition, bounce the
+    line back to the OLD level for `width` CLK_80M samples before it settles. Length
+    is preserved (overwrite, not insert), so bit timing is unchanged. A debounced
+    decoder rejects these sub-window spikes; a naive one reads them as extra edges."""
+    if width <= 0:
+        return list(samples)
+    out = list(samples)
+    n = len(out)
+    i = 1
+    while i < n:
+        if out[i] != out[i - 1]:
+            old = out[i - 1]
+            for k in range(i + 1, min(i + 1 + width, n)):
+                out[k] = old
+            i += width + 1
+        else:
+            i += 1
+    return out
