@@ -4,7 +4,7 @@
 // ------------------------------------------------------------
 
 module TCLK_RCV #(
-    parameter int OSR = 8
+    parameter integer OSR = 8
 ) (
     input  wire        RESETn,
     input  wire        CLK_40M,

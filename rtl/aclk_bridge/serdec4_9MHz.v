@@ -5,7 +5,7 @@
 // ------------------------------------------------------------
 
 module serdec4_9MHz #(
-    parameter int OSR = 8               // CLK_80M samples per 100 ns TCLK bit-cell
+    parameter integer OSR = 8               // CLK_80M samples per 100 ns TCLK bit-cell
 ) (
     input  wire RESETn,
     input  wire CLK_80M,
@@ -18,7 +18,7 @@ module serdec4_9MHz #(
     output wire SIG_ERR
 );
     // Widest referenced sample is ~1.5 cells back (12 at OSR=8 -> 13-bit shifter).
-    localparam int DELW = (3*OSR)/2 + 1;
+    localparam integer DELW = (3*OSR)/2 + 1;
 
     reg  [7:0]  crnt_st_decode, next_st_decode;
     reg  [7:0]  crnt_st_data,   next_st_data;
@@ -143,12 +143,12 @@ module serdec4_9MHz #(
     // Detects a run of exactly L samples of one level bounded by the opposite level,
     // using window TCLK_del[L+2 : 1]. Illegal lengths for RATE=1 are 1, 2, OSR-2 and
     // 1.5*OSR-2 (matching the original 1,2,6,10 at OSR=8); 3 and OSR-1 add for RATE=0.
-    localparam int LA = 1;
-    localparam int LB = 2;
-    localparam int LC = OSR - 2;
-    localparam int LD = (3*OSR)/2 - 2;
-    localparam int LE = 3;              // RATE=0 only
-    localparam int LF = OSR - 1;        // RATE=0 only
+    localparam integer LA = 1;
+    localparam integer LB = 2;
+    localparam integer LC = OSR - 2;
+    localparam integer LD = (3*OSR)/2 - 2;
+    localparam integer LE = 3;              // RATE=0 only
+    localparam integer LF = OSR - 1;        // RATE=0 only
 
     // run of L zeros:  TCLK_del[L+2]=1, TCLK_del[L+1:2]=0, TCLK_del[1]=1
     // run of L ones:   TCLK_del[L+2]=0, TCLK_del[L+1:2]=1, TCLK_del[1]=0
