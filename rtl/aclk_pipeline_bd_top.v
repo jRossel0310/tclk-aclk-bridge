@@ -405,9 +405,9 @@ module aclk_pipeline_bd_top (
     wire        tb_locked_tclk, tb_locked_aclk;
 
     wr_timebase #(
-        .CLK_PERIOD_DS (250),          // clk_40m: 25.0 ns
-        .CLK10_TIMEOUT (16),           // 400 ns at 40 MHz
-        .PPS_TIMEOUT   (44_000_000)    // 1.1 s at 40 MHz
+        .CLK_PERIOD_DS (50),           // clk_40m: 5.0 ns at 200 MHz
+        .CLK10_TIMEOUT (80),           // 400 ns at 200 MHz
+        .PPS_TIMEOUT   (220_000_000)   // 1.1 s at 200 MHz
     ) u_tb_tclk (
         .clk(clk_40m), .rstn(rstn), .wr_clk10(wr_clk10), .wr_pps(wr_pps),
         .cfg_clk(s_axi_aclk), .cfg_rstn(s_axi_aresetn),
