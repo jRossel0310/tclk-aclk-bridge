@@ -532,7 +532,7 @@ module aclk_pipeline_bd_top (
     wire        aclk_valid_tap;
 
     aclk_gt_readout_top #(
-        .ADDR_WIDTH (9),
+        .ADDR_WIDTH (11),
         .AXI_ADDR_W (8),
         .USE_EXT_TS (1'b1)
     ) u_ro_aclk (

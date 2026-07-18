@@ -1,5 +1,6 @@
 """Cocotb 2.0 Python runner for the async_fifo testbench.
 Shared plumbing: tb/runner_common.py."""
+import os
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ def test_async_fifo():
             "rtl/async_fifo.sv",
         ],
         hdl_toplevel="async_fifo",
+        parameters={"ADDR_WIDTH": int(os.getenv("FIFO_ADDR_WIDTH", "6"))},
     )
 
 

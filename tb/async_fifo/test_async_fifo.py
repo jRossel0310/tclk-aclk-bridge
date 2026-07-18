@@ -23,10 +23,12 @@ from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
 from cocotb_helpers import _b
 
-# RTL defaults (rtl/async_fifo.sv): WIDTH=96, ADDR_WIDTH=6 -> DEPTH=64.
+import os
+# RTL default is ADDR_WIDTH=6 -> DEPTH=64; override with FIFO_ADDR_WIDTH.
 WIDTH = 96
-DEPTH = 64
-MASK  = (1 << WIDTH) - 1
+ADDR_WIDTH = int(os.getenv("FIFO_ADDR_WIDTH", "6"))
+DEPTH = 1 << ADDR_WIDTH
+MASK = (1 << WIDTH) - 1
 
 WR_PERIOD_NS = 16     # about 62.5 MHz, stands in for the recovered RX clock
 RD_PERIOD_NS = 10     # 100 MHz, stands in for pl_clk0
