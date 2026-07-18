@@ -136,7 +136,12 @@ connect_bd_intf_net [get_bd_intf_pins axi_sc/M00_AXI] [get_bd_intf_pins u_pipeli
 connect_bd_intf_net [get_bd_intf_pins axi_sc/M01_AXI] [get_bd_intf_pins u_pipeline/S_AXI2]
 connect_bd_intf_net [get_bd_intf_pins axi_sc/M02_AXI] [get_bd_intf_pins u_pipeline/S_AXI3]
 
-# ---- clk_wiz #1: 80 + 40 MHz event-domain clocks from pl_clk0 (from build_tclk.tcl) ----
+# ---- clk_wiz #1: 400 + 200 MHz event-domain clocks (deployable 5 ns TCLK build) ----
+# clk_40m -> 200 MHz gives 5 ns TCLK timestamp resolution (5x finer than the 25 ns baseline)
+# and ~5x TCLK event-rate headroom; clk_80m -> 400 MHz keeps the 2:1 serdec:deserializer
+# ratio. The serdec is OSR-parameterized (tclk_readout_top instantiated at OSR=40 below) so
+# the decode is functionally correct at this oversample, validated in cocotb (OSR=8 regression
+# + OSR=40 decode proof). The post-route WNS is dumped below to confirm timing closes.
 # pl_clk0's realized rate is not exactly 100 MHz; clk_wiz makes clk_in1's FREQ_HZ
 # read-only and derives it from PRIM_IN_FREQ, so feed pl_clk0's EXACT Hz (6 decimals of
 # MHz) as PRIM_IN_FREQ or validate_bd_design trips BD 41-238. resetn from pl_resetn0 so
@@ -147,9 +152,9 @@ set clkw [create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:* clk_wiz_0]
 set_property -dict [list \
     CONFIG.PRIM_SOURCE {No_buffer} \
     CONFIG.PRIM_IN_FREQ $pl0_mhz \
-    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {80.000} \
+    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {400.000} \
     CONFIG.CLKOUT2_USED {true} \
-    CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {40.000} \
+    CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {200.000} \
     CONFIG.USE_LOCKED {true} \
     CONFIG.USE_RESET {true} \
     CONFIG.RESET_TYPE {ACTIVE_LOW} \
@@ -250,6 +255,34 @@ launch_runs synth_1 -jobs 4
 wait_on_run synth_1
 launch_runs impl_1 -to_step write_bitstream -jobs 4
 wait_on_run impl_1
+
+# ---- TIMING VERIFY: dump post-route timing so WNS lands in the build log ----
+# write_bitstream still succeeds with negative slack, so the pass/fail signal is WNS
+# (>= 0 = closed), not build success. STATS.* are populated on the completed project
+# run; also emit a full routed timing summary + the worst setup paths so we can see
+# WHICH clock/endpoint is binding (expect the clk_80m serdec sig_err cloud).
+puts "=========================================================="
+puts "TIMING VERIFY (impl_1, post-route): target clk_40m=200 MHz clk_80m=400 MHz"
+foreach s {WNS TNS FAILED_NETS WHS THS} {
+    set val "n/a"
+    catch { set val [get_property STATS.$s [get_runs impl_1]] }
+    puts [format "  STATS.%-11s = %s" $s $val]
+}
+if {![catch {open_run impl_1} eo]} {
+    set rpt [file join $build_dir timing_summary_routed.rpt]
+    catch { report_timing_summary -delay_type min_max -max_paths 20 -file $rpt }
+    puts "  full timing summary -> $rpt"
+    catch {
+        foreach p [get_timing_paths -delay_type max -max_paths 5 -nworst 1] {
+            puts [format "  worst-setup: slack=%8s ns  from-clk=%-24s to=%s" \
+                [get_property SLACK $p] [get_property STARTPOINT_CLOCK $p] \
+                [get_property ENDPOINT_PIN $p]]
+        }
+    }
+} else {
+    puts "  (open_run failed: $eo - rely on STATS.WNS above)"
+}
+puts "=========================================================="
 
 set bit [file join $build_dir ${proj_name}.runs impl_1 ${design_name}_wrapper.bit]
 if {[file exists $bit]} {

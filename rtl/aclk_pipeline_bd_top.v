@@ -469,7 +469,8 @@ module aclk_pipeline_bd_top (
     tclk_readout_top #(
         .ADDR_WIDTH (9),
         .AXI_ADDR_W (8),
-        .USE_EXT_TS (1'b1)
+        .USE_EXT_TS (1'b1),
+        .OSR        (40)
     ) u_ro_tclk (
         .clk_80m       (clk_80m),
         .clk_40m       (clk_40m),
