@@ -35,7 +35,8 @@
 module tclk_readout_top #(
     parameter int ADDR_WIDTH = 6,          // FIFO depth = 2**ADDR_WIDTH
     parameter int AXI_ADDR_W = 8,
-    parameter bit USE_EXT_TS = 1'b0        // 0 = internal ts counter (default); 1 = use ts_ext
+    parameter bit USE_EXT_TS = 1'b0,       // 0 = internal ts counter (default); 1 = use ts_ext
+    parameter int OSR        = 8
 ) (
     // ---- TCLK receive domain ----
     input  logic        clk_80m,           // 80 MHz serdec oversample clock
@@ -85,7 +86,7 @@ module tclk_readout_top #(
     wire       sig_err;
     logic      perr_clr;
 
-    TCLK_RCV u_rcv (
+    TCLK_RCV #(.OSR(OSR)) u_rcv (
         .RESETn      (rstn),
         .CLK_40M     (clk_40m),
         .CLK_80M     (clk_80m),

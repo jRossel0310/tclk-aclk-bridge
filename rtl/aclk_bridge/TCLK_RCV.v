@@ -3,7 +3,9 @@
 // Translated from VHDL
 // ------------------------------------------------------------
 
-module TCLK_RCV (
+module TCLK_RCV #(
+    parameter int OSR = 8
+) (
     input  wire        RESETn,
     input  wire        CLK_40M,
     input  wire        CLK_80M,
@@ -37,7 +39,7 @@ module TCLK_RCV (
     // TCLK decoder / serializer
     // --------------------------------------------------------
 
-    serdec4_9MHz uTCLK_DECODER (
+    serdec4_9MHz #(.OSR(OSR)) uTCLK_DECODER (
         .RESETn    (RESETn),
         .CLK_80M   (CLK_80M),
         .TCLK      (TCLK),
