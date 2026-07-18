@@ -103,20 +103,24 @@ switch ($Task) {
         New-Item -ItemType Directory -Force -Path $parent | Out-Null
         $log = Join-Path $parent "build.log"
 
-        # Vivado's batch IP-Integrator rule init intermittently fails to read its
-        # own .tcl files ("couldn't read file ...: No error", "bd::utils::*"),
-        # usually antivirus scanning Vivado's many small script files mid-load.
-        # It fails fast (~30s, before synthesis), so retry ONLY that flake; never
-        # retry a real synth/impl failure.
-        # "couldn't read file" is the common thread across all these AV-induced
-        # transient read failures (utils_dbg.tcl, aximm xgui, rule .tcl, ...).
+        # Vivado's batch IP-Integrator intermittently fails to read its own .tcl files
+        # ("couldn't read file ...: No error", "bd::utils::*"), usually antivirus scanning
+        # Vivado's many small script files mid-load. It usually fails fast (~30s) at BD
+        # construction, but the SAME AV read-block also strikes later during launch_runs
+        # synth_1 IP generation ("Could not create slave interpreter", "Failed to deliver
+        # file <C:\Xilinx ...>", which aborts the run launch). Both are the transient AV
+        # flake, never a real synth/impl failure (a real error is [Synth 8-*] etc.), so
+        # both are retried; "couldn't read file" / "Failed to deliver" are the common
+        # threads across all these AV-induced transient read failures.
         $bdFlakeSignatures = @(
             "couldn't read file",
             "create_bd_design' failed",
             "Error in initialization of Rule object",
             "Failed to load customization data",
             "Failed to load feature",
-            "bd::utils::"
+            "bd::utils::",
+            "Could not create slave interpreter",
+            "Failed to deliver"
         )
         $maxAttempts = 12
         $ok = $false
