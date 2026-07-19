@@ -12,6 +12,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -23,12 +24,11 @@ NS = "KR260"
 
 
 def _skip(reason):
-    try:
+    if "pytest" in sys.modules:
         import pytest
-        pytest.skip(reason, allow_module_level=False)
-    except ImportError:
-        print("SKIP:", reason)
-        raise SystemExit(0)
+        pytest.skip(reason)
+    print("SKIP:", reason)
+    raise SystemExit(0)
 
 
 def _free_port():
