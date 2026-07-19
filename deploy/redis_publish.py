@@ -3,15 +3,19 @@
 
 Drains one UIO readout (TCLK or ACLK), drops UNSYNC events (ts==0), and submits a
 record per event to a background RedisSink. The sink writes:
-  per event:                 XADD KR260:<src> <event-time-ms>-*
-                                  {sec, ns, event, data, is_tclk, has_data, src}
-  per event code, per batch: HSET KR260:event:<src>:0x<CODE> {sec, ns, utc, data}
-                             HINCRBY KR260:event:<src>:0x<CODE> count <n-in-batch>
-So consumers read the time-ordered stream OR look an event code up directly. (No
-per-entry utc on the stream: derive it from sec/ns; the index hash keeps one.) The sink
-also maintains KR260:status / KR260:watchdog liveness keys. Two threads: this (main)
-thread drains the FIFO and enqueues; the sink's writer thread talks to Redis, so a Redis
-stall never stalls the hardware FIFO drain.
+  per event:                 XADD {KR260}:<src> <RA_Time-ms>-<RA_Time-ns-in-ms>
+                                  {_, sec, ns, event, data, is_tclk, has_data, src}
+  per event code, per batch: HSET {KR260}:event:<src>:0x<CODE> {sec, ns, utc, data}
+                             HINCRBY {KR260}:event:<src>:0x<CODE> count <n-in-batch>
+So consumers read the time-ordered stream OR look an event code up directly. The
+stream entry ID is the event's own RA_Time (ns since epoch, split into <ms>-<ns_in_ms>)
+so it lines up with the RedisAdapter Protocol v1.0 convention; each entry carries both
+the mandatory `_` binary payload and the readable fields (no per-entry utc: derive it
+from sec/ns; the index hash keeps one). The braces around KR260 pin all per-namespace
+keys to one Redis Cluster hash slot. The sink also maintains {KR260}:status /
+{KR260}:watchdog liveness keys. Two threads: this (main) thread drains the FIFO and
+enqueues; the sink's writer thread talks to Redis, so a Redis stall never stalls the
+hardware FIFO drain.
 
     sudo python3 redis_publish.py /dev/uio4 --src tclk
     sudo python3 redis_publish.py /dev/uio5 --src aclk
@@ -82,14 +86,14 @@ def should_publish(ts):
 def build_record(ns, src, event, flags, data, ts):
     """Build the sink record for one event: the per-source stream write plus the
     per-event-code index write, all under the `ns` namespace. The stream entry ID is
-    the event time in ms (the sink applies the monotonic guard). Keys are lru_cached
-    and the index shares the fields dict's strings: this runs per event on the drain
-    thread's hot path."""
+    the event's RA_Time (ns since epoch); the sink encodes it as <ms>-<ns_in_ms> and
+    applies the monotonic guard. Keys are lru_cached and the index shares the fields
+    dict's strings: this runs per event on the drain thread's hot path."""
     sec, nsec = wr_split(ts)
     fields = event_fields(event, flags, data, ts, src)
     return {
         "stream":       _stream_key(ns, src),
-        "id_ms":        sec * 1000 + nsec // 1_000_000,
+        "ra_time":      sec * 1_000_000_000 + nsec,
         "fields":       fields,
         "index_key":    _index_key(ns, src, event),
         "index_fields": {"sec": fields["sec"], "ns": fields["ns"],
@@ -122,7 +126,7 @@ def main(argv):
     sink = RedisSink(host=host, port=port, maxlen=maxlen, queue_size=qsize,
                      status_key="{%s}:status" % ns, watchdog_key="{%s}:watchdog" % ns)
     sink.start()
-    stream = "%s:%s" % (ns, src)
+    stream = "{%s}:%s" % (ns, src)
     statlog = StatsLog(statpath)
     state = PublisherState()
     say("# publishing %s events from %s to Redis stream '%s' (%s:%d); stats -> %s every "

@@ -4,7 +4,8 @@ A bounded in-process queue decouples the caller (the UIO drain thread) from Redi
 latency: submit() never blocks; if the queue is full it drops the OLDEST record
 (counted) so the hardware FIFO drain can never stall on a Redis hiccup. A writer
 thread pops records in batches and pipelines:
-  per record:                XADD <stream> <guarded_ms>-* <fields> MAXLEN ~ <maxlen>
+  per record:                XADD <stream> <guarded_ms>-<guarded_ns_in_ms> <fields>
+                                  MAXLEN ~ <maxlen>
   per event code, per batch: HSET <index_key> <latest index_fields>
                              HINCRBY <index_key> count <occurrences in batch>
 The per-code index writes are AGGREGATED per batch (last event wins the HSET, counts
@@ -14,8 +15,9 @@ index hash therefore updates once per batch (<= 1 s typically) instead of per ev
 counts stay exact.
 On any Redis error it counts the dropped batch, reconnects with backoff, continues.
 
-Stream IDs come from event time (ms), with a per-stream monotonic guard so a backward
-WR re-arm jump cannot make XADD error (Redis requires increasing IDs).
+Stream IDs come from the event's RA_Time (ns since epoch), encoded as <ms>-<ns_in_ms>,
+with a per-stream monotonic guard at ns resolution so a backward WR re-arm jump (or two
+events landing in the same ms) cannot make XADD error (Redis requires increasing IDs).
 
 Redis is reached through an injected `connect` factory (default: a real redis-py
 client). redis-py is imported lazily inside that factory so this module imports cleanly
@@ -47,7 +49,7 @@ class RedisSink:
         self._stop = threading.Event()
         self._thread = None
         self._lock = threading.Lock()
-        self._last_ms = {}                       # per-stream monotonic-ID guard
+        self._last_ratime = {}                   # per-stream monotonic RA_Time (ns) guard
         self._status_set = False                 # re-announced after each (re)connect
         self._last_wd = 0.0                       # monotonic time of last watchdog refresh
         self.published = 0
@@ -59,7 +61,7 @@ class RedisSink:
     def submit(self, record):
         """Enqueue one event record. Never blocks: on a full queue drop the OLDEST
         record (counted), then enqueue this one. A record is:
-        {stream, id_ms, fields, index_key, index_fields}."""
+        {stream, ra_time, fields, index_key, index_fields}."""
         try:
             self._q.put_nowait(record)
             return
@@ -108,12 +110,13 @@ class RedisSink:
         idx_cnt = {}                             # index_key -> occurrences in batch
         for rec in batch:
             stream = rec["stream"]
-            ms = rec["id_ms"]
-            last = self._last_ms.get(stream, 0)
-            if ms < last:                        # monotonic guard: never go backward
-                ms = last
-            self._last_ms[stream] = ms
-            pipe.xadd(stream, rec["fields"], id="%d-*" % ms,
+            ra = rec["ra_time"]
+            last = self._last_ratime.get(stream, 0)
+            if ra <= last:                       # strictly increasing IDs: bump 1 ns
+                ra = last + 1
+            self._last_ratime[stream] = ra
+            ms, seq = divmod(ra, 1_000_000)      # RA_Time -> <ms>-<ns_within_ms>
+            pipe.xadd(stream, rec["fields"], id="%d-%d" % (ms, seq),
                       maxlen=self.maxlen, approximate=True)
             k = rec["index_key"]
             idx_last[k] = rec["index_fields"]    # batch order = event order: last wins

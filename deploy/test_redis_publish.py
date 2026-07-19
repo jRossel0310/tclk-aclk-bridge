@@ -39,7 +39,7 @@ def test_build_record():
     r = build_record("KR260", "tclk", 0x1D, 0x02, 0, (SEC << 32) | NS)
     assert r["stream"] == "{KR260}:tclk"
     assert r["index_key"] == "{KR260}:event:tclk:0x1D"
-    assert r["id_ms"] == SEC * 1000 + NS // 1_000_000       # ...*1000 + 123
+    assert r["ra_time"] == SEC * 1_000_000_000 + NS
     assert r["fields"]["event"] == str(0x1D) and r["fields"]["src"] == "tclk"
     assert "utc" not in r["fields"]                       # stream entries carry sec/ns only
     assert r["index_fields"]["sec"] == str(SEC) and r["index_fields"]["ns"] == str(NS)

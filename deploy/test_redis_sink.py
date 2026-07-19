@@ -60,12 +60,12 @@ def _wait(pred, timeout=3.0):
     return False
 
 
-def _record(ms, event="7"):
+def _record(ra_time, event="7"):
     return {
-        "stream": "KR260:tclk",
-        "id_ms": ms,
+        "stream": "{KR260}:tclk",
+        "ra_time": ra_time,
         "fields": {"sec": "1", "ns": "0", "event": event, "src": "tclk"},
-        "index_key": "KR260:event:tclk:0x%02X" % int(event),
+        "index_key": "{KR260}:event:tclk:0x%02X" % int(event),
         "index_fields": {"sec": "1", "ns": "0", "data": "0"},
     }
 
@@ -78,17 +78,17 @@ def test_record_pipelines_xadd_hset_hincrby():
     fake = FakeRedis()
     sink = RedisSink(maxlen=555, connect=lambda: fake)
     sink.start()
-    sink.submit(_record(1000, event="29"))       # 29 == 0x1D
+    sink.submit(_record(1_000_000, event="29"))       # 29 == 0x1D; 1e6 ns -> id "1-0"
     assert _wait(lambda: len(fake.ops) >= 3), sink.stats()
     sink.stop()
     kinds = [o[0] for o in fake.ops]
     assert kinds == ["xadd", "hset", "hincrby"], fake.ops
     _, stream, fields, sid, maxlen, approx = fake.ops[0]
-    assert stream == "KR260:tclk"
+    assert stream == "{KR260}:tclk"
     assert fields == {"sec": "1", "ns": "0", "event": "29", "src": "tclk"}
-    assert sid == "1000-*" and maxlen == 555 and approx is True
-    assert fake.ops[1] == ("hset", "KR260:event:tclk:0x1D", {"sec": "1", "ns": "0", "data": "0"})
-    assert fake.ops[2] == ("hincrby", "KR260:event:tclk:0x1D", "count", 1)
+    assert sid == "1-0" and maxlen == 555 and approx is True
+    assert fake.ops[1] == ("hset", "{KR260}:event:tclk:0x1D", {"sec": "1", "ns": "0", "data": "0"})
+    assert fake.ops[2] == ("hincrby", "{KR260}:event:tclk:0x1D", "count", 1)
     assert sink.stats()["published"] == 1
 
 
@@ -106,21 +106,22 @@ def test_index_writes_aggregate_per_batch():
     hsets = [o for o in fake.ops if o[0] == "hset"]
     incs = {o[1]: o[3] for o in fake.ops if o[0] == "hincrby"}
     assert len(hsets) == 2, fake.ops
-    assert incs == {"KR260:event:tclk:0x07": 5, "KR260:event:tclk:0x0C": 1}, incs
+    assert incs == {"{KR260}:event:tclk:0x07": 5, "{KR260}:event:tclk:0x0C": 1}, incs
     assert sink.stats()["published"] == 6
 
 
 def test_monotonic_id_guard():
     fake = FakeRedis()
     sink = RedisSink(connect=lambda: fake)
-    sink.submit(_record(1000))
-    sink.submit(_record(500))      # backward jump: must be clamped up to 1000
-    sink.submit(_record(2000))     # forward: passes through
+    sink.submit(_record(1_000_000))          # id 1-0
+    sink.submit(_record(500_000))            # backward: bumped to 1_000_001 -> 1-1
+    sink.submit(_record(1_000_000))          # equal to last-seen input: bumped to 1-2
+    sink.submit(_record(2_000_000))          # forward: 2-0
     sink.start()
-    assert _wait(lambda: len(_xadds(fake)) >= 3), sink.stats()
+    assert _wait(lambda: len(_xadds(fake)) >= 4), sink.stats()
     sink.stop()
     ids = [o[3] for o in _xadds(fake)]
-    assert ids == ["1000-*", "1000-*", "2000-*"], ids
+    assert ids == ["1-0", "1-1", "1-2", "2-0"], ids
 
 
 def test_queue_full_drops_oldest():
@@ -159,25 +160,25 @@ def test_stop_flushes_queue():
 
 def test_status_and_watchdog():
     fake = FakeRedis()
-    sink = RedisSink(status_key="KR260:status", watchdog_key="KR260:watchdog",
+    sink = RedisSink(status_key="{KR260}:status", watchdog_key="{KR260}:watchdog",
                      watchdog_ttl=30, watchdog_period=0, connect=lambda: fake)
     sink.start()
-    assert _wait(lambda: "KR260:status" in fake.kv and "KR260:watchdog" in fake.kv), fake.kv
+    assert _wait(lambda: "{KR260}:status" in fake.kv and "{KR260}:watchdog" in fake.kv), fake.kv
     sink.stop()
-    assert fake.kv["KR260:status"][0] == 1
-    _, ex = fake.kv["KR260:watchdog"]
+    assert fake.kv["{KR260}:status"][0] == 1
+    _, ex = fake.kv["{KR260}:watchdog"]
     assert ex == 30
 
 
 def test_watchdog_only_no_status():
     fake = FakeRedis()
-    sink = RedisSink(watchdog_key="KR260:watchdog", watchdog_ttl=30,
+    sink = RedisSink(watchdog_key="{KR260}:watchdog", watchdog_ttl=30,
                      watchdog_period=0, connect=lambda: fake)
     sink.start()
-    assert _wait(lambda: "KR260:watchdog" in fake.kv), fake.kv
+    assert _wait(lambda: "{KR260}:watchdog" in fake.kv), fake.kv
     sink.stop()
-    assert "KR260:status" not in fake.kv          # status_key is None -> never written
-    _, ex = fake.kv["KR260:watchdog"]
+    assert "{KR260}:status" not in fake.kv          # status_key is None -> never written
+    _, ex = fake.kv["{KR260}:watchdog"]
     assert ex == 30
 
 
@@ -186,7 +187,7 @@ def test_watchdog_error_backs_off():
         def set(self, key, value, ex=None):
             raise RuntimeError("redis down")
     fake = FailSet()
-    sink = RedisSink(status_key="KR260:status", watchdog_key="KR260:watchdog",
+    sink = RedisSink(status_key="{KR260}:status", watchdog_key="{KR260}:watchdog",
                      watchdog_period=0, connect=lambda: fake)
     sink.start()
     time.sleep(0.3)
@@ -214,7 +215,7 @@ def test_stop_flushes_when_redis_fully_down():
     # (discarding as redis_dropped), not busy-spin on the watchdog path until timeout.
     fake = FakeRedis(fail_times=10_000)
     fake.fail_set = True
-    sink = RedisSink(status_key="KR260:status", watchdog_key="KR260:watchdog",
+    sink = RedisSink(status_key="{KR260}:status", watchdog_key="{KR260}:watchdog",
                      watchdog_period=0, connect=lambda: fake)
     for i in range(50):
         sink.submit(_record(1000 + i))
