@@ -7,6 +7,7 @@ import tempfile
 
 from stream_archive import (
     HEADER, row_from_entry, DailyCsv, drain_source, load_state, save_state,
+    _stream_key,
 )
 
 
@@ -39,6 +40,11 @@ def _entries(n, ms0=1000):
     return [("%d-0" % (ms0 + i),
              {"sec": "1", "ns": str(i), "event": "7", "data": "0"})
             for i in range(n)]
+
+
+def test_archive_stream_key_is_braced():
+    assert _stream_key("KR260", "tclk") == "{KR260}:tclk"
+    assert _stream_key("KR260", "aclk") == "{KR260}:aclk"
 
 
 def test_row_from_entry_schema_and_defaults():

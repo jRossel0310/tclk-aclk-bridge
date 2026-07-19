@@ -115,9 +115,14 @@ def save_state(path, state):
     os.replace(tmp, path)
 
 
+def _stream_key(namespace, src):
+    return "{%s}:%s" % (namespace, src)
+
+
 def _default_connect(host, port):
     import redis   # lazy: module imports without redis-py (PC unit tests)
     return redis.Redis(host=host, port=port, decode_responses=True,
+                       encoding_errors="replace",
                        socket_connect_timeout=2.0, socket_timeout=5.0)
 
 
@@ -143,7 +148,7 @@ def main(argv, connect=None):
             print("--once requires exactly one --src and -o FILE", file=sys.stderr)
             return 2
         client = connect(args.redis_host, args.redis_port)
-        stream = "%s:%s" % (args.namespace, args.src[0])
+        stream = _stream_key(args.namespace, args.src[0])
         with open(args.out, "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(HEADER)
@@ -164,7 +169,7 @@ def main(argv, connect=None):
                 if client is None:
                     client = connect(args.redis_host, args.redis_port)
                 for s in args.src:
-                    stream = "%s:%s" % (args.namespace, s)
+                    stream = _stream_key(args.namespace, s)
                     last, n = drain_source(client, stream, state.get(s),
                                            writers[s].write_rows, batch=args.batch)
                     if n:
