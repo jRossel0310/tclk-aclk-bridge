@@ -307,11 +307,14 @@ The publisher writes three things per event, matching the Fermilab
 RedisAdapter Protocol v1.0 convention:
 
 - `XADD {KR260}:<src>` : the time-ordered event feed (`{KR260}:tclk`,
-  `{KR260}:aclk`). The **entry ID is the event time in ms** (from the WR
-  timestamp), guarded so a backward WR re-arm cannot make `XADD` error. Fields:
-  `sec, ns, event, data, is_tclk, has_data, src`. There is no per-entry `utc`
-  field here; derive it from `sec`/`ns` (building it per event measurably cost
-  sink throughput).
+  `{KR260}:aclk`). The **entry ID is the event's RA_Time** (nanoseconds since
+  the Unix epoch) encoded as `<ms>-<ns_within_ms>`, guarded so a duplicate or
+  backward RA_Time is bumped to the previous ID + 1 ns rather than making
+  `XADD` error. Fields: a mandatory `_` (the little-endian `<IIIHB>`
+  RedisAdapter primary payload: sec, ns, data, event, flags) plus the readable
+  string extras `sec, ns, event, data, is_tclk, has_data, src`. There is no
+  per-entry `utc` field here; derive it from `sec`/`ns` (building it per event
+  measurably cost sink throughput).
 - `HSET {KR260}:event:<src>:0x<CODE>` : a per-event-code index holding that code's
   latest `{sec, ns, utc, data}`.
 - `HINCRBY {KR260}:event:<src>:0x<CODE> count` : a running per-code count.

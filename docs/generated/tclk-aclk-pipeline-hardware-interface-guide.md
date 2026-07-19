@@ -355,25 +355,27 @@ The `/dev/uioN` indices above are illustrative; resolve them from `/sys/class/ui
 
 **Publisher options** (all optional): `--src` (stream suffix, default `tclk`), `--namespace` (default `KR260`), `--redis-host` (127.0.0.1), `--redis-port` (6379), `--maxlen` (stream cap, default 1,000,000), `--queue-size` (in-process queue, default 100,000) (deploy/redis_publish.py:59-68).
 
-### 9.2 Redis key schema (namespace `KR260`, matches the Fermilab redis-clock-server convention)
+### 9.2 Redis key schema (namespace `KR260`, matches the Fermilab RedisAdapter Protocol v1.0 convention)
 
 Per published event the sink pipelines three writes:
 
 ```
-  XADD   {KR260}:<src>  <event-time-ms>-*  { sec, ns, utc, event, data,
+  XADD   {KR260}:<src>  <ms>-<ns_in_ms>  { _, sec, ns, event, data,
                                            is_tclk, has_data, src }   MAXLEN ~ <maxlen>
   HSET   {KR260}:event:<src>:0x<CODE>      { sec, ns, utc, data }
   HINCRBY {KR260}:event:<src>:0x<CODE> count 1
 ```
 
+The entry ID is the event's RA_Time (nanoseconds since the Unix epoch) encoded as `<ms>-<ns_within_ms>` (no server `-*` sequence, so it works on Redis 6 as well as Redis 7), and `_` is the mandatory little-endian `<IIIHB>` RedisAdapter primary payload (sec, ns, data, event, flags) that a generic RedisAdapter consumer reads.
+
 | Key | Type | Purpose |
 |-----|------|---------|
-| `{KR260}:tclk`, `{KR260}:aclk` | Stream | Time-ordered event feed; **entry ID is the event time in ms** (WR), with a per-stream monotonic guard so a backward WR re-arm cannot make XADD error |
+| `{KR260}:tclk`, `{KR260}:aclk` | Stream | Time-ordered event feed; **entry ID is the event's RA_Time** encoded `<ms>-<ns_within_ms>`, with a duplicate/backward RA_Time bumped to the previous ID + 1 ns rather than making XADD error |
 | `{KR260}:event:<src>:0x<CODE>` | Hash | Per-event-code index: latest `{sec, ns, utc, data}` for that code plus a running `count` |
 | `{KR260}:status` | String | `1` while a publisher is alive; **sticky** (set on connect, not cleared on stop), do not trust alone |
 | `{KR260}:watchdog` | String (TTL) | Refreshed every ~10 s, expires in ~30 s, the **authoritative** liveness signal |
 
-Stream fields are all strings: `sec`/`ns` (WR split), `utc` (ISO-8601, or `UNSYNC`), `event`, `data`, `is_tclk`, `has_data`, `src` (deploy/redis_publish.py:26-54; deploy/redis_sink.py:100-127).
+Stream fields: `_` is the binary RedisAdapter primary payload (little-endian `<IIIHB>`); the rest are strings: `sec`/`ns` (WR split), `event`, `data`, `is_tclk`, `has_data`, `src` (deploy/redis_publish.py:26-54; deploy/redis_sink.py:100-127).
 
 **Consume (read-side examples):**
 
