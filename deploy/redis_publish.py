@@ -18,6 +18,7 @@ stall never stalls the hardware FIFO drain.
 
 Ctrl-C to stop (flushes the queue, prints final stats). Needs redis-py on the board
 (pip install -r requirements-board.txt) and a running redis-server."""
+import struct
 import sys
 import time
 from functools import lru_cache
@@ -57,13 +58,15 @@ def _index_key(ns, src, event):
 
 
 def event_fields(event, flags, data, ts, src):
-    """Map a decoded event to the Redis Stream field dict (all string values).
-    No per-event `utc` field: it duplicated sec/ns on every entry, and building +
-    shipping it was pure per-event overhead in the sink's redis-py hot path (the
-    measured throughput cap). Consumers derive UTC from sec/ns; the per-code index
-    hash still carries a human-readable utc."""
+    """Map a decoded event to the Redis Stream field dict. Carries the mandatory
+    RedisAdapter `_` primary payload (little-endian <IIIHB>: sec u32, ns u32, data
+    u32, event u16, flags u8) plus the human-readable extras. A generic RedisAdapter
+    consumer reads only `_`; our archiver/redis-cli read the text fields. No per-entry
+    `utc`: it duplicated sec/ns on every entry and was pure hot-path cost; consumers
+    derive UTC from sec/ns and the per-code index hash keeps a human-readable utc."""
     sec, ns = wr_split(ts)
     return {
+        "_": struct.pack("<IIIHB", sec, ns, data, event, flags),
         "sec": str(sec), "ns": str(ns),
         "event": str(event), "data": str(data),
         "is_tclk": str((flags >> 1) & 1), "has_data": str(flags & 1),

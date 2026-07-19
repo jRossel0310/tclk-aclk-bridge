@@ -1,5 +1,7 @@
 """Unit tests for redis_publish pure helpers (no hardware, no Redis).
 Run: python deploy/test_redis_publish.py   or   pytest deploy -q"""
+import struct
+
 from redis_publish import event_fields, should_publish
 
 
@@ -10,10 +12,14 @@ def test_event_fields_schema():
     assert f["event"] == "7" and f["data"] == str(0xABCD)
     assert f["is_tclk"] == "1" and f["has_data"] == "1"
     assert f["src"] == "tclk"
-    # no per-entry utc on the stream (hot-path cost); consumers derive it from sec/ns
+    # readable extras + the mandatory RedisAdapter `_` binary payload
     assert set(f.keys()) == {"sec", "ns", "event", "data",
-                             "is_tclk", "has_data", "src"}
-    assert all(isinstance(v, str) for v in f.values())
+                             "is_tclk", "has_data", "src", "_"}
+    assert all(isinstance(v, str) for k, v in f.items() if k != "_")
+    # `_` is the little-endian <IIIHB> primary struct
+    assert isinstance(f["_"], (bytes, bytearray)) and len(f["_"]) == 15
+    sec, ns, data, event, flags = struct.unpack("<IIIHB", f["_"])
+    assert (sec, ns, data, event, flags) == (SEC, 1500, 0xABCD, 0x07, 0x03)
 
 
 def test_event_fields_flag_variants():
