@@ -29,7 +29,7 @@ Override with FORCE=1 only if you deliberately want to capture while unlocked.
 Spot-check while it runs:
 
     sudo tmux attach -t kr260                # Ctrl-b d to detach
-    redis-cli XLEN KR260:tclk                # climbs
+    redis-cli XLEN '{KR260}:tclk'            # climbs
     tail -f stats-tclk.jsonl                 # one JSON line per snapshot (~60 s)
 
 ## 3. Stop cleanly (writes a final post-flush snapshot)

@@ -15,8 +15,9 @@ as gigabit ACLK, sent out the SFP+ transceiver, looped back into the same board
 over a physical fiber, decoded again against the same WR timeline, mirrored out
 as ACLK-Lite (Manchester) on Pmod pin B10 as a scope probe, and published to the
 PS on a second readout. On the board, one Python publisher per readout drains the
-event FIFO and writes each event into local Redis Streams under the `KR260:`
-namespace.
+event FIFO and writes each event into local Redis Streams under the `{KR260}:`
+namespace (RedisAdapter Protocol v1.0 key schema, base key braced for Redis
+Cluster hash tagging).
 
 ## 2. One-time setup
 
@@ -57,18 +58,15 @@ settings) and is what Fermilab's docs recommend for drag-and-drop transfers.
 
 ### Board prerequisites
 
-The publishers write to a local Redis server, which must be **version 7.0 or
-newer**. Redis 6.x (Ubuntu's default) rejects the `<ms>-*` event-time stream ID
-syntax the publisher uses, so every `XADD` fails and nothing publishes. Install
-Redis and the KR260 settings once, on the board:
+The publishers write to a local Redis server. Redis >= 7.0 is no longer
+required: the publisher sends explicit, complete `<ms>-<ns_within_ms>` stream
+IDs (never a server-assigned `-*` sequence), and that syntax is accepted on
+Redis 6 as well as Redis 7. Install Redis and the KR260 settings once, on the
+board:
 
 ```bash
 sudo apt update && sudo apt install -y redis-server python3-redis
-redis-cli INFO server | grep redis_version    # must be >= 7.0
-# If it is 6.x, install Redis 7 from packages.redis.io:
-#   curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
-#   echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list
-#   sudo apt update && sudo apt install -y redis
+redis-cli INFO server | grep redis_version    # informational only, any version works
 
 # apply the KR260 Redis tuning (ephemeral streams, persistence off), then restart
 cat redis-kr260.conf | sudo tee -a /etc/redis/redis.conf
@@ -246,7 +244,7 @@ Spot-check while it runs:
 
 ```bash
 sudo tmux attach -t kr260                # Ctrl-b d to detach
-redis-cli XLEN KR260:tclk                # climbs
+redis-cli XLEN '{KR260}:tclk'            # climbs
 tail -f stats-tclk.jsonl                 # one JSON line per snapshot (~60 s)
 ```
 
@@ -282,15 +280,15 @@ the log between runs to keep them separate.
 ### Redis liveness and stream checks
 
 ```bash
-redis-cli XLEN KR260:tclk                     # climbs while publishing
-redis-cli XREVRANGE KR260:tclk + - COUNT 3    # newest 3 events (event-time ordered)
-redis-cli GET KR260:status                    # 1 while a publisher is alive (sticky, see below)
-redis-cli TTL KR260:watchdog                  # counts down from ~30 while alive
+redis-cli XLEN '{KR260}:tclk'                     # climbs while publishing
+redis-cli XREVRANGE '{KR260}:tclk' + - COUNT 3    # newest 3 events (event-time ordered)
+redis-cli GET '{KR260}:status'                    # 1 while a publisher is alive (sticky, see below)
+redis-cli TTL '{KR260}:watchdog'                  # counts down from ~30 while alive
 ```
 
-`KR260:watchdog` is the **authoritative** liveness signal: it is a TTL key
+`{KR260}:watchdog` is the **authoritative** liveness signal: it is a TTL key
 refreshed every ~10 s that expires within ~30 s if a publisher dies.
-`KR260:status` is sticky (set to 1 on connect, never cleared on stop), so do not
+`{KR260}:status` is sticky (set to 1 on connect, never cleared on stop), so do not
 trust it alone. If `XLEN` stays 0, the WR timebase is almost certainly not
 locked (all events are UNSYNC and dropped): re-check
 `sudo python3 wr_time.py /dev/uio6 status`.
@@ -303,25 +301,25 @@ is not visible under `sudo` (see Section 9).
 
 ## 8. Get the data out
 
-### Redis key schema (namespace `KR260`)
+### Redis key schema (base key `{KR260}`)
 
 The publisher writes three things per event, matching the Fermilab
-redis-clock-server convention:
+RedisAdapter Protocol v1.0 convention:
 
-- `XADD KR260:<src>` : the time-ordered event feed (`KR260:tclk`,
-  `KR260:aclk`). The **entry ID is the event time in ms** (from the WR
+- `XADD {KR260}:<src>` : the time-ordered event feed (`{KR260}:tclk`,
+  `{KR260}:aclk`). The **entry ID is the event time in ms** (from the WR
   timestamp), guarded so a backward WR re-arm cannot make `XADD` error. Fields:
   `sec, ns, event, data, is_tclk, has_data, src`. There is no per-entry `utc`
   field here; derive it from `sec`/`ns` (building it per event measurably cost
   sink throughput).
-- `HSET KR260:event:<src>:0x<CODE>` : a per-event-code index holding that code's
+- `HSET {KR260}:event:<src>:0x<CODE>` : a per-event-code index holding that code's
   latest `{sec, ns, utc, data}`.
-- `HINCRBY KR260:event:<src>:0x<CODE> count` : a running per-code count.
+- `HINCRBY {KR260}:event:<src>:0x<CODE> count` : a running per-code count.
 
 Inspect a single code's latest value and count directly:
 
 ```bash
-redis-cli HGETALL KR260:event:tclk:0x1D       # latest event for that code + count
+redis-cli HGETALL '{KR260}:event:tclk:0x1D'   # latest event for that code + count
 ```
 
 Streams are in-memory only (persistence is off) and capped, so they hold roughly
@@ -372,10 +370,11 @@ python supercycle_plot.py tail.csv --target 1F --theme poster -o bes.svg
   `run_pipeline.sh` `until` restart loops are the mitigation. Restart the
   publisher window (or relaunch the session); do not power-cycle the board
   first.
-- **Redis older than 7.0.** Redis 6.x rejects the `<ms>-*` event-time stream ID
-  syntax the publisher uses, so `published` stays 0 with backoff (not a busy
-  spin). Upgrade Redis to 7.x (Section 2); do not patch the publisher to emit a
-  different ID.
+- **Redis unreachable or not running.** If `published` stays 0 with `reconnects`
+  climbing (backoff, not a busy spin), check `redis-cli ping` and that
+  redis-py is installed and visible to root. Redis >= 7.0 is no longer
+  required: the publisher's explicit `<ms>-<ns_within_ms>` stream IDs are
+  accepted on Redis 6 too.
 - **AXI reads that alias every 16 bytes.** The readout registers are spaced 16
   bytes apart on purpose: on this LPD path any offset that is not 16-byte
   aligned reads back 0 (the historical "register reads 0" trap). Keep any new
