@@ -48,12 +48,12 @@ class PublisherState:
 
 @lru_cache(maxsize=None)
 def _stream_key(ns, src):
-    return "%s:%s" % (ns, src)
+    return "{%s}:%s" % (ns, src)
 
 
 @lru_cache(maxsize=4096)
 def _index_key(ns, src, event):
-    return "%s:event:%s:0x%02X" % (ns, src, event)
+    return "{%s}:event:%s:0x%02X" % (ns, src, event)
 
 
 def event_fields(event, flags, data, ts, src):
@@ -117,7 +117,7 @@ def main(argv):
     # launch) makes the drop survive a PL reprogram with no manual step. See capture.md.
     rc.apply_drop_filter(io, rc.parse_drop_codes(flags.get("--drop", "")))
     sink = RedisSink(host=host, port=port, maxlen=maxlen, queue_size=qsize,
-                     status_key="%s:status" % ns, watchdog_key="%s:watchdog" % ns)
+                     status_key="{%s}:status" % ns, watchdog_key="{%s}:watchdog" % ns)
     sink.start()
     stream = "%s:%s" % (ns, src)
     statlog = StatsLog(statpath)

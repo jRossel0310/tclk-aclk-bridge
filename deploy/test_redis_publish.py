@@ -31,8 +31,8 @@ def test_build_record():
     SEC = 1_751_800_000
     NS = 123_456_789
     r = build_record("KR260", "tclk", 0x1D, 0x02, 0, (SEC << 32) | NS)
-    assert r["stream"] == "KR260:tclk"
-    assert r["index_key"] == "KR260:event:tclk:0x1D"
+    assert r["stream"] == "{KR260}:tclk"
+    assert r["index_key"] == "{KR260}:event:tclk:0x1D"
     assert r["id_ms"] == SEC * 1000 + NS // 1_000_000       # ...*1000 + 123
     assert r["fields"]["event"] == str(0x1D) and r["fields"]["src"] == "tclk"
     assert "utc" not in r["fields"]                       # stream entries carry sec/ns only
@@ -41,8 +41,8 @@ def test_build_record():
     assert r["index_fields"]["utc"].startswith("20") and r["index_fields"]["utc"].endswith("Z")
     # a wide (16-bit) ACLK event still formats sensibly
     r2 = build_record("KR260", "aclk", 0xABCD, 0x01, 5, (SEC << 32) | NS)
-    assert r2["stream"] == "KR260:aclk"
-    assert r2["index_key"] == "KR260:event:aclk:0xABCD"
+    assert r2["stream"] == "{KR260}:aclk"
+    assert r2["index_key"] == "{KR260}:event:aclk:0xABCD"
     assert r2["index_fields"]["data"] == "5"
 
 
