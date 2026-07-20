@@ -9,6 +9,9 @@
 # Defaults: /dev/uio4 (tclk)  /dev/uio5 (aclk)  /dev/uio6 (wr).
 # Match indices with:  grep . /sys/class/uio/uio*/name
 # Override the WR-lock refusal with FORCE=1 (e.g. deliberately capturing UNSYNC).
+# Publish to a different Redis (a lab RedisAdapter server) with REDIS_HOST / REDIS_PORT,
+# default 127.0.0.1:6379. The pre-flight ping and the archiver follow the same target:
+#     sudo REDIS_HOST=redis.example.fnal.gov bash run_pipeline.sh
 set -euo pipefail
 
 TCLK_DEV="${1:-/dev/uio4}"
@@ -26,11 +29,16 @@ ARCHIVE="${ARCHIVE-1}"  # 1 = also run stream_archive.py (daily CSVs of every pu
                         # event, ~260 MB/day/source; needed for supercycle analysis of
                         # runs longer than the ~2.8 h Redis stream retention).
                         # Set ARCHIVE="" to disable.
+REDIS_HOST="${REDIS_HOST:-127.0.0.1}"   # publish target (publishers + archiver + pre-flight).
+REDIS_PORT="${REDIS_PORT:-6379}"        # A remote server must bind externally and allow this
+                                        # host; no auth is configured, so use a trusted link.
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 # --- pre-flight: Redis ---
-if ! redis-cli ping 2>/dev/null | grep -q PONG; then
-    echo "!! redis-cli ping did not return PONG. Is redis-server running?" >&2
+if ! redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping 2>/dev/null | grep -q PONG; then
+    echo "!! redis-cli -h $REDIS_HOST -p $REDIS_PORT ping did not return PONG." >&2
+    echo "   Is redis-server running and reachable from this host?" >&2
+    echo "   A remote server also needs 'bind' set externally and protected-mode off." >&2
     exit 1
 fi
 
@@ -62,9 +70,9 @@ fi
 # WR reference blip (or ACLK GT relock) and every event stamps UNSYNC until re-armed;
 # the guard auto-re-arms so a blip costs seconds, not the rest of a multi-day run.
 tmux new-session -d -s "$SESSION" -n tclk \
-    "cd '$HERE' && until python3 redis_publish.py $TCLK_DEV --src tclk --drop '$DROP' --statlog stats-tclk.jsonl; do echo '# publisher exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
+    "cd '$HERE' && until python3 redis_publish.py $TCLK_DEV --src tclk --drop '$DROP' --statlog stats-tclk.jsonl --redis-host '$REDIS_HOST' --redis-port '$REDIS_PORT'; do echo '# publisher exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
 tmux new-window -t "$SESSION" -n aclk \
-    "cd '$HERE' && until python3 redis_publish.py $ACLK_DEV --src aclk --drop '$DROP' --statlog stats-aclk.jsonl; do echo '# publisher exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
+    "cd '$HERE' && until python3 redis_publish.py $ACLK_DEV --src aclk --drop '$DROP' --statlog stats-aclk.jsonl --redis-host '$REDIS_HOST' --redis-port '$REDIS_PORT'; do echo '# publisher exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
 # The guard and archiver restart UNCONDITIONALLY (even after a clean Ctrl-C):
 # a stray Ctrl-C in one of these panes once silently ended archiving for hours.
 # Their intended stop is killing the session, which is the normal stop flow.
@@ -72,9 +80,10 @@ tmux new-window -t "$SESSION" -n wr \
     "cd '$HERE' && while true; do python3 wr_time.py $WR_DEV guard; echo '# wr guard exited; restarting in 5 s'; sleep 5; done"
 if [ -n "$ARCHIVE" ]; then
     tmux new-window -t "$SESSION" -n archive \
-        "cd '$HERE' && while true; do nice -n 10 python3 stream_archive.py; echo '# archiver exited; restarting in 5 s'; sleep 5; done"
+        "cd '$HERE' && while true; do nice -n 10 python3 stream_archive.py --redis-host '$REDIS_HOST' --redis-port '$REDIS_PORT'; echo '# archiver exited; restarting in 5 s'; sleep 5; done"
 fi
 
+echo "# publishing to Redis $REDIS_HOST:$REDIS_PORT"
 echo "# launched tmux session '$SESSION' (windows: tclk, aclk, wr guard${ARCHIVE:+, archive})."
 echo "#   attach : sudo tmux attach -t $SESSION      (detach with Ctrl-b d)"
 echo "#   stop   : sudo tmux send-keys -t $SESSION:tclk C-c ; sudo tmux send-keys -t $SESSION:aclk C-c"

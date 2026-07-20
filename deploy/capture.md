@@ -26,6 +26,18 @@ Pre-flight refuses to launch unless Redis answers PONG and the WR timebase is fu
 locked (an unlocked timebase stamps every event UNSYNC and they would all be dropped).
 Override with FORCE=1 only if you deliberately want to capture while unlocked.
 
+To publish to a different Redis (e.g. a lab RedisAdapter server instead of the board's
+local one), set REDIS_HOST / REDIS_PORT (default 127.0.0.1:6379). The pre-flight ping,
+both publishers, and the archiver all follow the same target, and the launch banner
+prints it:
+
+    sudo REDIS_HOST=redis.example.fnal.gov bash run_pipeline.sh
+    sudo REDIS_HOST=192.168.50.1 REDIS_PORT=6380 bash run_pipeline.sh
+
+A remote server must bind externally (not just 127.0.0.1) and have protected-mode off,
+or every publish fails. No auth is configured, so keep it on a trusted link. Inspect a
+remote instance with `redis-cli -h <host> -p <port> xlen '{KR260}:tclk'`.
+
 Spot-check while it runs:
 
     sudo tmux attach -t kr260                # Ctrl-b d to detach
