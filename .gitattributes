@@ -1,0 +1,4 @@
+# Shell scripts must keep LF line endings. They are copied to and executed on Linux
+# (the KR260 board), where CRLF makes bash fail with "syntax error: unexpected end of
+# file". With core.autocrlf=true a Windows checkout would otherwise hand CRLF to pscp.
+*.sh text eol=lf
