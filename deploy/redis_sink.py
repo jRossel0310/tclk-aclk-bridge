@@ -23,14 +23,25 @@ increasing IDs).
 Redis is reached through an injected `connect` factory (default: a real redis-py
 client). redis-py is imported lazily inside that factory so this module imports cleanly
 on a machine without redis-py and the unit tests run with a stub."""
+import os
 import queue
 import threading
 import time
 
 
-def _default_connect(host, port):
+def resolve_auth(username, password, environ=None):
+    """Redis AUTH credentials: an explicit value wins, else the REDIS_USERNAME /
+    REDIS_PASSWORD environment variables. Returns (username, password), each None when
+    unset (an empty string is treated as unset). Reading the password from the env, not
+    an argument, keeps it out of the process argv so it never shows up in `ps`."""
+    environ = os.environ if environ is None else environ
+    return (username or environ.get("REDIS_USERNAME") or None,
+            password or environ.get("REDIS_PASSWORD") or None)
+
+
+def _default_connect(host, port, username=None, password=None):
     import redis   # lazy: module imports without redis-py present (PC unit tests)
-    return redis.Redis(host=host, port=port,
+    return redis.Redis(host=host, port=port, username=username, password=password,
                        socket_connect_timeout=1.0, socket_timeout=1.0)
 
 
@@ -38,14 +49,16 @@ class RedisSink:
     def __init__(self, host="127.0.0.1", port=6379, maxlen=1_000_000,
                  queue_size=100_000, batch=1000, status_key=None,
                  watchdog_key=None, watchdog_ttl=30, watchdog_period=10,
-                 connect=None):
+                 connect=None, username=None, password=None):
         self.maxlen = maxlen
         self.batch = batch
         self.status_key = status_key
         self.watchdog_key = watchdog_key
         self.watchdog_ttl = watchdog_ttl
         self.watchdog_period = watchdog_period
-        self._connect = connect or (lambda: _default_connect(host, port))
+        self._connect = connect or (lambda: _default_connect(host, port,
+                                                             username=username,
+                                                             password=password))
         self._q = queue.Queue(maxsize=queue_size)
         self._stop = threading.Event()
         self._thread = None

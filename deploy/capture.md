@@ -38,6 +38,21 @@ Use `sudo env VAR=...`, NOT `export VAR=...; sudo ...`: sudo resets the environm
 the exported form is silently ignored and you would publish to the local Redis while
 believing it went remote. The launch banner prints the target actually used; check it.
 
+Other launcher knobs (all via `sudo env NAME=... bash run_pipeline.sh`):
+- `NAMESPACE` (default KR260): the Redis base key. Keys become `{NAMESPACE}:tclk` etc., so a
+  lab server that wants a different base key just needs `NAMESPACE=MYDEV`.
+- `REDIS_PASSWORD` / `REDIS_USERNAME`: authenticate to a server with requirepass or ACLs.
+  They are read from the environment and never placed on a command line, so the password
+  does not appear in `ps` (the launcher passes them to the publishers through the tmux
+  session environment, and the pre-flight `redis-cli` reads REDISCLI_AUTH / `--user`).
+  Unset means no auth. Example, remote authenticated server with a custom base key:
+
+    sudo env REDIS_HOST=redis.example.fnal.gov REDIS_PASSWORD=s3cret NAMESPACE=BOOSTER \
+        bash run_pipeline.sh
+
+Running a publisher by hand takes the matching flags: `--namespace`, `--redis-username`,
+`--redis-password` (prefer the REDIS_PASSWORD env var; a CLI value is visible in `ps`).
+
 A remote server must bind externally (not just 127.0.0.1) and have protected-mode off,
 or every publish fails. No auth is configured, so keep it on a trusted link. Inspect a
 remote instance with `redis-cli -h <host> -p <port> xlen '{KR260}:tclk'`.

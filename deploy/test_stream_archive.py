@@ -108,6 +108,21 @@ def test_once_dumps_full_retention_to_file():
         assert rows[1][0] == "1000-0" and rows[-1][0] == "1006-0"
 
 
+def test_main_accepts_redis_auth_flags():
+    # --redis-username / --redis-password parse and do not disturb the injected-connect
+    # path (creds only bind into the real default factory, which is not used here).
+    from stream_archive import main
+    fake = FakeStreamRedis(_entries(3))
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "t.csv")
+        rc = main(["--once", "--src", "tclk", "-o", out,
+                   "--redis-username", "u", "--redis-password", "secret"],
+                  connect=lambda h, p: fake)
+        assert rc == 0
+        with open(out, newline="") as f:
+            assert len(list(csv.reader(f))) == 4      # header + 3 events
+
+
 def test_once_requires_exactly_one_src():
     from stream_archive import main
     rc = main(["--once", "--src", "tclk", "aclk", "-o", "x.csv"],

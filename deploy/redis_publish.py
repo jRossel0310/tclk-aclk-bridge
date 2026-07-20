@@ -29,7 +29,7 @@ from functools import lru_cache
 
 import readout_common as rc
 from readout_common import say, wr_split, wr_utc, read_hw_counters
-from redis_sink import RedisSink
+from redis_sink import RedisSink, resolve_auth
 from stats_log import StatsLog, build_snapshot, sw_counters, now_utc
 
 
@@ -105,6 +105,7 @@ def main(argv):
     rc.line_buffer_stdout()
     pos, flags = rc.parse_args(
         argv, value_flags=("--src", "--namespace", "--redis-host", "--redis-port",
+                           "--redis-username", "--redis-password",
                            "--maxlen", "--queue-size", "--statlog", "--snapshot-interval",
                            "--drop"))
     dev      = pos[0] if pos else "/dev/uio4"
@@ -112,6 +113,9 @@ def main(argv):
     ns       = flags.get("--namespace", "KR260")
     host     = flags.get("--redis-host", "127.0.0.1")
     port     = int(flags.get("--redis-port", "6379"))
+    # Auth: prefer the REDIS_PASSWORD / REDIS_USERNAME env vars (a --redis-password on the
+    # command line would be visible in `ps`); the flags exist for manual use and win if set.
+    user, pw = resolve_auth(flags.get("--redis-username"), flags.get("--redis-password"))
     maxlen   = int(flags.get("--maxlen", "1000000"))
     qsize    = int(flags.get("--queue-size", "100000"))
     statpath = flags.get("--statlog", "stats-%s.jsonl" % src)
@@ -124,13 +128,15 @@ def main(argv):
     # launch) makes the drop survive a PL reprogram with no manual step. See capture.md.
     rc.apply_drop_filter(io, rc.parse_drop_codes(flags.get("--drop", "")))
     sink = RedisSink(host=host, port=port, maxlen=maxlen, queue_size=qsize,
-                     status_key="{%s}:status" % ns, watchdog_key="{%s}:watchdog" % ns)
+                     status_key="{%s}:status" % ns, watchdog_key="{%s}:watchdog" % ns,
+                     username=user, password=pw)
     sink.start()
     stream = "{%s}:%s" % (ns, src)
     statlog = StatsLog(statpath)
     state = PublisherState()
-    say("# publishing %s events from %s to Redis stream '%s' (%s:%d); stats -> %s every "
-        "%gs. Ctrl-C to stop." % (src, dev, stream, host, port, statpath, interval))
+    auth = "user=%s password=set" % (user or "default") if pw else "none"
+    say("# publishing %s events from %s to Redis stream '%s' (%s:%d, auth=%s); stats -> %s "
+        "every %gs. Ctrl-C to stop." % (src, dev, stream, host, port, auth, statpath, interval))
 
     def on_event(e):
         if state.note(e["ts"]):

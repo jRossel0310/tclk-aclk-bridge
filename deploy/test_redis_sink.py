@@ -225,6 +225,45 @@ def test_stop_flushes_when_redis_fully_down():
     assert sink.stats()["redis_dropped"] >= 50, sink.stats()
 
 
+def test_resolve_auth_explicit_wins():
+    from redis_sink import resolve_auth
+    assert resolve_auth("u", "p", environ={}) == ("u", "p")
+    # explicit args beat the environment
+    assert resolve_auth("u", "p", environ={"REDIS_USERNAME": "x",
+                                            "REDIS_PASSWORD": "y"}) == ("u", "p")
+
+
+def test_resolve_auth_env_fallback():
+    from redis_sink import resolve_auth
+    assert resolve_auth(None, None,
+                        environ={"REDIS_USERNAME": "x", "REDIS_PASSWORD": "y"}) == ("x", "y")
+    # an empty explicit value falls back to env; an unset user resolves to None (not "")
+    assert resolve_auth("", "", environ={"REDIS_PASSWORD": "y"}) == (None, "y")
+
+
+def test_resolve_auth_all_unset():
+    from redis_sink import resolve_auth
+    assert resolve_auth(None, None, environ={}) == (None, None)
+
+
+def test_sink_default_connect_gets_auth():
+    # RedisSink with no injected connect must hand host/port AND the creds to the real
+    # default factory. Swap _default_connect for a recorder so no redis-py is needed.
+    import redis_sink
+    seen = {}
+    orig = redis_sink._default_connect
+    redis_sink._default_connect = (lambda host, port, username=None, password=None:
+                                   seen.update(host=host, port=port,
+                                               username=username, password=password)
+                                   or FakeRedis())
+    try:
+        sink = redis_sink.RedisSink(host="h", port=1234, username="u", password="p")
+        sink._connect()                      # trigger the default factory
+    finally:
+        redis_sink._default_connect = orig
+    assert seen == {"host": "h", "port": 1234, "username": "u", "password": "p"}
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

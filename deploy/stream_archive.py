@@ -23,6 +23,8 @@ import os
 import sys
 import time
 
+from redis_sink import resolve_auth   # shared REDIS_USERNAME/REDIS_PASSWORD resolution
+
 # Redis errors are retried in-process (see main's follow loop); anything else
 # crashes so the launcher's until-loop restarts us. The guarded import keeps the
 # module importable on machines without redis-py (PC unit tests inject a stub).
@@ -119,10 +121,10 @@ def _stream_key(namespace, src):
     return "{%s}:%s" % (namespace, src)
 
 
-def _default_connect(host, port):
+def _default_connect(host, port, username=None, password=None):
     import redis   # lazy: module imports without redis-py (PC unit tests)
-    return redis.Redis(host=host, port=port, decode_responses=True,
-                       encoding_errors="replace",
+    return redis.Redis(host=host, port=port, username=username, password=password,
+                       decode_responses=True, encoding_errors="replace",
                        socket_connect_timeout=2.0, socket_timeout=5.0)
 
 
@@ -132,6 +134,9 @@ def main(argv, connect=None):
     ap.add_argument("--namespace", default="KR260")
     ap.add_argument("--redis-host", default="127.0.0.1")
     ap.add_argument("--redis-port", type=int, default=6379)
+    ap.add_argument("--redis-username", default=None)
+    ap.add_argument("--redis-password", default=None,
+                    help="prefer the REDIS_PASSWORD env var (a CLI value shows in ps)")
     ap.add_argument("--poll", type=float, default=5.0)
     ap.add_argument("--outdir", default=".")
     ap.add_argument("--batch", type=int, default=10000)
@@ -141,7 +146,11 @@ def main(argv, connect=None):
     ap.add_argument("--max-loops", type=int, default=0,
                     help="follow mode: stop after N polls (0 = forever; tests only)")
     args = ap.parse_args(argv)
-    connect = connect or _default_connect
+    if connect is None:
+        # Bind the resolved creds into the (host, port) factory the loop calls, so the
+        # injected-connect test path (a 2-arg lambda) stays untouched.
+        user, pw = resolve_auth(args.redis_username, args.redis_password)
+        connect = lambda h, p: _default_connect(h, p, username=user, password=pw)
 
     if args.once:
         if len(args.src) != 1 or not args.out:
