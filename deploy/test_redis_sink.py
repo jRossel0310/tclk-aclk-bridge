@@ -199,7 +199,7 @@ def test_watchdog_error_backs_off():
 
 def test_watchdog_throttle_period():
     fake = FakeRedis()
-    sink = RedisSink(watchdog_key="KR260:watchdog", watchdog_period=1000,
+    sink = RedisSink(watchdog_key="{KR260}:watchdog", watchdog_period=1000,
                      connect=lambda: fake)
     sink.start()
     assert _wait(lambda: fake.set_calls >= 1), fake.set_calls

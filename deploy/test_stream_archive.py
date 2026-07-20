@@ -57,17 +57,17 @@ def test_row_from_entry_schema_and_defaults():
 def test_drain_source_batches_and_resumes():
     fake = FakeStreamRedis(_entries(25))
     got = []
-    last, n = drain_source(fake, "KR260:tclk", None, got.extend, batch=10)
+    last, n = drain_source(fake, "{KR260}:tclk", None, got.extend, batch=10)
     assert n == 25 and last == "1024-0"
     assert [g[0] for g in got] == ["%d-0" % (1000 + i) for i in range(25)]
     # resume: nothing new after last
     got2 = []
-    last2, n2 = drain_source(fake, "KR260:tclk", last, got2.extend, batch=10)
+    last2, n2 = drain_source(fake, "{KR260}:tclk", last, got2.extend, batch=10)
     assert n2 == 0 and last2 == last and got2 == []
     # resume picks up only newer entries
     fake.entries += _entries(3, ms0=2000)
     got3 = []
-    last3, n3 = drain_source(fake, "KR260:tclk", last, got3.extend, batch=10)
+    last3, n3 = drain_source(fake, "{KR260}:tclk", last, got3.extend, batch=10)
     assert n3 == 3 and last3 == "2002-0"
 
 

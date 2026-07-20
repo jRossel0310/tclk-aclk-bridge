@@ -32,9 +32,10 @@ def test_decode_payload():
 
 def test_decode_entry_reads_only_underscore():
     buf = struct.pack("<IIIHB", 5, 6, 9, 0x1D, 0x02)
-    e = decode_entry(b"1000-500", {b"_": buf, b"sec": b"5"})
+    e = decode_entry(b"1000-500", {b"_": buf, b"sec": b"999"})
     assert e["event"] == 0x1D and e["is_tclk"] == 1 and e["has_data"] == 0
     assert e["ra_time"] == 1000 * 1_000_000 + 500
+    assert e["sec"] == 5
 
 
 def test_decode_entry_missing_underscore_raises():

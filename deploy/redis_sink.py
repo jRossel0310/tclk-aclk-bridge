@@ -17,7 +17,8 @@ On any Redis error it counts the dropped batch, reconnects with backoff, continu
 
 Stream IDs come from the event's RA_Time (ns since epoch), encoded as <ms>-<ns_in_ms>,
 with a per-stream monotonic guard at ns resolution so a backward WR re-arm jump (or two
-events landing in the same ms) cannot make XADD error (Redis requires increasing IDs).
+events with an identical RA_Time, a ns-exact tie) cannot make XADD error (Redis requires
+increasing IDs).
 
 Redis is reached through an injected `connect` factory (default: a real redis-py
 client). redis-py is imported lazily inside that factory so this module imports cleanly
