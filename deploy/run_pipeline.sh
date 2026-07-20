@@ -11,7 +11,10 @@
 # Override the WR-lock refusal with FORCE=1 (e.g. deliberately capturing UNSYNC).
 # Publish to a different Redis (a lab RedisAdapter server) with REDIS_HOST / REDIS_PORT,
 # default 127.0.0.1:6379. The pre-flight ping and the archiver follow the same target:
-#     sudo REDIS_HOST=redis.example.fnal.gov bash run_pipeline.sh
+#     sudo env REDIS_HOST=redis.example.fnal.gov bash run_pipeline.sh
+# Use `sudo env VAR=...` (not `export VAR=...; sudo ...`): sudo resets the environment,
+# so the exported form is SILENTLY ignored and you would publish to the local Redis.
+# The launch banner prints the target that was actually used; check it.
 set -euo pipefail
 
 TCLK_DEV="${1:-/dev/uio4}"

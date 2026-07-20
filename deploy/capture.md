@@ -31,8 +31,12 @@ local one), set REDIS_HOST / REDIS_PORT (default 127.0.0.1:6379). The pre-flight
 both publishers, and the archiver all follow the same target, and the launch banner
 prints it:
 
-    sudo REDIS_HOST=redis.example.fnal.gov bash run_pipeline.sh
-    sudo REDIS_HOST=192.168.50.1 REDIS_PORT=6380 bash run_pipeline.sh
+    sudo env REDIS_HOST=redis.example.fnal.gov bash run_pipeline.sh
+    sudo env REDIS_HOST=192.168.50.1 REDIS_PORT=6380 bash run_pipeline.sh
+
+Use `sudo env VAR=...`, NOT `export VAR=...; sudo ...`: sudo resets the environment, so
+the exported form is silently ignored and you would publish to the local Redis while
+believing it went remote. The launch banner prints the target actually used; check it.
 
 A remote server must bind externally (not just 127.0.0.1) and have protected-mode off,
 or every publish fails. No auth is configured, so keep it on a trusted link. Inspect a
