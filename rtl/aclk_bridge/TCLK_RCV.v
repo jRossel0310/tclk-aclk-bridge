@@ -20,7 +20,8 @@ module TCLK_RCV #(
     output wire        PERR,
     input  wire        PERR_CLR,
     output wire        SIG_ERR,
-    input  wire        SIG_ERR_CLR
+    input  wire        SIG_ERR_CLR,
+    output wire        REF_EDGE
 );
 
     // --------------------------------------------------------
@@ -62,7 +63,8 @@ module TCLK_RCV #(
         .DATA_OUT  (DATA_int),
         .DAVn      (DAVn_int),
         .PERR      (PERR),
-        .PERR_CLR  (PERR_CLR)
+        .PERR_CLR  (PERR_CLR),
+        .REF_EDGE  (REF_EDGE)
     );
 
     // --------------------------------------------------------

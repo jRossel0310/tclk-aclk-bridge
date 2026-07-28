@@ -12,7 +12,8 @@ module TCLK_DESERIALIZER2 (
     output wire [7:0]  DATA_OUT,
     output reg         DAVn,
     output wire        PERR,
-    input  wire        PERR_CLR
+    input  wire        PERR_CLR,
+    output reg         REF_EDGE
 );
 
     // --------------------------------------------------------
@@ -167,6 +168,19 @@ module TCLK_DESERIALIZER2 (
         else
             // Strobe DAVn low for only one clock cycle
             DAVn <= DAVn_int | ~SCLK_posedge;
+    end
+
+    // --------------------------------------------------------
+    // REF_EDGE: deterministic one-cycle frame-accept strobe (pure tap on the
+    // same DAVn_int/SCLK_posedge frame-accept event as DAVn above; does not
+    // feed back into the FSM/shift register/parity/DAVn logic).
+    // --------------------------------------------------------
+
+    always @(posedge CLK_40M or negedge RESETn) begin
+        if (!RESETn)
+            REF_EDGE <= 1'b0;
+        else
+            REF_EDGE <= ~DAVn_int & SCLK_posedge;
     end
 
     // --------------------------------------------------------
