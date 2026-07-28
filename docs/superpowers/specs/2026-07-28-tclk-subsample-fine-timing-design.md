@@ -100,12 +100,21 @@ existing detection condition.
 
 An MMCM generates four 200 MHz clocks at 0/90/180/270 degrees. Four flip-flops
 sample the raw line, one per phase; each tap passes through a 2-FF synchronizer
-(the line is asynchronous) into the 0-degree domain. The combined thermometer
-code identifies which quarter of the 12.5 ns window the most recent edge crossed
--> `fine_phase[1:0]` (bin 0-3), i.e. **1.25 ns bins**.
+(the line is asynchronous) into the 0-degree domain, all with **equal pipeline
+latency** so the four samples are temporally coherent (one period).
 
-- A clean single crossing yields a monotone code (e.g. `1100`) -> `fine_valid=1`.
-- A glitch / double edge yields a non-monotone code (e.g. `1010`) -> `fine_valid=0`.
+Four samples alone give only 3 interior crossing positions per 200 MHz period;
+the 4th quarter `[phase3, next-period phase0)` aliases across the period boundary
+(all-old this period, all-new the next) and would be lost. To recover it, the
+decoder uses a **5-sample window**: the four current-period samples plus the
+previous period's last-phase sample (`s270` delayed one `clk_p0` cycle). Ordered
+earliest to latest these five samples span exactly one period across the
+boundary, giving **4 interior positions = 4 clean 1.25 ns bins** ->
+`fine_phase[1:0]` (bin 0-3), with no wraparound aliasing.
+
+- A clean single crossing yields a monotone thermometer code -> `fine_valid=1`,
+  `fine_phase` = leading-run length - 1 (0..3).
+- A glitch / double edge yields a non-monotone code -> `fine_valid=0`.
 
 The decode handles either edge polarity (biphase-mark alternates), reporting the
 crossing sub-bin for a rising or falling reference edge alike.
