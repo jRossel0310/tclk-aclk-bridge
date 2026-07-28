@@ -26,3 +26,15 @@ def apply(coarse_ns, fine_phase, offsets):
     # here, not a correction to subtract) -- do not "fix" the sign without
     # re-checking Part-2's actual coarse-latch/offset convention first.
     return np.asarray(coarse_ns, float) + offsets[np.asarray(fine_phase, int)]
+
+
+def refine(coarse_ns, fine_phase, fine_valid, offsets):
+    """Refined timestamp: coarse + calibrated sub-bin offset where fine_valid,
+    else coarse alone (graceful fallback). Sign is + per the standalone convention;
+    Part-2 integration pins it against the coarse-latch edge (spec: coarse - offset)."""
+    coarse_ns = np.asarray(coarse_ns, float)
+    out = coarse_ns.copy()
+    v = np.asarray(fine_valid, bool)
+    fp = np.asarray(fine_phase, int)
+    out[v] = coarse_ns[v] + offsets[fp[v]]
+    return out
