@@ -1,7 +1,29 @@
 """Characterization: quantify the DAVn-latched timestamp dither and confirm it is
-the recovered-SCLK-to-clk_40m resync beat (bounded), not byte-assembly latency.
-Runs on the 200 MHz timestamp clock (TCLK_CLK40_PS=5000) to match the board build."""
-import os
+a BOUNDED recovered-SCLK-to-clk_40m resync quantization, not variable byte-assembly
+latency.
+
+Byte assembly in TCLK_DESERIALIZER2 is fixed-length (start + 8 data + parity, one
+transition per cell either way), so it contributes no variable latency by
+construction; the only place dither can come from is the CDC resync of the
+recovered line activity into clk_40m. To make that resync beat actually visible in
+sim, THIS TEST DELIBERATELY RUNS ITS OWN, NON-COMMENSURATE clk_40m (self-contained
+_start_clocks below) instead of the sibling suite's clk_40m. If clk_80m and
+clk_40m are exact rational multiples of each other (e.g. the 12500 ps / 5000 ps =
+5:2 ratio used elsewhere for the 200 MHz board build), every driven event period
+in this testbench lands on the exact same clk_40m phase every time -- by clock-
+ratio arithmetic alone, independent of anything the DUT does -- and the measured
+spread is trivially 0 regardless of whether the DUT has any real dither. Using a
+non-commensurate clk_40m period breaks that artifact and lets the real resync beat
+show up.
+
+Sim limitation: in real hardware the recovered SCLK is asynchronous to clk_40m
+(an independent oscillator recovered from the external TCLK line), and captures
+show ~250 ns of dither. In this testbench the driven line is generated from
+clk_80m, itself a plain synchronous cocotb clock, so the full asynchronous
+magnitude is not reproducible here -- a non-commensurate clk_40m is only a proxy
+that exercises the resync/CDC path and shows it is BOUNDED (~1 clk_40m tick), not
+that it reproduces the real-line magnitude.
+"""
 import statistics
 import cocotb
 from cocotb.clock import Clock
@@ -10,14 +32,26 @@ from cocotb.triggers import ClockCycles, Timer
 from tclk_tx_model import biphase_samples, event_bits, drive_samples, SAMPLES_PER_CELL
 from axi_lite_bfm import axi_read, axi_write
 
-# reuse the register map + helpers from the sibling test
-from test_tclk_readout import (
-    STATUS, EVENT, TS_HI, TS_LO, POP,
-    _start_clocks, reset_dut, axi_read_event, CLK40_PERIOD_PS,
-)
+# reuse the register map + reset/read helpers from the sibling test, but NOT its
+# _start_clocks / CLK40_PERIOD_PS -- this test owns its own clocks (see docstring).
+from test_tclk_readout import STATUS, EVENT, TS_HI, TS_LO, POP, reset_dut, axi_read_event
 
 N_EVENTS = 30
 GAP_CELLS = 12
+
+# clk_80m stays at the OSR=8 rate the driver/DUT assume. clk_40m is DELIBERATELY
+# non-commensurate with it (4166 ps is not a clean rational multiple of 12500 ps)
+# so the recovered-SCLK-to-clk_40m phase is free to differ event to event instead
+# of being locked by clock-ratio arithmetic.
+CLK80_PERIOD_PS = 12500          # 80 MHz, OSR=8
+STAMP_CLK40_PS = 4166            # deliberately non-commensurate stamp clock
+AXI_PERIOD_NS = 14
+
+
+def _start_clocks(dut):
+    cocotb.start_soon(Clock(dut.clk_80m, CLK80_PERIOD_PS, unit="ps").start())
+    cocotb.start_soon(Clock(dut.clk_40m, STAMP_CLK40_PS, unit="ps").start())
+    cocotb.start_soon(Clock(dut.s_axi_aclk, AXI_PERIOD_NS, unit="ns").start())
 
 
 async def _drive_periodic(dut, byte, n, acct):
@@ -57,17 +91,18 @@ async def test_ts_dither_bounded(dut):
 
     assert len(ts) >= N_EVENTS - 2, f"only {len(ts)} events read"
     intervals = [b - a for a, b in zip(ts, ts[1:])]
-    # timestamp ticks -> ns (200 MHz build -> 5 ns per tick when CLK40_PERIOD_PS=5000)
-    tick_ns = CLK40_PERIOD_PS / 1000.0
+    tick_ns = STAMP_CLK40_PS / 1000.0
     spread_ticks = max(intervals) - min(intervals)
     dut._log.info(
         f"period ticks median={statistics.median(intervals)}, "
         f"spread={spread_ticks} ticks (~{spread_ticks*tick_ns:.1f} ns), "
-        f"stdev={statistics.pstdev(intervals):.2f} ticks"
+        f"stdev={statistics.pstdev(intervals):.2f} ticks "
+        f"(non-commensurate stamp clock: clk_80m={CLK80_PERIOD_PS}ps, clk_40m={STAMP_CLK40_PS}ps)"
     )
-    # Resync hypothesis: dither is bounded by a small number of clk_40m periods,
-    # NOT hundreds of ns of byte-assembly variation. Assert the bound.
-    assert spread_ticks <= 6, (
+    # Resync hypothesis: with a non-commensurate stamp clock the CDC resync beat is
+    # actually free to vary event to event; it should still be bounded to about one
+    # clk_40m tick of quantization, NOT hundreds of ns of byte-assembly variation.
+    assert spread_ticks <= 3, (
         f"interval spread {spread_ticks} ticks exceeds the resync bound; "
         f"the dither is not a simple resync beat - revisit the increment-C premise"
     )
