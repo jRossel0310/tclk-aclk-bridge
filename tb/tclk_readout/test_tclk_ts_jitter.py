@@ -6,15 +6,18 @@ Byte assembly in TCLK_DESERIALIZER2 is fixed-length (start + 8 data + parity, on
 transition per cell either way), so it contributes no variable latency by
 construction; the only place dither can come from is the CDC resync of the
 recovered line activity into clk_40m. To make that resync beat actually visible in
-sim, THIS TEST DELIBERATELY RUNS ITS OWN, NON-COMMENSURATE clk_40m (self-contained
-_start_clocks below) instead of the sibling suite's clk_40m. If clk_80m and
-clk_40m are exact rational multiples of each other (e.g. the 12500 ps / 5000 ps =
-5:2 ratio used elsewhere for the 200 MHz board build), every driven event period
-in this testbench lands on the exact same clk_40m phase every time -- by clock-
-ratio arithmetic alone, independent of anything the DUT does -- and the measured
-spread is trivially 0 regardless of whether the DUT has any real dither. Using a
-non-commensurate clk_40m period breaks that artifact and lets the real resync beat
-show up.
+sim, THIS TEST DELIBERATELY RUNS ITS OWN clk_40m (self-contained _start_clocks
+below) instead of the sibling suite's clk_40m, pinned NEAR the board's 200 MHz
+timestamp rate (4998 ps, vs. the board's exact 5000 ps) but NOT commensurate with
+clk_80m. If clk_80m and clk_40m are exact rational multiples of each other (e.g.
+the 12500 ps / 5000 ps = 5:2 ratio used verbatim for the 200 MHz board build),
+every driven event period in this testbench lands on the exact same clk_40m phase
+every time -- by clock-ratio arithmetic alone, independent of anything the DUT
+does -- and the measured spread is trivially 0 regardless of whether the DUT has
+any real dither. Nudging clk_40m 2 ps off the exact board rate (cocotb's Clock
+requires an even period in ps) breaks that artifact and lets the real resync beat
+show up, while staying close enough to 200 MHz to stand in for the board's
+timestamp clock.
 
 Sim limitation: in real hardware the recovered SCLK is asynchronous to clk_40m
 (an independent oscillator recovered from the external TCLK line), and captures
@@ -27,24 +30,29 @@ that it reproduces the real-line magnitude.
 import statistics
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, Timer
+from cocotb.triggers import ClockCycles
 
 from tclk_tx_model import biphase_samples, event_bits, drive_samples, SAMPLES_PER_CELL
-from axi_lite_bfm import axi_read, axi_write
+from axi_lite_bfm import axi_read
 
 # reuse the register map + reset/read helpers from the sibling test, but NOT its
 # _start_clocks / CLK40_PERIOD_PS -- this test owns its own clocks (see docstring).
-from test_tclk_readout import STATUS, EVENT, TS_HI, TS_LO, POP, reset_dut, axi_read_event
+from test_tclk_readout import STATUS, reset_dut, axi_read_event
 
 N_EVENTS = 30
 GAP_CELLS = 12
 
-# clk_80m stays at the OSR=8 rate the driver/DUT assume. clk_40m is DELIBERATELY
-# non-commensurate with it (4166 ps is not a clean rational multiple of 12500 ps)
-# so the recovered-SCLK-to-clk_40m phase is free to differ event to event instead
-# of being locked by clock-ratio arithmetic.
+# clk_80m stays at the OSR=8 rate the driver/DUT assume. clk_40m is pinned NEAR the
+# board's 200 MHz timestamp rate (5000 ps) but nudged 2 ps off it to 4998 ps -- close
+# enough to be the board rate within measurement noise, but NOT an exact rational
+# multiple of 12500 ps, so the 12500/4998 phase walks and the recovered-SCLK-to-
+# clk_40m phase is free to differ event to event instead of being locked by clock-
+# ratio arithmetic (exactly 5000 ps is commensurate with 12500 ps at a 2:5 ratio and
+# gives a degenerate spread=0 -- see the module docstring). cocotb's Clock() requires
+# an even period in ps, so 4999 is not usable; 4998 is the nearest even, non-
+# commensurate stand-in for the board rate.
 CLK80_PERIOD_PS = 12500          # 80 MHz, OSR=8
-STAMP_CLK40_PS = 4166            # deliberately non-commensurate stamp clock
+STAMP_CLK40_PS = 4998            # ~200 MHz board rate, nudged off exact commensurability
 AXI_PERIOD_NS = 14
 
 
