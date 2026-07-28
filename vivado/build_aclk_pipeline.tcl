@@ -180,7 +180,7 @@ connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_resetn0] [get_bd_pins clk_wiz_0
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins u_pipeline/clk_80m]
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out2] [get_bd_pins u_pipeline/clk_40m]
 # clk_out3/4/5: 200 MHz, 90/180/270 deg -- the fine-TDC's quadrature companions
-# to clk_out2 (clk_p0 = clk_40m). 6 of 7 MMCM outputs now used (80 + 200x4-phase).
+# to clk_out2 (clk_p0 = clk_40m). 5 of 7 MMCM outputs now used (80 + 200x4-phase).
 # The existing XDC's async-clock-group wildcard (clk_out*clk_wiz*, 2:1) already
 # covers same-frequency phase outputs pairwise, so no XDC change is needed here.
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins u_pipeline/clk_p90]

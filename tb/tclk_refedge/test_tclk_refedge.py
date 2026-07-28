@@ -96,6 +96,12 @@ async def test_ref_edge_once_per_good_frame(dut):
         f"{[f'0x{x:02X}' for x in good_events]}"
     )
     assert 0x55 not in ref_edges, "bad-parity frame pulsed REF_EDGE"
+    # The ~DAVn frame-accept captures must match the good frames exactly (one per
+    # good frame, in order, bad-parity frame excluded) -- same set REF_EDGE tapped.
+    assert captured == good_events, (
+        f"~DAVn DATA captures {[f'0x{x:02X}' for x in captured]} != "
+        f"good frames {[f'0x{x:02X}' for x in good_events]}"
+    )
     dut._log.info(
         f"REF_EDGE OK: {len(ref_edges)} pulses, each coincident with ~DAVn, "
         f"bad-parity frame silent"

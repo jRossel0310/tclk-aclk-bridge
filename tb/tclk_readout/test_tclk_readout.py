@@ -51,6 +51,13 @@ FLAG_IS_TCLK = 0x2
 
 
 async def _start_quadrature(dut, period_ps):
+    # NOTE: near-duplicate of the phase-clock starters in tb/tclk_readout/
+    # test_tclk_fine_chain.py and tb/aclk_pipeline_chain/test_aclk_pipeline_chain.py.
+    # This is the parametrized copy (period passed in) and the one reused by
+    # test_tclk_ts_jitter.py; the other two hardcode their suite's period from a
+    # module constant. Not hoisted to a shared module: the signatures differ and
+    # each reads a different local period, so a single shared helper would tangle
+    # more than it saves.
     # clk_p90/p180/p270 are the fine-TDC's quadrature companions to clk_40m
     # (= clk_p0): same frequency, each started period_ps/4 after the previous
     # one so all four land at true 0/90/180/270 degree offsets (same

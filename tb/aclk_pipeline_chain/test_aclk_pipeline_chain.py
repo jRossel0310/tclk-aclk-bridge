@@ -63,6 +63,9 @@ PHASE_PS = CLK40_PERIOD_PS // 4
 
 
 async def _start_quadrature(dut):
+    # NOTE: duplicated (fixed-period variant) -- see the parametrized copy in
+    # tb/tclk_readout/test_tclk_readout.py for why it is not hoisted to a shared
+    # module.
     # Same fixed-per-step-delay pattern as the Part-1 sweep test's
     # _start_phases (tb/tclk_fine_tdc/test_tclk_fine_tdc.py): starting each
     # phase clock PHASE_PS after the previous one lands the four rising edges

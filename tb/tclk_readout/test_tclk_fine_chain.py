@@ -63,6 +63,9 @@ def _start_clocks(dut):
 
 
 async def _start_quadrature(dut):
+    # NOTE: duplicated (fixed-period variant) -- see the parametrized copy in
+    # tb/tclk_readout/test_tclk_readout.py for why it is not hoisted to a shared
+    # module.
     # Start each phase clock PHASE_PS after the previous one so the four rising
     # edges land at true 0/90/180/270 degree offsets within one 5 ns period
     # (same fixed-per-step-delay pattern as the Part-1 sweep test's _start_phases;
