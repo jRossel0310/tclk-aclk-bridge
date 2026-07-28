@@ -90,11 +90,11 @@ output strobe; the other two are new.
 ### Block 1 - Existing receiver + reference-edge strobe (minimal change)
 
 `TCLK_RCV` (serdec4_9MHz + TCLK_DESERIALIZER2) is kept bit-identical. The only
-addition: the deserializer raises a **one-cycle `ref_edge` strobe** aligned to
-the carrier edge at the **start of the event byte** (the edge where byte
-assembly begins). This is the point in every frame we fine-time, so event-to-
-event spacing is what tightens. No decode logic changes; `ref_edge` is a tap on
-existing state.
+addition: the deserializer raises a **one-cycle `ref_edge` strobe** at
+**frame detection** (the carrier edge tied to `DAVn`). See *Reference edge
+definition* for why this frame-completion edge is equivalent to a start-of-byte
+edge for our purpose. No decode logic changes; `ref_edge` is a tap on the
+existing detection condition.
 
 ### Block 2 - Multiphase edge-TDC (new)
 
@@ -118,34 +118,47 @@ tight, fall back to 2 phases / DDR (2.5 ns bins, still 5x).
 
 ### Block 3 - Merge / tagging (new)
 
-At the `ref_edge` strobe, latch **both** the coarse 200 MHz timestamp **and**
-`fine_phase`/`fine_valid` for the event, and hold them until `DAVn`. This is the
-crux: it moves the event's timestamp from byte-completion to the start-of-byte
-reference edge. That move alone removes the ~250 ns byte-assembly dither and
-brings localization to the ~12.5 ns strobe floor ("increment C"); the fine phase
-then refines the same reference-edge time to ~1.25 ns ("increment A"). At `DAVn`
-the held `{coarse TS, fine bits}` are packed with the completed event byte.
-Because the fine bits and the coarse stamp travel inside the FIFO word with their
-event, they cross the clock-domain boundary together and need no separate CDC
-(the property the coarse timestamp already relies on).
+At the `ref_edge` strobe (frame detection), latch **both** the coarse 200 MHz
+timestamp **and** `fine_phase`/`fine_valid` for the event, and hold them until
+`DAVn` for packing. Capturing the coarse stamp from this carrier-edge-derived
+strobe, rather than from the `DAVn` output that is resynced from the recovered
+SCLK onto `clk_40m`, is what removes the resync-beat dither seen in the captures
+("increment C"); the fine phase then refines the same reference-edge time to
+~1.25 ns ("increment A"). Because the fine bits and the coarse stamp travel
+inside the FIFO word with their event, they cross the clock-domain boundary
+together and need no separate CDC (the property the coarse timestamp already
+relies on).
 
-Localization chain: byte-completion stamp (~250 ns dither, today) -> ref-edge
-coarse stamp (~12.5 ns, increment C) -> + fine phase (~1.25 ns, increment A).
+Localization chain: DAVn-resynced stamp (dither observed ~250 ns, to be
+confirmed by the characterization task) -> ref-edge coarse stamp (increment C)
+-> + fine phase (~1.25 ns, increment A).
 
 ## Reference edge definition
 
-The reference edge is the **carrier edge at the start of the event byte**. TCLK's
-carrier is continuously toggling (biphase-mark), so there is no idle->active edge
-to key on; the start-of-byte edge is deterministic (the deserializer already
-knows when assembly begins) and gives every event the same in-frame reference, so
-the useful output - event-to-event spacing - is what improves.
+The reference edge is the **frame-completion carrier edge** - the transition tied
+to the deserializer's frame detection (`DAVn`). TCLK's carrier toggles
+continuously (biphase-mark) and the decode FSM only knows a frame exists at
+completion (`TCLK_DESERIALIZER2.v`, detection on `data_reg[10:8]==110`), so a true
+start-of-byte edge is not available without restructuring the proven FSM - which
+is out of scope.
 
-## Build order (two increments)
+This does not matter for the goal. A TCLK frame is fixed length (start + 8 data +
+parity = 10 cells), so `DAVn` fires a **constant** number of bit-cells after the
+start edge. A constant offset **cancels in event-to-event spacing** - the only
+thing measured ($02 period, jitter, drift). Tagging the same frame-completion
+edge on every frame is therefore equivalent to tagging the start edge, and is
+cleanly available as a tap on the existing detection condition.
 
-1. **Increment C** - add the `ref_edge` strobe and move the coarse timestamp
-   capture from `DAVn` to `ref_edge` (held until `DAVn`). Reaches the ~12.5 ns
-   floor by removing the byte-assembly dither. Self-contained and independently
-   valuable; the decode-preservation regression must pass here.
+## Build order (characterization, then two increments)
+
+0. **Characterization** - in the existing `tclk_readout` testbench, reproduce and
+   quantify the byte-completion timestamp jitter and confirm its source (expected:
+   the recovered-SCLK-to-`clk_40m` resync beat, not byte-assembly latency). This
+   validates the increment-C premise on measured ground before we build on it.
+1. **Increment C** - add the `ref_edge` strobe (frame-detection tap) and capture
+   the coarse timestamp at `ref_edge` (held until `DAVn`), off the fast clock
+   rather than the resynced `DAVn`. Removes the resync-beat dither. Self-contained;
+   the decode-preservation regression must pass here.
 2. **Increment A** - add the multiphase edge-TDC and the `fine_phase`/
    `fine_valid` bits, refining the reference-edge time to ~1.25 ns.
 
