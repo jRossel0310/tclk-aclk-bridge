@@ -47,3 +47,38 @@ def test_refine_tightens_periodic_spacing():
     off = calibrate_bins(fp, n_bins=4, period_ns=5.0)
     ref = refine(coarse, fp, np.ones(n, int), off)
     assert np.std(np.diff(ref)) < np.std(np.diff(coarse))
+
+
+def test_refine_boundary_bin_no_wrap_is_correct():
+    # Faithful model of the RTL boundary-bin latch (proven against real RTL in
+    # tb/tclk_fine_tdc/test_tclk_fine_tdc.py::test_bin0_coarse_reconstruction):
+    # the RTL sweep emits phases in order 1,2,3,0 as the sub-tick offset grows,
+    # and the boundary quarter (fine_phase==0) latches its coarse EXACTLY ONE tick
+    # (period) higher than bins 1-3. calibrate_bins hands bin 0 the smallest
+    # in-tick offset, so refine()'s `+` reconstructs it correctly with NO wrap.
+    # A period-wrap on bin 0 double-counts the tick and REGRESSES the jitter; this
+    # test is the regression guard that keeps such a wrap out of the calibration.
+    rng = np.random.default_rng(3)
+    n = 40_000
+    period = 5.0
+    true_t = np.arange(n) * (5000.0 + 1.7) + rng.normal(0, 0.12, n)   # marker w/ sub-tick walk
+    tick = np.floor(true_t / period)
+    phi = true_t - tick * period                                      # ns in [0, period)
+    phase = np.where(phi < 1.25, 1, np.where(phi < 2.5, 2, np.where(phi < 3.75, 3, 0)))
+    dcoarse = np.where(phase == 0, 1.0, 0.0)                          # boundary bin: +1 tick
+    coarse = (tick + dcoarse) * period
+    off = calibrate_bins(phase, n_bins=4, period_ns=period)
+
+    ref_nowrap = refine(coarse, phase, np.ones(n, int), off)
+    wrapped = off.copy()
+    wrapped[0] -= period                                             # the tempting-but-wrong wrap
+    ref_wrap = refine(coarse, phase, np.ones(n, int), wrapped)
+
+    # current `+` convention (no wrap) tightens jitter well below the coarse spacing
+    assert np.std(np.diff(ref_nowrap)) < np.std(np.diff(coarse))
+    # ...and reconstructs the true edge times to within a bin half-width
+    resid = ref_nowrap - true_t
+    resid -= np.median(resid)                                        # remove the fixed pipeline latency
+    assert np.max(np.abs(resid)) < period / 4                        # < 1.25 ns
+    # a bin-0 period-wrap makes it strictly WORSE (double-counts the +1 tick)
+    assert np.std(np.diff(ref_wrap)) > np.std(np.diff(ref_nowrap))

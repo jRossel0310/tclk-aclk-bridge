@@ -222,6 +222,22 @@ Prerequisites: Step 3 confirmed `fine_valid` is high on live periodic markers.
 
 ---
 
+## Step 5a: Bin-0 Continuity Validation (Board)
+
+**Objective:** Confirm on real hardware that the boundary bin's +1-tick coarse latch is compensated by the `+`/index-order convention -- i.e. the refined timestamp is continuous across the bin-3 -> bin-0 boundary, exactly as simulation predicts (see the boundary-bin note above). Until this passes, the refined path is sim-characterized only.
+
+Prerequisites: Steps 3-5 done (fine-valid high, offsets calibrated, refined timestamps produced).
+
+1. **Isolate near-boundary events.** From the captured marker stream, select refined timestamps whose `fine_phase` is 3 or 0 (the two bins straddling the tick boundary). These are physically ~1.25 ns apart.
+
+2. **Check for a spurious ~one-period jump.** Sort the refined timestamps of a single periodic marker by true arrival order and inspect the residuals (as in Step 5's detrended panel), grouped by `fine_phase`:
+   - **Success:** bin-0 residuals sit in the same ~1.25 ns band as bins 1-3 (no offset cluster). The +1 tick is being compensated; the `+`/no-wrap convention is correct on hardware.
+   - **Failure:** bin-0 residuals cluster ~one coarse tick (`period_ns`, ~5 ns) away from the others. That would mean the packed coarse or the calibration order differs from the sim model -- do NOT paper over it with a wrap; re-run `tb/tclk_fine_tdc/test_tclk_fine_tdc.py::test_bin0_coarse_reconstruction` against the as-built RTL and reconcile before trusting refined bin-0 timestamps.
+
+3. **Cross-check occupancy.** `calibrate_bins` must see bin 0 populated at roughly its fractional width; if bin 0 is near-empty (e.g. real-line edges never land in the boundary quarter), the compensation is untested on this board and refined bin-0 events should be treated as coarse-only.
+
+---
+
 ## Graceful Fallback
 
 If at any point `fine_valid` collapses (Step 3, <50% valid) or jitter does not improve (Step 5), **the coarse 200 MHz path is exactly the shipped build**:
@@ -240,7 +256,7 @@ For long-term deployment, if fine-valid < 95% on the real line, disable in firmw
 |------|------|------|----------------------|
 | 1 | Vivado TCL | `vivado/build_aclk_pipeline.tcl` | Lines 277–310: timing check (WNS, TNS, worst paths) |
 | 2 | Python | `deploy/tclk_read.py` | `readout_common.py` offsets: STATUS (0x00), EVENT_COUNT (0x70), ERROR_COUNT (0x90) |
-| 3 | Python | Custom FIFO drain or `deploy/tclk_read.py` + FLAGS parse | FIFO word bits [143:128] = FLAGS[15:0]; FLAGS[4] = fine_valid |
+| 3 | Python | Custom FIFO drain or `deploy/tclk_read.py` + FLAGS parse | 160-bit FIFO word `{FLAGS[15:0],TS[63:0],EVENT[15:0],DATA[63:0]}` -> FLAGS = bits [159:144]; FLAGS[4] = fine_valid |
 | 4 | Python | `deploy/fine_calibrate.py` → `calibrate_bins()` | Returns 4-element offset array (nanoseconds) |
 | 5 | Python | `deploy/fine_calibrate.py` → `refine()` + `deploy/marker_timing.py` | Inter-marker jitter (ns RMS) before/after |
 
@@ -251,4 +267,5 @@ For long-term deployment, if fine-valid < 95% on the real line, disable in firmw
 - The 5-output clk_wiz (80 MHz + 4x 200 MHz phases) is instantiated in `vivado/build_aclk_pipeline.tcl` lines 158–188. The phase outputs (clk_p90, clk_p180, clk_p270) are threaded to `u_pipeline/tclk_readout_top` in the block design and routed to the fine-TDC module (`rtl/aclk_lite/tclk_fine_tdc.sv`).
 - The fine-TDC is instantiated in `tclk_readout_top.sv` lines 198–213. It freezes its edge detection on the `ref_edge` signal (the TCLK_DESERIALIZER2's frame-strobe). The readout's event push is delayed 3 clk_40m cycles (ALIGN_DELAY, line 228) to align with the fine-TDC's frozen state settle time, pairing each event with its corresponding frozen triple.
 - FLAGS packing is in `tclk_readout_top.sv` line 250: `{11'b0, frozen_valid, frozen_phase, 1'b1, 1'b0}`. The word is latched at push time, so `frozen_valid` and `frozen_phase` are stable when `push_valid` fires (after the 3-cycle alignment delay).
-- The calibration and refinement functions (`fine_calibrate.py`) use `+` sign convention (offset added to coarse); Part-2 integration pins the sign against the coarse-latch edge (see the spec comments in that file).
+- The calibration and refinement functions (`fine_calibrate.py`) use the `+` sign convention (calibrated offset added to the packed coarse timestamp) with `calibrate_bins`' index-order offsets and **no boundary-bin wrap**. The spec draft wrote `refined = coarse - offset`; Part-2 characterization against the actual coarse-latch edge superseded it -- the `+` form is the implementation. See the sign/boundary-bin note below and the module docstring in `fine_calibrate.py`.
+- **Boundary bin (fine_phase==0) -- sim-characterized, NOT yet board-validated.** The fine-TDC resolves the boundary quarter one `clk_p0` cycle later than bins 1-3, so a bin-0 event's packed coarse timestamp is exactly one tick (one `period_ns`) higher than a physically-adjacent non-boundary edge (RTL sweep order 1,2,3,0). This is compensated automatically, not corrected: `calibrate_bins` assigns bin 0 the smallest in-tick offset, which cancels the +1 tick under `refine()`'s `+`. Subtracting a period from bin 0 would double-count the tick and drop bin-0 events ~one period early (verified in sim to regress ~25 % of events). The proof lives in `tb/tclk_fine_tdc/test_tclk_fine_tdc.py::test_bin0_coarse_reconstruction` (real RTL) and `deploy/test_fine_calibrate.py::test_refine_boundary_bin_no_wrap_is_correct`. **These are simulation results only; the end-to-end refined timestamp has not been validated on hardware.** Step 5a below adds the board check.

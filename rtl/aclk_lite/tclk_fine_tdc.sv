@@ -121,6 +121,10 @@ module tclk_fine_tdc (
     // Freeze: on the synced ref_edge pulse, capture the held last-carrier-edge
     // triple. Stable until the next ref_edge, regardless of exactly when
     // ref_edge lands within a carrier period.
+    // Note: if ref_edge_p0 and edge_stb assert on the SAME clk_p0 cycle, the
+    // non-blocking freeze reads the PRE-update edge_coarse -- i.e. the previous
+    // carrier edge, not the one edge_stb is latching this cycle (a <=1 carrier-
+    // period skew; vanishingly unlikely given ref_edge's 3-cycle sync). Doc only.
     always @(posedge clk_p0 or negedge rstn) begin
         if (!rstn) begin
             frozen_coarse <= 64'd0; frozen_phase <= 2'd0; frozen_valid <= 1'b0;

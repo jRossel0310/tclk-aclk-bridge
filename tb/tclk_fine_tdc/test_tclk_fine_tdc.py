@@ -1,9 +1,18 @@
+import sys
+from pathlib import Path
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
+# deploy/ holds the code-density calibration (fine_calibrate.py) exercised by the
+# bin-0 characterization test below.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "deploy"))
+from fine_calibrate import calibrate_bins
+
 PERIOD_PS = 5000          # 200 MHz
 PHASE_PS = PERIOD_PS // 4 # 1.25 ns
+PERIOD_NS = 5.0           # one coarse tick, ns (WR timebase advances 5 ns / clk_p0)
 
 
 async def _start_phases(dut):
@@ -95,6 +104,132 @@ async def test_edge_sweep(dut):
 
     dut._log.info("offset(ps) -> fine_phase runs: %s", [(p, n) for p, n in runs])
     dut._log.info("full sweep: %s", seen)
+
+
+@cocotb.test()
+async def test_bin0_coarse_reconstruction(dut):
+    """Characterize the boundary-bin (fine_phase==0) coarse latch and prove the
+    reconstruction convention is self-consistent WITHOUT a per-tick "wrap".
+
+    A single rising edge is swept across a full clk_p0 period while a free-running
+    coarse counter runs on clk_p0. For each offset we capture the held
+    edge_coarse/edge_phase -- the exact triple frozen_coarse/frozen_phase copy on
+    ref_edge, i.e. the value the readout packs (USE_EXT_TS=1) and fine_calibrate
+    later consumes. From that RTL-measured sweep this pins three facts:
+
+      1. THE +1-TICK DISCONTINUITY IS REAL AND EXACTLY ONE clk_p0 PERIOD. Bins
+         1,2,3 latch a constant coarse (the fixed decode-pipeline latency); bin 0
+         (the boundary quarter, swept last -- order 1,2,3,0) latches EXACTLY one
+         tick higher, because its edge_stb resolves one clk_p0 cycle later
+         (s270_prev needs the extra delay; see the module header). RAW coarse is
+         therefore NOT continuous across the bin-3 -> bin-0 boundary: two edges
+         ~1.25 ns apart get coarse values a full tick apart.
+
+      2. THE CURRENT CONVENTION ALREADY COMPENSATES IT. calibrate_bins() indexes
+         offsets by fine_phase and cumulates from bin 0, so it hands the boundary
+         bin the SMALLEST in-tick offset (~0.6 ns). Combined with refine()'s `+`
+         and bin 0's +1 tick, coarse+offset[phase] is MONOTONIC across the whole
+         period in ~1.25 ns steps -- the +1 tick and the small offset cancel. No
+         wrap is needed or correct.
+
+      3. A per-tick "wrap" (offset[0] -= period) BREAKS it: it double-subtracts
+         the tick that was never spurious and drops bin-0 events ~one period
+         early, making the reconstruction NON-monotonic. This test fails if such
+         a wrap is ever folded into the calibration path.
+    """
+    dut.line.value = 0
+    dut.rstn.value = 0
+    dut.ref_edge.value = 0
+    dut.coarse_in.value = 0
+    await _start_phases(dut)
+    await ClockCycles(dut.clk_p0, 5)
+    dut.rstn.value = 1
+    await ClockCycles(dut.clk_p0, 5)
+
+    # Free-running coarse counter on clk_p0 (one count == one PERIOD_NS tick),
+    # mirroring the WR ns timebase the board feeds into coarse_in.
+    async def _coarse_counter():
+        n = 0
+        while True:
+            await RisingEdge(dut.clk_p0)
+            n += 1
+            dut.coarse_in.value = n
+    cocotb.start_soon(_coarse_counter())
+    await ClockCycles(dut.clk_p0, 3)
+
+    seen = []  # (off_ps, coarse_delta_ticks, phase)
+    for off_ps in range(100, PERIOD_PS, 100):
+        dut.line.value = 0
+        await ClockCycles(dut.clk_p0, 8)         # drain prior transition; regs settle
+        await RisingEdge(dut.clk_p0)
+        await Timer(1, unit="ps")
+        c_align = int(dut.coarse_in.value)       # counter at this tick boundary
+        await Timer(off_ps, unit="ps")
+        dut.line.value = 1                        # the sub-sample edge
+        await ClockCycles(dut.clk_p0, 8)          # let it reach edge_coarse/edge_phase
+        await Timer(1, unit="ps")
+        assert int(dut.edge_valid.value) == 1, f"off={off_ps}: edge_valid=0 (no clean decode)"
+        seen.append((off_ps, int(dut.edge_coarse.value) - c_align, int(dut.edge_phase.value)))
+
+    dut._log.info("bin-0 sweep (off_ps, dcoarse, phase): %s", seen)
+
+    phases = [p for _, _, p in seen]
+    assert set(phases) == {0, 1, 2, 3}, f"not all 4 bins swept: {sorted(set(phases))}"
+
+    # Fact 1: bins 1,2,3 share one coarse latency; bin 0 is exactly +1 tick.
+    dc_nonboundary = {dc for _, dc, p in seen if p != 0}
+    dc_boundary = {dc for _, dc, p in seen if p == 0}
+    assert len(dc_nonboundary) == 1, f"bins 1-3 coarse latency not constant: {dc_nonboundary}"
+    assert len(dc_boundary) == 1, f"bin 0 coarse latency not constant: {dc_boundary}"
+    d_base = dc_nonboundary.pop()
+    d_bin0 = dc_boundary.pop()
+    disc = d_bin0 - d_base
+    assert disc == 1, (
+        f"bin-0 coarse discontinuity is {disc} ticks, expected exactly 1 clk_p0 period. "
+        f"A wrap sized for 1 tick would be wrong -- STOP and reassess."
+    )
+
+    # Code-density offsets from the swept phase histogram (index-order, as the
+    # real calibration produces them).
+    offsets = calibrate_bins(phases, n_bins=4, period_ns=PERIOD_NS)
+
+    def recon(off_table):
+        return [dc * PERIOD_NS + off_table[p] for _, dc, p in seen]
+
+    # Fact 2: current convention (no wrap) reconstructs monotonically. Steps are
+    # 0 within a bin (same phase+coarse) and ~one bin-width (1.25 ns) at each bin
+    # transition; crucially none go backward, and there is no ~one-period jump.
+    r_nowrap = recon(offsets)
+    steps = [b - a for a, b in zip(r_nowrap, r_nowrap[1:])]
+    assert all(s >= -1e-9 for s in steps), (
+        f"current (no-wrap) reconstruction is NOT monotonic across the period: "
+        f"steps={[round(s, 3) for s in steps]}; recon={[round(x, 3) for x in r_nowrap]}"
+    )
+    assert max(steps) < 2.0 * (PERIOD_NS / 4), (
+        f"current reconstruction has a >~2-bin gap ({max(steps):.3f} ns): the +1 tick "
+        f"is not being compensated as expected"
+    )
+    assert r_nowrap[-1] - r_nowrap[0] < PERIOD_NS, (
+        f"reconstruction spans a full period ({r_nowrap[-1] - r_nowrap[0]:.3f} ns) across a "
+        f"single sub-tick sweep -- the boundary bin's +1 tick leaked in uncompensated"
+    )
+
+    # Fact 3: subtracting a period from bin 0 double-counts the tick and breaks it.
+    wrapped = offsets.copy()
+    wrapped[0] -= PERIOD_NS
+    r_wrap = recon(wrapped)
+    wrap_steps = [b - a for a, b in zip(r_wrap, r_wrap[1:])]
+    assert any(s < 0 for s in wrap_steps), (
+        f"a bin-0 period-wrap was expected to BREAK monotonicity but did not: "
+        f"steps={[round(s, 3) for s in wrap_steps]}. The reconstruction convention may "
+        f"have changed -- re-derive before trusting this test."
+    )
+    dut._log.info(
+        "bin-0 OK: discontinuity = +1 tick (exactly one %.1f ns period); no-wrap "
+        "reconstruction monotonic (max step %.3f ns); period-wrap breaks it -> "
+        "current calibrate/refine convention is correct, NO wrap.",
+        PERIOD_NS, max(steps),
+    )
 
 
 @cocotb.test()
