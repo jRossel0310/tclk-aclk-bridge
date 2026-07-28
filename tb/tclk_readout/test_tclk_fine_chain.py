@@ -3,7 +3,14 @@ every decoded TCLK event still passes through the proven decode path unchanged
 (order, EVENT_COUNT, no new ERROR_COUNT), AND now carries a ref-edge coarse
 timestamp (frozen_coarse, via ts_ext -> u_axi) plus fine sub-bin bits in
 FLAGS[4:2], correctly paired to THAT event (not off-by-one against a
-neighboring event).
+neighboring event, and not the readout core's own internal counter wearing a
+frozen_coarse costume).
+
+REQUIRES USE_EXT_TS=1 (set by this suite's runner.py entry, NOT the default):
+at USE_EXT_TS=0 aclk_readout_core packs its own internal free-running counter
+regardless of what is wired to ts_ext, so the frozen_coarse wiring this test
+exists to prove would be silently dead and every assertion below would still
+pass against the wrong signal.
 
 Runs the DUT's clk_40m as the fine-TDC's 200 MHz clk_p0 reference, with
 clk_p90/p180/p270 the true-quadrature companions (same pattern as the Part-1
@@ -11,6 +18,14 @@ sweep test, tb/tclk_fine_tdc/test_tclk_fine_tdc.py's _start_phases), and
 drives ts_ext as a free-running 200 MHz counter -- the shared coarse
 timebase the TDC stamps each ref-edge (REF_EDGE == ~DAVn, the deserializer's
 frame-accept strobe) against.
+
+Two independent checks on the packed TS, deliberately not collapsed into
+one: a bit-exact comparison against the DUT's own internal frozen_coarse
+wire (catches USE_EXT_TS/wiring/FIFO-packing bugs) and a tolerance-bounded
+comparison against a ground truth sampled entirely outside the TDC's
+pipeline (catches alignment/off-by-one bugs and a stuck TDC -- see the
+comments at each assertion for why one check cannot catch what the other
+does).
 """
 import cocotb
 from cocotb.clock import Clock
@@ -72,14 +87,32 @@ async def _davn_monitor(dut, acct, davn_ts):
     """Record the coarse counter's value at every raw frame-accept strobe
     (dbg_dav, the same clk_40m cycle TCLK_RCV asserts REF_EDGE) -- the ground
     truth for "this event's ref edge landed around here", independent of the
-    TDC's internal alignment. Used to catch an off-by-one event/timestamp
-    pairing: a misaligned push would report a timestamp far from this value
-    (roughly one whole inter-event gap away), not near it."""
+    TDC's internal alignment (and independent of frozen_coarse/push_valid --
+    it never reads those signals). Used to catch: (a) an off-by-one event/
+    timestamp pairing, where a misaligned push reports a timestamp far from
+    this value (roughly one whole inter-event gap away); (b) a stuck/dead
+    fine-TDC (e.g. USE_EXT_TS not actually wired through), where the packed
+    ts stops tracking this ground truth entirely."""
     while not acct.get("stop_monitor"):
         await RisingEdge(dut.clk_40m)
         await Timer(1, unit="ns")
         if _b(dut.dbg_dav) == 1:
             davn_ts.append(int(dut.ts_ext.value))
+
+
+async def _push_monitor(dut, acct, push_ts):
+    """Record the DUT's own internal frozen_coarse wire at the exact cycle
+    push_valid fires (hierarchical access to tclk_readout_top's internal
+    nets -- both are plain module-scope wires, not buried in a sub-instance).
+    This is a bit-exact check of the packing/AXI path: if it ever disagreed
+    with the value actually read back over AXI, that would mean the FIFO/AXI
+    packing broke (not a TDC or alignment question -- see the independent
+    davn_ts-based checks below for those)."""
+    while not acct.get("stop_monitor"):
+        await RisingEdge(dut.clk_40m)
+        await Timer(1, unit="ns")
+        if _b(dut.push_valid) == 1:
+            push_ts.append(int(dut.frozen_coarse.value))
 
 
 @cocotb.test()
@@ -93,8 +126,10 @@ async def test_tclk_fine_chain(dut):
 
     acct = {}
     davn_ts = []
+    push_ts = []
     cocotb.start_soon(_coarse_counter(dut, acct))
     cocotb.start_soon(_davn_monitor(dut, acct, davn_ts))
+    cocotb.start_soon(_push_monitor(dut, acct, push_ts))
     cocotb.start_soon(_tclk_driver(dut, events, acct))
 
     # Let serdec lock, then baseline ERROR_COUNT past the one expected startup PERR.
@@ -126,6 +161,9 @@ async def test_tclk_fine_chain(dut):
     assert len(davn_ts) == len(events), (
         f"monitor saw {len(davn_ts)} dbg_dav strobes, expected {len(events)}"
     )
+    assert len(push_ts) == len(events), (
+        f"monitor saw {len(push_ts)} push_valid strobes, expected {len(events)}"
+    )
 
     # --- decode-preservation: the proven path is unchanged ---
     last_ts = -1
@@ -156,16 +194,42 @@ async def test_tclk_fine_chain(dut):
     assert err_count - base_err == 0, \
         f"ERROR_COUNT rose by {err_count - base_err} on a clean stream (base {base_err})"
 
-    # --- per-event pairing: prove no off-by-one between event and timestamp ---
-    # davn_ts[i] is event i's OWN frame-accept-time coarse reading (ground truth,
-    # sampled independently of the TDC's internal pipeline). The packed ts[i] is
-    # frozen_coarse, which the TDC latches from the last raw line transition just
-    # BEFORE ref_edge -- a few ns before frame-accept, never a whole inter-event
-    # gap away. A wrong alignment (e.g. no delay, or the wrong delay, between
-    # decode and push) would instead pair event i with a NEIGHBOR event's frozen
-    # values, landing near davn_ts[i-1] or davn_ts[i+1] -- one whole inter-event
-    # gap (hundreds of ticks) away from davn_ts[i].
     ts_list = [c[3] for c in collected]
+
+    # --- bit-exact: the packed ts is genuinely frozen_coarse, not the core's
+    # internal free-running counter. push_ts[i] is the DUT's own internal
+    # frozen_coarse wire sampled at the exact cycle push_valid fired (both
+    # plain module-scope nets in tclk_readout_top, read via hierarchical
+    # access -- no tolerance, no independent reconstruction). This is what
+    # directly catches USE_EXT_TS not actually being wired to 1 (the packed
+    # ts would then be aclk_readout_core's own counter, which would NOT
+    # match the DUT's frozen_coarse wire at all after even a few events,
+    # since the two counters start from different reset points and free-run
+    # independently) or any FIFO/AXI packing corruption of the TS field.
+    for i, (ts, wire_ts) in enumerate(zip(ts_list, push_ts)):
+        assert ts == wire_ts, (
+            f"#{i} packed ts={ts} != frozen_coarse sampled at its own push "
+            f"cycle ({wire_ts}) -- either USE_EXT_TS isn't actually wired to "
+            f"1 (ts_ext into u_axi is the core's internal counter, not "
+            f"frozen_coarse) or the TS field was corrupted in the FIFO/AXI path"
+        )
+
+    # --- per-event pairing: prove no off-by-one between event and timestamp,
+    # and that the fine-TDC is actually alive (not stuck) ---
+    # davn_ts[i] is event i's OWN frame-accept-time coarse reading, sampled
+    # from a ground truth that is INDEPENDENT of both the TDC's internal
+    # pipeline and of push_valid/frozen_coarse (it only watches dbg_dav and
+    # the testbench's own free-running counter). The packed ts[i] is
+    # frozen_coarse, which the TDC latches from the last raw line transition
+    # just BEFORE ref_edge -- a few ns before frame-accept, never a whole
+    # inter-event gap away. This check catches what the bit-exact check above
+    # structurally cannot: a wrong alignment (e.g. no delay, or the wrong
+    # delay, between decode and push) would pair event i with a NEIGHBOR
+    # event's frozen values, landing near davn_ts[i-1] or davn_ts[i+1] --
+    # one whole inter-event gap (hundreds of ticks) away from davn_ts[i]. A
+    # stuck/frozen-at-reset TDC (frozen_coarse never updating) would show an
+    # ever-growing drift instead of a bounded one, since davn_ts keeps
+    # climbing every event while ts would not.
     gaps = [b - a for a, b in zip(davn_ts, davn_ts[1:])]
     nominal_gap = sum(gaps) / len(gaps)
     tol = nominal_gap / 2
@@ -174,11 +238,14 @@ async def test_tclk_fine_chain(dut):
         assert abs(drift) < tol, (
             f"#{i} packed ts={ts} is {drift} ticks from its own frame-accept "
             f"reading {dts} (nominal inter-event gap {nominal_gap:.0f} ticks, "
-            f"tol {tol:.0f}) -- looks like an off-by-one event/timestamp pairing"
+            f"tol {tol:.0f}) -- looks like an off-by-one event/timestamp "
+            f"pairing, or a stuck/dead fine-TDC"
         )
 
     dut._log.info(
         f"TCLK fine-TDC chain OK: {len(collected)} events decoded+read, all "
-        f"fine_valid=1, ts within {tol:.0f} ticks of their own frame-accept "
-        f"reading (nominal gap {nominal_gap:.0f} ticks) -- no off-by-one pairing"
+        f"fine_valid=1, ts bit-exact vs. the DUT's own frozen_coarse wire at "
+        f"push time, and within {tol:.0f} ticks of their own frame-accept "
+        f"reading (nominal gap {nominal_gap:.0f} ticks) -- no off-by-one "
+        f"pairing and the TDC is genuinely live"
     )

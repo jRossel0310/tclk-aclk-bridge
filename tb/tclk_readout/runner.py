@@ -29,6 +29,9 @@ _TCLK_READOUT_SOURCES = [
 
 
 def test_tclk_readout():
+    # USE_EXT_TS left at the module default (0 = internal free-running ts
+    # counter): this suite only exercises decode-preservation (event
+    # order/codes/counts), not the fine-TDC's frozen_coarse timestamp.
     run_cocotb(
         "tclk_readout",
         sources=_TCLK_READOUT_SOURCES,
@@ -38,6 +41,8 @@ def test_tclk_readout():
 
 
 def test_tclk_ts_jitter():
+    # USE_EXT_TS left at the module default (0): this suite characterizes the
+    # internal ts counter's DAVn-latch resync dither, not the fine-TDC.
     run_cocotb(
         "tclk_readout",
         sources=_TCLK_READOUT_SOURCES,
@@ -48,11 +53,16 @@ def test_tclk_ts_jitter():
 
 
 def test_tclk_fine_chain():
+    # USE_EXT_TS=1 is REQUIRED here: this is the one suite that actually
+    # proves frozen_coarse (the fine-TDC's ref-edge timestamp) reaches the
+    # packed event TS. At the default 0, aclk_readout_core uses its own
+    # internal free-running counter and the ts_ext(frozen_coarse) wiring
+    # added in tclk_readout_top is never exercised.
     run_cocotb(
         "tclk_readout",
         sources=_TCLK_READOUT_SOURCES,
         hdl_toplevel="tclk_readout_top",
-        parameters={"OSR": int(os.getenv("TCLK_OSR", "8"))},
+        parameters={"OSR": int(os.getenv("TCLK_OSR", "8")), "USE_EXT_TS": 1},
         test_module="test_tclk_fine_chain",
     )
 

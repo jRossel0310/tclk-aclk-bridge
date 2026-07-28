@@ -96,6 +96,16 @@ module tclk_fine_tdc (
     // into clk_p0, then rising-edge-detect it. clk_p0 and clk_40m are the same
     // 200 MHz clock in this design, but ref_edge originates in different logic
     // (the deserializer's clk_40m domain), so it is treated as a genuine CDC.
+    //
+    // Total ref_edge -> frozen_* latency, traced through this sync chain and
+    // the freeze register below: ref_edge asserted during cycle T -> ref_m
+    // valid T+1 -> ref_s valid T+2 -> ref_edge_p0 (=ref_s & ~ref_s_d) pulses
+    // ONLY during T+2 -> the freeze register samples that pulse one edge
+    // later, so frozen_coarse/frozen_phase/frozen_valid settle to THIS
+    // event's values starting cycle T+3. rtl/aclk_lite/tclk_readout_top.sv's
+    // ALIGN_DELAY (currently 3) delays its event push by this exact latency
+    // to pair each event with its own frozen_* triple; if this sync/freeze
+    // pipeline ever gains or loses a stage, ALIGN_DELAY must move with it.
     reg ref_m, ref_s, ref_s_d;
     always @(posedge clk_p0 or negedge rstn) begin
         if (!rstn) begin
