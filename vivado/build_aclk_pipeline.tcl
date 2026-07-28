@@ -162,6 +162,15 @@ set_property -dict [list \
     CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {80.000} \
     CONFIG.CLKOUT2_USED {true} \
     CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {200.000} \
+    CONFIG.CLKOUT3_USED {true} \
+    CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {200.000} \
+    CONFIG.CLKOUT3_REQUESTED_PHASE {90.000} \
+    CONFIG.CLKOUT4_USED {true} \
+    CONFIG.CLKOUT4_REQUESTED_OUT_FREQ {200.000} \
+    CONFIG.CLKOUT4_REQUESTED_PHASE {180.000} \
+    CONFIG.CLKOUT5_USED {true} \
+    CONFIG.CLKOUT5_REQUESTED_OUT_FREQ {200.000} \
+    CONFIG.CLKOUT5_REQUESTED_PHASE {270.000} \
     CONFIG.USE_LOCKED {true} \
     CONFIG.USE_RESET {true} \
     CONFIG.RESET_TYPE {ACTIVE_LOW} \
@@ -170,6 +179,13 @@ connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0]   [get_bd_pins clk_wiz_0/
 connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_resetn0] [get_bd_pins clk_wiz_0/resetn]
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins u_pipeline/clk_80m]
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out2] [get_bd_pins u_pipeline/clk_40m]
+# clk_out3/4/5: 200 MHz, 90/180/270 deg -- the fine-TDC's quadrature companions
+# to clk_out2 (clk_p0 = clk_40m). 6 of 7 MMCM outputs now used (80 + 200x4-phase).
+# The existing XDC's async-clock-group wildcard (clk_out*clk_wiz*, 2:1) already
+# covers same-frequency phase outputs pairwise, so no XDC change is needed here.
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins u_pipeline/clk_p90]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out4] [get_bd_pins u_pipeline/clk_p180]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out5] [get_bd_pins u_pipeline/clk_p270]
 
 # ---- clk_wiz #2: 50 MHz free-running clock for the GT reset controller (from selftest) ----
 set clkf [create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:* clk_wiz_freerun]

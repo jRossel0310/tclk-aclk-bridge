@@ -60,6 +60,10 @@ module aclk_pipeline_bd_top (
     input  wire        clk_80m,           // 80 MHz serdec oversample + ACLK-Lite enc clock
     input  wire        clk_40m,           // 200 MHz deserializer + readout / TIMESTAMP clock
                                            // (5 ns; name kept for portability)
+    input  wire        clk_p90,           // fine-TDC quadrature companion: clk_40m +90 deg
+    input  wire        clk_p180,          // fine-TDC quadrature companion: clk_40m +180 deg
+    input  wire        clk_p270,          // fine-TDC quadrature companion: clk_40m +270 deg
+                                           // (clk_p90/180/270 all 200 MHz, from clk_wiz_0)
 
     // ---- ACLK-Lite mirror output (Pmod pin, LVCMOS33 biphase-mark) ----
     output wire        aclk_lite_out,
@@ -478,6 +482,9 @@ module aclk_pipeline_bd_top (
     ) u_ro_tclk (
         .clk_80m       (clk_80m),
         .clk_40m       (clk_40m),
+        .clk_p90       (clk_p90),
+        .clk_p180      (clk_p180),
+        .clk_p270      (clk_p270),
         .rstn          (rstn),
         .pps           (1'b0),
         .tclk          (tclk),

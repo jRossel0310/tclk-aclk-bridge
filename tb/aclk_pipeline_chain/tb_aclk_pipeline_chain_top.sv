@@ -17,6 +17,10 @@
 //
 // Both readouts use USE_EXT_TS=1 so they sample the shared timebase.
 //
+// clk_p90/p180/p270: 200 MHz quadrature companions to clk_40m (clk_p0), driven
+// into readout #1's fine-TDC (tclk_fine_tdc, inside tclk_readout_top). Without
+// these the TDC's samplers sit at X and the packed TCLK timestamp is broken.
+//
 // AXI BFM signal-prefix convention:
 //   pfx=""    -> s_axi_*      (readout #1: tclk_readout_top)
 //   pfx="s2_" -> s2_s_axi_*  (readout #2: aclk_gt_readout_top)
@@ -36,6 +40,9 @@ module tb_aclk_pipeline_chain_top (
     // Clocks (driven by cocotb)
     input  wire clk_80m,          // 80 MHz: TCLK_RCV oversample
     input  wire clk_40m,          // 40 MHz: TCLK_RCV decode + readout#1 rx_clk
+    input  wire clk_p90,          // fine-TDC quadrature companion: clk_40m +90 deg
+    input  wire clk_p180,         // fine-TDC quadrature companion: clk_40m +180 deg
+    input  wire clk_p270,         // fine-TDC quadrature companion: clk_40m +270 deg
     input  wire clk_tx,           // ~62.5 MHz: encoder TX + ACLK_RCV rx_clk
     input  wire pl_clk0,          // 100 MHz: AXI / WR timebase monitor reference
 
@@ -193,6 +200,9 @@ module tb_aclk_pipeline_chain_top (
     ) u_tclk_rdout (
         .clk_80m       (clk_80m),
         .clk_40m       (clk_40m),
+        .clk_p90       (clk_p90),
+        .clk_p180      (clk_p180),
+        .clk_p270      (clk_p270),
         .rstn          (rstn),
         .pps           (1'b0),
         .tclk          (tclk),

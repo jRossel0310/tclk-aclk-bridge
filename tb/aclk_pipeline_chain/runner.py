@@ -30,6 +30,10 @@ def test_aclk_pipeline_chain():
             "rtl/aclk_readout/aclk_readout_core.sv",
             "rtl/aclk_readout/aclk_readout_axi.sv",
 
+            # Multiphase fine-TDC (sub-sample edge time) + its 5-sample decoder
+            "rtl/aclk_lite/tclk_fine_decode.sv",
+            "rtl/aclk_lite/tclk_fine_tdc.sv",
+
             # TCLK readout top (readout #1)
             "rtl/aclk_lite/tclk_readout_top.sv",
 

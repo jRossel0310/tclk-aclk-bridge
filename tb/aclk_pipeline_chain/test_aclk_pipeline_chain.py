@@ -44,6 +44,35 @@ SEC0 = 1_751_800_000
 WARMUP_CELLS = 200
 GAP_CELLS    = 800
 
+# clk_p90/p180/p270: fine-TDC quadrature companions to clk_40m (clk_p0 inside
+# tclk_readout_top). Without these the fine-TDC's off-phase samplers never
+# toggle (X in sim / dead in hardware), so frozen_coarse never updates off its
+# reset value -- the TCLK path decodes fine but every packed timestamp is
+# wrong. This TB's clk_40m runs at 25 ns (the pre-decoupled 2:1 clk_80:clk_40
+# ratio, NOT the board's decoupled 200 MHz clk_40m -- see
+# rtl/aclk_pipeline_bd_top.v / vivado/build_aclk_pipeline.tcl for that), so the
+# phase clocks are started at clk_40m's ACTUAL period here, not a hardcoded
+# 200 MHz: the fine-TDC only requires clk_p0/p90/p180/p270 share one period at
+# true quadrature (see rtl/aclk_lite/tclk_fine_tdc.sv), it has no built-in
+# absolute-frequency assumption. Retuning this TB's clk_40m itself to 200 MHz
+# would also require re-deriving the WR-timebase watchdog constants below
+# (CLK_PERIOD_DS/CLK10_TIMEOUT/PPS_TIMEOUT for u_tb_tclk) for a 5x faster
+# clock -- out of scope for wiring the fine-TDC's phase-clock inputs.
+CLK40_PERIOD_PS = 25_000
+PHASE_PS = CLK40_PERIOD_PS // 4
+
+
+async def _start_quadrature(dut):
+    # Same fixed-per-step-delay pattern as the Part-1 sweep test's
+    # _start_phases (tb/tclk_fine_tdc/test_tclk_fine_tdc.py): starting each
+    # phase clock PHASE_PS after the previous one lands the four rising edges
+    # at true 0/90/180/270 degree offsets within one clk_40m period. clk_40m
+    # itself is started separately in test_full_chain_wr (its 0-degree edge is
+    # the reference the loop below counts from).
+    for sig in (dut.clk_p90, dut.clk_p180, dut.clk_p270):
+        await Timer(PHASE_PS, unit="ps")
+        cocotb.start_soon(Clock(sig, CLK40_PERIOD_PS, unit="ps").start())
+
 
 def _split(ts):
     return (ts >> 32) & 0xFFFFFFFF, ts & 0xFFFFFFFF
@@ -88,6 +117,7 @@ async def test_full_chain_wr(dut):
     cocotb.start_soon(Clock(dut.s_axi_aclk,    10,   unit="ns").start())
     cocotb.start_soon(Clock(dut.s2_s_axi_aclk, 10,   unit="ns").start())
     cocotb.start_soon(Clock(dut.s3_s_axi_aclk, 10,   unit="ns").start())
+    cocotb.start_soon(_start_quadrature(dut))
 
     dut.rstn.value              = 0
     dut.s_axi_aresetn.value     = 0
