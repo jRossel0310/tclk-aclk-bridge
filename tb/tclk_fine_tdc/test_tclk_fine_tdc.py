@@ -127,3 +127,114 @@ async def test_glitch_flagged(dut):
         if int(dut.edge_stb.value) and not int(dut.fine_valid.value):
             got_invalid = True
     assert got_invalid, "glitch did not raise edge_stb with fine_valid=0"
+
+
+@cocotb.test()
+async def test_ref_edge_freeze(dut):
+    # Prove frozen_coarse/frozen_phase/frozen_valid latch the LAST CARRIER EDGE
+    # seen before ref_edge, not whatever coarse_in happens to read at the
+    # ref_edge instant. Drive a free-running coarse_in counter on clk_p0 (the
+    # shared coarse timebase), a periodic line edge (as in the sweep test), and
+    # pulse ref_edge at an arbitrary point mid-period -- nowhere near the edge
+    # itself -- so a design that (incorrectly) samples coarse_in directly at
+    # ref_edge instead of holding the last edge_stb's coarse/phase would read a
+    # different, later coarse_in value and this test would catch it.
+    dut.line.value = 0
+    dut.rstn.value = 0
+    dut.ref_edge.value = 0
+    dut.coarse_in.value = 0
+    await _start_phases(dut)
+    await ClockCycles(dut.clk_p0, 5)
+    dut.rstn.value = 1
+    await ClockCycles(dut.clk_p0, 5)
+
+    # Free-running coarse counter, incremented every clk_p0 edge.
+    async def _coarse_counter():
+        n = 0
+        while True:
+            await RisingEdge(dut.clk_p0)
+            n += 1
+            dut.coarse_in.value = n
+
+    cocotb.start_soon(_coarse_counter())
+    await ClockCycles(dut.clk_p0, 2)
+
+    async def _capture_next_edge():
+        # Poll for the next edge_stb and return the (coarse, phase, valid)
+        # tuple the decoder produced for it -- coarse_in read at the exact
+        # cycle edge_stb fires, same instant the DUT's edge_coarse register
+        # (gated on edge_stb) samples it.
+        for _ in range(8):
+            await RisingEdge(dut.clk_p0)
+            if int(dut.edge_stb.value):
+                return int(dut.coarse_in.value), int(dut.fine_phase.value), int(dut.fine_valid.value)
+        return None
+
+    # --- First carrier edge: a single rising edge at a fixed sub-sample
+    # offset (bin 1, well off the period boundary so it resolves promptly -
+    # see sweep test docstring). The line is held at 1 afterward (no further
+    # transition) until explicitly noted below, so nothing but this one edge
+    # can perturb the "held last carrier edge" registers before the freeze.
+    await RisingEdge(dut.clk_p0)
+    await Timer(600, unit="ps")
+    dut.line.value = 1
+
+    edge1 = await _capture_next_edge()
+    assert edge1 is not None, "first carrier edge never raised edge_stb"
+    edge1_coarse, edge1_phase, edge1_valid = edge1
+
+    # Let many more clk_p0 cycles pass with the line held steady (no further
+    # transition -- no second edge can occur), so ref_edge lands well after
+    # edge1's edge_stb, at an arbitrary point mid-stream, immune to exactly
+    # when it lands within a carrier period.
+    await ClockCycles(dut.clk_p0, 12)
+    ref_instant_coarse = int(dut.coarse_in.value)
+    assert ref_instant_coarse != edge1_coarse, (
+        "test setup broken: coarse_in must have moved on since edge1's edge_stb "
+        "for this test to distinguish 'held edge value' from 'sampled-at-ref_edge value'"
+    )
+
+    # Pulse ref_edge for one clk_40m (=clk_p0) cycle.
+    dut.ref_edge.value = 1
+    await RisingEdge(dut.clk_p0)
+    dut.ref_edge.value = 0
+
+    # Allow the 2-FF sync + edge-detect latency to settle.
+    await ClockCycles(dut.clk_p0, 6)
+
+    assert int(dut.frozen_valid.value) == edge1_valid, "frozen_valid did not match edge1's decode"
+    assert int(dut.frozen_phase.value) == edge1_phase, "frozen_phase did not match edge1's decode"
+    assert int(dut.frozen_coarse.value) == edge1_coarse, (
+        f"frozen_coarse={int(dut.frozen_coarse.value)} != edge1_coarse={edge1_coarse} "
+        f"(ref-instant coarse was {ref_instant_coarse}) -- frozen_coarse must be immune "
+        "to exactly when ref_edge lands within a carrier period"
+    )
+
+    # --- Second carrier edge: the falling transition of the same pulse is
+    # itself a real carrier edge (the decoder flags any transition, rising or
+    # falling -- see test_glitch_flagged), so it must update the held
+    # registers just like a rising edge would.
+    await RisingEdge(dut.clk_p0)
+    await Timer(600, unit="ps")
+    dut.line.value = 0
+
+    edge2 = await _capture_next_edge()
+    assert edge2 is not None, "second carrier edge never raised edge_stb"
+    edge2_coarse, edge2_phase, edge2_valid = edge2
+    assert edge2_coarse != edge1_coarse, "test setup broken: edge2 coarse must differ from edge1"
+
+    # frozen_* must still hold edge1's values -- untouched until the next ref_edge.
+    await ClockCycles(dut.clk_p0, 6)
+    assert int(dut.frozen_coarse.value) == edge1_coarse, "frozen_coarse drifted before the next ref_edge"
+
+    dut.ref_edge.value = 1
+    await RisingEdge(dut.clk_p0)
+    dut.ref_edge.value = 0
+    await ClockCycles(dut.clk_p0, 6)
+
+    assert int(dut.frozen_valid.value) == edge2_valid, "frozen_valid did not update to edge2"
+    assert int(dut.frozen_phase.value) == edge2_phase, "frozen_phase did not update to edge2"
+    assert int(dut.frozen_coarse.value) == edge2_coarse, (
+        f"frozen_coarse={int(dut.frozen_coarse.value)} != edge2_coarse={edge2_coarse}: "
+        "frozen values did not update to the new reference edge"
+    )

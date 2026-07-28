@@ -15,9 +15,14 @@ module tclk_fine_tdc (
     input  wire       clk_p180,
     input  wire       clk_p270,
     input  wire       line,
+    input  wire [63:0] coarse_in,
+    input  wire        ref_edge,
     output reg  [1:0]  fine_phase,
     output reg         fine_valid,
-    output reg         edge_stb
+    output reg         edge_stb,
+    output reg  [63:0] frozen_coarse,
+    output reg  [1:0]  frozen_phase,
+    output reg         frozen_valid
 );
     // First-rank capture, one FF per phase in that phase's own clock domain.
     reg s0_c, s90_c, s180_c, s270_c;
@@ -62,6 +67,57 @@ module tclk_fine_tdc (
             edge_stb   <= present;
             fine_valid <= dvalid;  // dvalid (monotone) already implies not-all-equal
             fine_phase <= dphase;
+        end
+    end
+
+    // "Held last carrier edge": latched every clk_p0 cycle that edge_stb fires,
+    // stamped with coarse_in that same cycle. edge_stb/fine_phase/fine_valid are
+    // all registered together above (same always block, same clock edge), so
+    // this triple is always self-consistent -- including for the boundary-quarter
+    // bin (bin 0), which resolves its edge_stb/fine_phase/fine_valid one clk_p0
+    // cycle later than bins 1-3 (see module header); edge_coarse/edge_phase/
+    // edge_valid simply latch whatever coarse_in reads on that later cycle, so
+    // the pairing stays matched. This gives the coarse timestamp no resync
+    // jitter beyond the decode pipeline's own fixed latency.
+    reg [63:0] edge_coarse;
+    reg  [1:0] edge_phase;
+    reg        edge_valid;
+    always @(posedge clk_p0 or negedge rstn) begin
+        if (!rstn) begin
+            edge_coarse <= 64'd0; edge_phase <= 2'd0; edge_valid <= 1'b0;
+        end else if (edge_stb) begin
+            edge_coarse <= coarse_in;
+            edge_phase  <= fine_phase;
+            edge_valid  <= fine_valid;
+        end
+    end
+
+    // 2-FF synchronize ref_edge (a clk_40m-domain strobe from the deserializer)
+    // into clk_p0, then rising-edge-detect it. clk_p0 and clk_40m are the same
+    // 200 MHz clock in this design, but ref_edge originates in different logic
+    // (the deserializer's clk_40m domain), so it is treated as a genuine CDC.
+    reg ref_m, ref_s, ref_s_d;
+    always @(posedge clk_p0 or negedge rstn) begin
+        if (!rstn) begin
+            ref_m <= 1'b0; ref_s <= 1'b0; ref_s_d <= 1'b0;
+        end else begin
+            ref_m   <= ref_edge;
+            ref_s   <= ref_m;
+            ref_s_d <= ref_s;
+        end
+    end
+    wire ref_edge_p0 = ref_s & ~ref_s_d;
+
+    // Freeze: on the synced ref_edge pulse, capture the held last-carrier-edge
+    // triple. Stable until the next ref_edge, regardless of exactly when
+    // ref_edge lands within a carrier period.
+    always @(posedge clk_p0 or negedge rstn) begin
+        if (!rstn) begin
+            frozen_coarse <= 64'd0; frozen_phase <= 2'd0; frozen_valid <= 1'b0;
+        end else if (ref_edge_p0) begin
+            frozen_coarse <= edge_coarse;
+            frozen_phase  <= edge_phase;
+            frozen_valid  <= edge_valid;
         end
     end
 endmodule
