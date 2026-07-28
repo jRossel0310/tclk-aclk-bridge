@@ -29,5 +29,20 @@ def test_tclk_readout():
     )
 
 
+def test_tclk_ts_jitter():
+    run_cocotb(
+        "tclk_readout",
+        sources=[
+            "rtl/synchronizer.sv", "rtl/async_fifo.sv", "rtl/cdc_gray_count.sv",
+            "rtl/aclk_readout/aclk_readout_core.sv", "rtl/aclk_readout/aclk_readout_axi.sv",
+            "rtl/aclk_bridge/serdec4_9MHz.v", "rtl/aclk_bridge/TCLK_DESERIALIZER2.v",
+            "rtl/aclk_bridge/TCLK_RCV.v", "rtl/aclk_lite/tclk_readout_top.sv",
+        ],
+        hdl_toplevel="tclk_readout_top",
+        parameters={"OSR": int(os.getenv("TCLK_OSR", "8"))},
+        test_module="test_tclk_ts_jitter",
+    )
+
+
 if __name__ == "__main__":
     test_tclk_readout()
