@@ -37,7 +37,7 @@ from axi_lite_bfm import axi_read
 
 # reuse the register map + reset/read helpers from the sibling test, but NOT its
 # _start_clocks / CLK40_PERIOD_PS -- this test owns its own clocks (see docstring).
-from test_tclk_readout import STATUS, reset_dut, axi_read_event
+from test_tclk_readout import STATUS, reset_dut, axi_read_event, _start_quadrature
 
 N_EVENTS = 30
 GAP_CELLS = 12
@@ -60,6 +60,11 @@ def _start_clocks(dut):
     cocotb.start_soon(Clock(dut.clk_80m, CLK80_PERIOD_PS, unit="ps").start())
     cocotb.start_soon(Clock(dut.clk_40m, STAMP_CLK40_PS, unit="ps").start())
     cocotb.start_soon(Clock(dut.s_axi_aclk, AXI_PERIOD_NS, unit="ns").start())
+    # clk_p90/p180/p270 just need to keep the fine-TDC's synchronizers out of X
+    # for this test (it characterizes DAVn-latched dither, not the fine-TDC);
+    # the 1 ps quadrature-phase truncation from STAMP_CLK40_PS not being a
+    # multiple of 4 is immaterial here.
+    cocotb.start_soon(_start_quadrature(dut, STAMP_CLK40_PS))
 
 
 async def _drive_periodic(dut, byte, n, acct):

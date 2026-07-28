@@ -13,11 +13,27 @@
 // 40 MHz. On the board clk_80m + clk_40m come from an MMCM / clock wizard.
 //
 // Adapter (TCLK_RCV -> readout):
-//   - aclk_valid = ~DAVn                  (one clk_40m strobe per decoded byte)
-//   - aclk_event = { 8'h00, DATA }        (TCLK is an 8-bit event code)
+//   - aclk_valid = ~DAVn, DELAYED 3 clk_40m cycles to align with the fine-TDC's
+//     frozen_* settle latency (see the ALIGN_DELAY comment below)
+//   - aclk_event = { 8'h00, DATA }, delayed by the same amount so the byte
+//     stays paired with its own aclk_valid strobe
 //   - aclk_data  = 0                      (TCLK events carry no 64-bit payload)
-//   - flags      = { 14'b0, is_tclk=1, has_data=0 } = 16'h0002
-//   - aclk_error = a one-cycle pulse on each new parity error (see below)
+//   - flags      = { 11'b0, frozen_valid, frozen_phase, is_tclk=1, has_data=0 }
+//     FLAGS[4]=frozen_valid, FLAGS[3:2]=frozen_phase (fine sub-bin, see
+//     tclk_fine_tdc), FLAGS[1]=is_tclk, FLAGS[0]=has_data
+//   - aclk_error = a one-cycle pulse on each new parity error (see below);
+//     NOT delayed -- it is a diagnostic counter strobe, not paired with a
+//     pushed event
+//
+// Fine-TDC (rtl/aclk_lite/tclk_fine_tdc.sv): sub-sample edge time-to-digital
+// on the raw TCLK line, sampled by four 200 MHz clocks 90 degrees apart
+// (clk_p0 = this module's clk_40m). It freezes its "held last carrier edge"
+// triple (coarse + fine phase + validity) on TCLK_RCV's REF_EDGE (== ~DAVn,
+// registered from the same frame-accept condition as DAVn, so it pulses the
+// same clk_40m cycle as aclk_valid before the alignment delay). The packed
+// event timestamp becomes that frozen coarse value (fed via ts_ext into the
+// fine-TDC's coarse_in, and the fine-TDC's frozen_coarse back out to the
+// readout core's ts_ext) instead of the readout core's free-running counter.
 //
 // The readout's 0xFF null-drop is an ACLK-Lite convention; for TCLK 0xFF can be
 // a real code, so this top sets DROP_NULL=0 and every decoded byte is buffered.
@@ -41,6 +57,9 @@ module tclk_readout_top #(
     // ---- TCLK receive domain ----
     input  logic        clk_80m,           // 80 MHz serdec oversample clock
     input  logic        clk_40m,           // 40 MHz deserializer + readout / timestamp clock
+    input  logic        clk_p90,           // fine-TDC quadrature companion: clk_40m + 90 deg
+    input  logic        clk_p180,          // fine-TDC quadrature companion: clk_40m + 180 deg
+    input  logic        clk_p270,          // fine-TDC quadrature companion: clk_40m + 270 deg
     input  logic        rstn,              // async, active-low (rx side)
     input  logic        pps,               // optional White Rabbit pulse-per-second
     input  logic        tclk,              // raw biphase-mark TCLK line (LVCMOS33 baseband)
@@ -68,7 +87,11 @@ module tclk_readout_top #(
     input  logic                   s_axi_rready,
 
     // ---- external shared timestamp (from the top: wr_timebase in the pipeline, global_timebase standalone) ----
-    input  logic [63:0] ts_ext,            // shared 64-bit timebase; sampled at each event VALID
+    // Feeds the fine-TDC's coarse_in (the timebase its frozen_coarse output is
+    // drawn from); the readout core's ts_ext -- and so the packed event
+    // timestamp -- is now the fine-TDC's frozen_coarse, not this port's raw
+    // value latched at DAVn.
+    input  logic [63:0] ts_ext,
 
     // ---- debug (clk_40m domain) ----
     output logic        dbg_dav,           // ~DAVn: one strobe per decoded byte
@@ -84,6 +107,7 @@ module tclk_readout_top #(
     wire       davn;
     wire       perr;
     wire       sig_err;
+    wire       ref_edge;
     logic      perr_clr;
 
     TCLK_RCV #(.OSR(OSR)) u_rcv (
@@ -100,7 +124,8 @@ module tclk_readout_top #(
         .PERR        (perr),
         .PERR_CLR    (perr_clr),
         .SIG_ERR     (sig_err),
-        .SIG_ERR_CLR (1'b0)
+        .SIG_ERR_CLR (1'b0),
+        .REF_EDGE    (ref_edge)
     );
 
     // ---- parity-error edge detect + auto re-arm (clk_40m domain) ----
@@ -159,12 +184,70 @@ module tclk_readout_top #(
     // ---- adapter: TCLK_RCV -> readout ----
     wire        adapt_valid = ~davn;
     wire [15:0] adapt_event = {8'h00, data};
-    wire [15:0] adapt_flags = 16'h0002;    // is_tclk=1 (bit1), has_data=0 (bit0)
 
     assign dbg_dav     = adapt_valid;
     assign dbg_data    = data;
     assign dbg_perr    = perr;
     assign dbg_sig_err = sig_err;
+
+    // ---- multiphase fine-TDC: sub-sample edge time, frozen per REF_EDGE ----
+    wire [1:0]  frozen_phase;
+    wire        frozen_valid;
+    wire [63:0] frozen_coarse;
+
+    tclk_fine_tdc u_tdc (
+        .rstn          (rstn),
+        .clk_p0        (clk_40m),
+        .clk_p90       (clk_p90),
+        .clk_p180      (clk_p180),
+        .clk_p270      (clk_p270),
+        .line          (tclk),
+        .coarse_in     (ts_ext),
+        .ref_edge      (ref_edge),
+        .fine_phase    (),
+        .fine_valid    (),
+        .edge_stb      (),
+        .frozen_coarse (frozen_coarse),
+        .frozen_phase  (frozen_phase),
+        .frozen_valid  (frozen_valid)
+    );
+
+    // ---- alignment delay: hold the decoded event so it pushes into the
+    // readout core at the SAME clk_40m cycle the fine-TDC's frozen_* triple
+    // has settled for THIS event's ref edge, not the previous one.
+    //
+    // REF_EDGE (== adapt_valid: both are registered from the same DAVn_int &
+    // SCLK_posedge condition inside TCLK_DESERIALIZER2) asserts during cycle
+    // T. Inside tclk_fine_tdc, ref_edge is 2-FF synchronized into clk_p0
+    // (ref_m, ref_s) and then edge-detected (ref_s & ~ref_s_d), which pulses
+    // during cycle T+2; the freeze register samples that pulse one cycle
+    // later, so frozen_coarse/frozen_phase/frozen_valid hold THIS event's
+    // values starting cycle T+3. Delaying the event push by the same 3
+    // clk_40m cycles pairs each event with its own frozen_* triple instead of
+    // the previous event's (an off-by-one timestamp).
+    localparam int ALIGN_DELAY = 3;
+
+    logic [ALIGN_DELAY-1:0] valid_sr;
+    logic [15:0]            event_sr [ALIGN_DELAY];
+
+    always_ff @(posedge clk_40m or negedge rstn) begin
+        if (!rstn) begin
+            valid_sr <= '0;
+            for (int i = 0; i < ALIGN_DELAY; i++) event_sr[i] <= '0;
+        end else begin
+            valid_sr    <= {valid_sr[ALIGN_DELAY-2:0], adapt_valid};
+            event_sr[0] <= adapt_event;
+            for (int i = 1; i < ALIGN_DELAY; i++) event_sr[i] <= event_sr[i-1];
+        end
+    end
+
+    wire        push_valid = valid_sr[ALIGN_DELAY-1];
+    wire [15:0] push_event = event_sr[ALIGN_DELAY-1];
+
+    // FLAGS[4]=frozen_valid, FLAGS[3:2]=frozen_phase, FLAGS[1]=is_tclk, FLAGS[0]=has_data.
+    // Read combinationally at push time: frozen_valid/frozen_phase are already
+    // settled by cycle T+3 (see ALIGN_DELAY above), the same cycle push_valid fires.
+    wire [15:0] adapt_flags = {11'b0, frozen_valid, frozen_phase, 1'b1, 1'b0};
 
     // ---- readout + AXI-Lite slave (null-drop disabled for TCLK) ----
     aclk_readout_axi #(
@@ -176,11 +259,11 @@ module tclk_readout_top #(
         .rx_clk        (clk_40m),
         .rx_rstn       (rstn),
         .pps           (pps),
-        .aclk_valid    (adapt_valid),
-        .aclk_event    (adapt_event),
+        .aclk_valid    (push_valid),
+        .aclk_event    (push_event),
         .aclk_data     (64'd0),
         .flags         (adapt_flags),
-        .ts_ext        (ts_ext),
+        .ts_ext        (frozen_coarse),
         .aclk_error    (perr_pulse),
         .dropped_null  (dropped_null),
         .dbg_word      (tclk_dbg_word),

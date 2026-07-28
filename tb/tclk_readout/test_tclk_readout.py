@@ -50,10 +50,26 @@ FLAG_HAS_DATA = 0x1
 FLAG_IS_TCLK = 0x2
 
 
+async def _start_quadrature(dut, period_ps):
+    # clk_p90/p180/p270 are the fine-TDC's quadrature companions to clk_40m
+    # (= clk_p0): same frequency, each started period_ps/4 after the previous
+    # one so all four land at true 0/90/180/270 degree offsets (same
+    # fixed-per-step-delay pattern as the Part-1 sweep test's _start_phases;
+    # see tb/tclk_fine_tdc/test_tclk_fine_tdc.py for why a naive cumulative
+    # Timer(phase_ps*ph) is a bug). These tests only exercise decode
+    # preservation, not the TDC's timing itself, so exact quadrature is not
+    # load-bearing here -- it just keeps the DUT's fine-TDC ports out of X.
+    phase_ps = period_ps // 4
+    for sig in (dut.clk_p90, dut.clk_p180, dut.clk_p270):
+        await Timer(phase_ps, unit="ps")
+        cocotb.start_soon(Clock(sig, period_ps, unit="ps").start())
+
+
 def _start_clocks(dut):
     cocotb.start_soon(Clock(dut.clk_80m, CLK80_PERIOD_PS, unit="ps").start())
     cocotb.start_soon(Clock(dut.clk_40m, CLK40_PERIOD_PS, unit="ps").start())
     cocotb.start_soon(Clock(dut.s_axi_aclk, AXI_PERIOD_NS, unit="ns").start())
+    cocotb.start_soon(_start_quadrature(dut, CLK40_PERIOD_PS))
 
 
 async def reset_dut(dut):
