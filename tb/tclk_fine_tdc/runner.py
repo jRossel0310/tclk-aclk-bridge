@@ -13,8 +13,7 @@ def test_tclk_fine_decode():
 
 def test_tclk_fine_tdc():
     run_cocotb("tclk_fine_tdc",
-               sources=["rtl/synchronizer.sv",
-                        "rtl/aclk_lite/tclk_fine_decode.sv",
+               sources=["rtl/aclk_lite/tclk_fine_decode.sv",
                         "rtl/aclk_lite/tclk_fine_tdc.sv"],
                hdl_toplevel="tclk_fine_tdc",
                test_module="test_tclk_fine_tdc")

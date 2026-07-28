@@ -21,6 +21,23 @@ async def _start_phases(dut):
 
 @cocotb.test()
 async def test_edge_sweep(dut):
+    # WINDOW SHIFT (read before touching this test): the decoder's 5-sample
+    # window is {previous period's delayed s270 (s270_prev), this period's
+    # s0/s90/s180/s270}. That means fine_phase=0 corresponds to an edge landing
+    # in the *boundary* quarter -- just after the previous period's s270 sample
+    # instant (offset 3750..5000 ps below) -- not to an edge just after s0 as a
+    # naive 4-sample decoder would report. Sweeping the offset upward from 0
+    # therefore produces bins in the order 1, 2, 3, 0 (NOT 0, 1, 2, 3): the last
+    # quarter's edge only resolves in the *next* decode window, one clk_p0 cycle
+    # later than the other three quarters, because s270_prev needs one more
+    # cycle to catch up to the straddled sample. So the phase sequence WRAPS
+    # rather than increasing monotonically -- asserting `phases == sorted(phases)`
+    # would be testing a fiction, not the design. The real contract: sweeping a
+    # rising edge across one full period must produce all 4 bins {0,1,2,3},
+    # each from one contiguous offset sub-range (no bin reappearing after
+    # another bin has intervened), and nothing left unresolved -- i.e. the
+    # aliased 4th quarter the 5-sample window exists to recover is, in fact,
+    # recovered.
     dut.line.value = 0
     dut.rstn.value = 0
     await _start_phases(dut)
@@ -28,25 +45,56 @@ async def test_edge_sweep(dut):
     dut.rstn.value = 1
     await ClockCycles(dut.clk_p0, 5)
 
-    # Align to a clk_p0 rising edge, then place a rising line edge at a controlled
-    # sub-period offset; the reported fine_phase must be non-decreasing across the
-    # offset sweep (finer than one 12.5 ns decode sample).
     seen = []
-    for off_ps in range(200, PERIOD_PS, 400):
+    for off_ps in range(200, PERIOD_PS, 200):
         dut.line.value = 0
+        # Drain the previous iteration's falling transition (its own decode
+        # pulse, symmetric to a rising one) well past the pipeline's ~3-cycle
+        # latency before arming the next sweep edge, so hits below are never
+        # contaminated by stale pipeline state from the last iteration.
+        await ClockCycles(dut.clk_p0, 6)
+
         await RisingEdge(dut.clk_p0)
         await Timer(off_ps, unit="ps")
         dut.line.value = 1                     # the sub-sample edge
-        # wait for the edge to propagate through the synchronizers + decode
-        await ClockCycles(dut.clk_p0, 4)
-        if int(dut.fine_valid.value):
-            seen.append((off_ps, int(dut.fine_phase.value)))
-        await ClockCycles(dut.clk_p0, 2)
+
+        # Poll several cycles: quarters 0-2 resolve in the decode window that
+        # directly covers this period; quarter 3 (the boundary quarter)
+        # resolves one window later (see docstring above), so a single
+        # fixed-delay check is not enough -- poll and collect every valid hit.
+        hits = []
+        for _ in range(8):
+            await RisingEdge(dut.clk_p0)
+            await Timer(1, unit="ns")
+            if int(dut.fine_valid.value):
+                hits.append(int(dut.fine_phase.value))
+
+        assert len(hits) == 1, f"off={off_ps}: expected exactly one valid decode, got {hits}"
+        seen.append((off_ps, hits[0]))
 
     phases = [p for _, p in seen]
-    assert len(seen) >= 3, f"too few valid captures: {seen}"
-    assert phases == sorted(phases), f"fine_phase not monotone across offset sweep: {seen}"
-    assert phases[0] != phases[-1], f"fine_phase did not resolve sub-sample motion: {seen}"
+
+    # Contract 1: all 4 bins are observed (the 4th quarter is no longer lost).
+    assert set(phases) == {0, 1, 2, 3}, f"not all 4 bins observed: {sorted(set(phases))}: {seen}"
+
+    # Contract 2: each bin comes from one contiguous run of offsets -- group
+    # consecutive equal phases and confirm no bin value reappears in a later,
+    # separate run (that would mean interleaving/noise, not a clean sub-bin).
+    runs = []
+    for _, p in seen:
+        if runs and runs[-1][0] == p:
+            runs[-1][1] += 1
+        else:
+            runs.append([p, 1])
+    run_bins = [p for p, _ in runs]
+    assert len(set(run_bins)) == len(run_bins), f"a bin reappeared non-contiguously: {runs}: {seen}"
+
+    # Contract 3: exactly 4 contiguous runs over the swept range (one per bin;
+    # no unresolved / dropped offsets and no extra runs from spurious noise).
+    assert len(runs) == 4, f"expected 4 contiguous bin runs, got {len(runs)}: {runs}: {seen}"
+
+    dut._log.info("offset(ps) -> fine_phase runs: %s", [(p, n) for p, n in runs])
+    dut._log.info("full sweep: %s", seen)
 
 
 @cocotb.test()

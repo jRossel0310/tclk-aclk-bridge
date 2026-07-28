@@ -32,7 +32,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles
 
-from tclk_tx_model import biphase_samples, event_bits, drive_samples, SAMPLES_PER_CELL
+from tclk_tx_model import biphase_samples, event_bits, drive_samples
 from axi_lite_bfm import axi_read
 
 # reuse the register map + reset/read helpers from the sibling test, but NOT its
