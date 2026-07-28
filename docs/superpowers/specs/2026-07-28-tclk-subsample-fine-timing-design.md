@@ -127,20 +127,29 @@ tight, fall back to 2 phases / DDR (2.5 ns bins, still 5x).
 
 ### Block 3 - Merge / tagging (new)
 
-At the `ref_edge` strobe (frame detection), latch **both** the coarse 200 MHz
-timestamp **and** `fine_phase`/`fine_valid` for the event, and hold them until
-`DAVn` for packing. Capturing the coarse stamp from this carrier-edge-derived
-strobe, rather than from the `DAVn` output that is resynced from the recovered
-SCLK onto `clk_40m`, is what removes the resync-beat dither seen in the captures
-("increment C"); the fine phase then refines the same reference-edge time to
-~1.25 ns ("increment A"). Because the fine bits and the coarse stamp travel
-inside the FIFO word with their event, they cross the clock-domain boundary
-together and need no separate CDC (the property the coarse timestamp already
-relies on).
+The TDC latches the shared coarse timebase (`wr_timebase`) at **each carrier
+edge** (`edge_stb`), in `clk_p0` = the 200 MHz `clk_40m` (same domain as
+`wr_timebase`, so no extra CDC), together with that edge's `fine_phase`/
+`fine_valid`. When the deserializer's `ref_edge` strobe fires (a deterministic
+per-frame tap at frame detection, 2-FF synced into `clk_p0`), the merge block
+**freezes** the currently-held `{coarse, fine_phase, fine_valid}` and holds it
+until `DAVn` for packing.
 
-Localization chain: DAVn-resynced stamp (dither observed ~250 ns, to be
-confirmed by the characterization task) -> ref-edge coarse stamp (increment C)
--> + fine phase (~1.25 ns, increment A).
+The load-bearing property (edge selection): the coarse timestamp comes from the
+carrier edge itself, captured on the fast clock, so it carries no `DAVn`/`SCLK`-
+resync jitter. `ref_edge` only *selects* which carrier edge, and its own ±12.5 ns
+jitter is harmless because carrier edges are 100 ns apart (12.5 ns << the 50 ns
+half-period margin), so it deterministically tags the same per-frame edge. A TCLK
+frame is fixed length, so that edge is a constant offset from the true event time
+-> cancels in event-to-event spacing. The fine phase then refines the selected
+edge to ~1.25 ns. The frozen `{coarse, fine, event}` travel together inside the
+FIFO word and cross to the AXI clock as a unit (no separate CDC).
+
+Localization chain: DAVn-resynced stamp (dither observed ~250 ns; sim shows the
+resync path is bounded, per the characterization) -> carrier-edge coarse stamp
+selected at `ref_edge` (jitter-free, "increment C") -> + fine phase (~1.25 ns,
+"increment A"). Final coarse+fine combination and bin calibration are done in
+software (see Software calibration), keeping the RTL minimal and re-calibratable.
 
 ## Reference edge definition
 
