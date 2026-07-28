@@ -42,7 +42,7 @@ def test_refine_tightens_periodic_spacing():
     # fine recovers the sub-tick, so refined spacing std < coarse spacing std.
     n = 500
     true_t = np.arange(n) * 5000.37             # sub-tick drift
-    coarse = np.round(true_t / 5.0) * 5.0        # 5 ns quantized
+    coarse = np.floor(true_t / 5.0) * 5.0        # 5 ns quantized (floor, not round; fine_phase uses floor convention)
     fp = ((true_t % 5.0) / 1.25).astype(int) % 4
     off = calibrate_bins(fp, n_bins=4, period_ns=5.0)
     ref = refine(coarse, fp, np.ones(n, int), off)
