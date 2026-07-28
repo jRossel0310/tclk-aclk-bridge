@@ -1,6 +1,6 @@
 # TCLK Fine-Timing Board Bring-Up Checklist
 
-Validation procedure for the multiphase fine-TDC feature when the servers return. The fine-timing path is transparent on the real line: if `fine_valid` collapses due to real-line ringing, the coarse 40 MHz timestamp is exactly the shipped build, so nothing is lost.
+Validation procedure for the multiphase fine-TDC feature when the servers return. The fine-timing path is transparent on the real line: if `fine_valid` collapses due to real-line ringing, the coarse 200 MHz timestamp is exactly the shipped build, so nothing is lost.
 
 ---
 
@@ -103,17 +103,19 @@ The FLAGS register layout (from `rtl/aclk_lite/tclk_readout_top.sv` line 247):
    io = rc.open_dev("/dev/uio4")
    for _ in range(1000):  # 1000 events
        if not (io.rd(rc.STATUS) & 1):  # not empty
-           _ = io.rd(rc.EVENT)  # latch high 16 bits
+           ev = io.rd(rc.EVENT)  # returns {FLAGS[15:0], EVENT[15:0]}
+           event = ev & 0xFFFF
+           flags = (ev >> 16) & 0xFFFF
            _ = io.rd(rc.DATA_HI)
            _ = io.rd(rc.DATA_LO)
-           ts_hi = io.rd(rc.TS_HI)
-           ts_lo = io.rd(rc.TS_LO)
+           _ = io.rd(rc.TS_HI)
+           _ = io.rd(rc.TS_LO)
            io.wr(rc.POP, 0)  # pop the event
-           flags = ts_hi >> 16  # FLAGS are in the upper 16 bits of TS_HI after latching
-           fine_valid = (flags >> 4) & 1
-           fine_phase = (flags >> 2) & 3
+           fine_valid = (flags >> 4) & 0x1     # FLAGS[4]
+           fine_phase = (flags >> 2) & 0x3     # FLAGS[3:2]
            print(f"fine_phase={fine_phase} fine_valid={fine_valid}")
    ```
+   (FLAGS packed in upper 16 bits of EVENT register; see `readout_common.py` line 21 and `rtl/aclk_readout/aclk_readout_axi.sv` line 16.)
 
 2. **Analyze the distribution of `fine_valid`:**
    - Capture 1000+ marker events ($02 every 5 s, or $8F every 1 s):
@@ -126,7 +128,7 @@ The FLAGS register layout (from `rtl/aclk_lite/tclk_readout_top.sv` line 247):
    - Count how many have `fine_valid=1` (in-phase) vs `fine_valid=0` (lost):
      - **Success:** >95% of marker events have `fine_valid=1`. Real-line jitter is smaller than a 1.25 ns bin.
      - **Warning:** 50–95% valid. The fine-TDC is working intermittently; real-line ringing is exceeding the ~1.25 ns bin width sporadically. Proceed cautiously; see Step 5 caveats.
-     - **Failure:** <50% or majority `fine_valid=0`. The real 3.3 V line's ringing or slow edges defeat the multiphase decode on this board. The coarse path (40 MHz = 25 ns bins) is still valid and the build is deployable, but fine-timing gains are lost. This is a **graceful fallback**: disable the fine-TDC in software by ignoring FLAGS[4] and using only the coarse timestamp.
+     - **Failure:** <50% or majority `fine_valid=0`. The real 3.3 V line's ringing or slow edges defeat the multiphase decode on this board. The coarse path (200 MHz = 5 ns bins) is still valid and the build is deployable, but fine-timing gains are lost. This is a **graceful fallback**: disable the fine-TDC in software by ignoring FLAGS[4] and using only the coarse timestamp.
 
 ---
 
@@ -157,7 +159,7 @@ Prerequisites: Step 3 confirmed `fine_valid` is high on live periodic markers.
    print("Bin offsets (ns):", centers)
    ```
 
-   The function assumes each fine-phase bin's fractional population (after de-duplicating multiple events in the same bin) represents that bin's true fractional width. The histogram is normalized: `centers` sum to 1.25 ns / 2.
+   The function builds a histogram of fine_phase sample populations, normalizes to fractional widths per bin (representing each bin's true width), and returns the center time of each 1.25 ns bin.
 
    **Interpretation:**
    - Offsets should be roughly [0.3, 1.55, 2.8, 4.0] ns (even 90-degree quadrants, plus a small skew from board ringing).
@@ -175,12 +177,12 @@ Prerequisites: Step 3 confirmed `fine_valid` is high on live periodic markers.
 **Objective:** Confirm event-to-event timing jitter tightens toward ~1.25 ns resolution with the fine-timing offsets applied.
 
 1. **Prepare two event sets:**
-   - **Coarse only:** Use the 40 MHz timestamp from the captured events, ignoring `fine_valid` and `fine_phase`.
+   - **Coarse only:** Use the 200 MHz timestamp from the captured events, ignoring `fine_valid` and `fine_phase`.
    - **Refined:** Apply `fine_calibrate.refine()` to add the sub-bin offset where `fine_valid=1`:
      ```python
      from fine_calibrate import refine
      
-     coarse_ns = np.array([...])  # 40 MHz timestamp * 25 ns
+     coarse_ns = np.array([...])  # 200 MHz timestamp * 5 ns
      fine_phase = np.array([...])  # FLAGS[3:2]
      fine_valid = np.array([...])  # FLAGS[4]
      offsets = np.load("fine_offsets.npy")  # [c0, c1, c2, c3] from Step 4
@@ -209,7 +211,7 @@ Prerequisites: Step 3 confirmed `fine_valid` is high on live periodic markers.
    ```
 
 3. **Success criteria:**
-   - Coarse jitter: ~10–20 ns RMS (40 MHz sampler + cable/board noise; see `deploy/marker_timing_accuracy.md` for baseline).
+   - Coarse jitter: Measure with `deploy/marker_timing.py` on the coarse-only events. Expect order-of-tens-of-ns RMS (200 MHz sampler + cable/board noise).
    - Refined jitter: **<3 ns RMS**, ideally **<2 ns** (approaching the 1.25 ns bin width).
    - Improvement factor: **≥5×** narrower.
 
@@ -222,9 +224,9 @@ Prerequisites: Step 3 confirmed `fine_valid` is high on live periodic markers.
 
 ## Graceful Fallback
 
-If at any point `fine_valid` collapses (Step 3, <50% valid) or jitter does not improve (Step 5), **the coarse 40 MHz path is exactly the shipped build**:
+If at any point `fine_valid` collapses (Step 3, <50% valid) or jitter does not improve (Step 5), **the coarse 200 MHz path is exactly the shipped build**:
 
-1. Set `USE_EXT_TS=1'b1` in `tclk_readout_top` (line 54 of `rtl/aclk_lite/tclk_readout_top.sv`) if using external White Rabbit timestamping; otherwise the readout uses its internal free-running 40 MHz counter (25 ns resolution).
+1. Set `USE_EXT_TS=1'b1` in `tclk_readout_top` (line 54 of `rtl/aclk_lite/tclk_readout_top.sv`) if using external White Rabbit timestamping; otherwise the readout uses its internal free-running 200 MHz counter (5 ns resolution).
 2. Ignore FLAGS[4:2] in the application layer: use only FLAGS[0:1] and the 64-bit TS field.
 3. No rollback bitstream is needed; the feature degrades gracefully to the pre-fine-TDC baseline.
 
@@ -247,6 +249,6 @@ For long-term deployment, if fine-valid < 95% on the real line, disable in firmw
 ## Notes
 
 - The 5-output clk_wiz (80 MHz + 4x 200 MHz phases) is instantiated in `vivado/build_aclk_pipeline.tcl` lines 158–188. The phase outputs (clk_p90, clk_p180, clk_p270) are threaded to `u_pipeline/tclk_readout_top` in the block design and routed to the fine-TDC module (`rtl/aclk_lite/tclk_fine_tdc.sv`).
-- The fine-TDC is instantiated in `tclk_readout_top.sv` lines 198–213. It freezes its edge detection on the `ref_edge` signal (the TCLK_DESERIALIZER2's frame-strobe, delayed by 3 clk_40m cycles to align with the frozen state settle time).
+- The fine-TDC is instantiated in `tclk_readout_top.sv` lines 198–213. It freezes its edge detection on the `ref_edge` signal (the TCLK_DESERIALIZER2's frame-strobe). The readout's event push is delayed 3 clk_40m cycles (ALIGN_DELAY, line 228) to align with the fine-TDC's frozen state settle time, pairing each event with its corresponding frozen triple.
 - FLAGS packing is in `tclk_readout_top.sv` line 250: `{11'b0, frozen_valid, frozen_phase, 1'b1, 1'b0}`. The word is latched at push time, so `frozen_valid` and `frozen_phase` are stable when `push_valid` fires (after the 3-cycle alignment delay).
 - The calibration and refinement functions (`fine_calibrate.py`) use `+` sign convention (offset added to coarse); Part-2 integration pins the sign against the coarse-latch edge (see the spec comments in that file).
