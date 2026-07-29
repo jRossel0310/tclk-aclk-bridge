@@ -80,6 +80,8 @@ add_files -norecurse [list \
 # Pipeline glue: the two readout tops, the TCLK->ACLK encoder, the ACLK-Lite bridge
 # + encoder, and the integrated BD top.
 add_files -norecurse [list \
+    [file join $rtl_dir aclk_lite tclk_fine_decode.sv] \
+    [file join $rtl_dir aclk_lite tclk_fine_tdc.sv] \
     [file join $rtl_dir aclk_lite tclk_readout_top.sv] \
     [file join $rtl_dir aclk_gt aclk_gt_readout_top.sv] \
     [file join $rtl_dir aclk_gt aclk_tclk_encoder.v] \
