@@ -74,3 +74,4 @@ deploy/events-*.csv
 deploy/overnight-*.csv
 deploy/sc_*.svg
 deploy/sc_*.png
+paper/

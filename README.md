@@ -15,6 +15,8 @@ needed) and then built to one bitstream with Vivado.
 > - Running the board? Start with the operator runbook **[docs/OPERATIONS.md](docs/OPERATIONS.md)**.
 > - Want the architecture, the module-to-file map, and what is hardware-verified vs.
 >   simulation-only? Read **[docs/PROJECT.md](docs/PROJECT.md)**.
+> - Taking over development? Start with the comprehensive
+>   **[repository maintainer guide](docs/MAINTAINER_GUIDE.md)**.
 
 ## What it does (signal chain)
 
