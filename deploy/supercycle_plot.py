@@ -167,6 +167,15 @@ def _solid_legend(leg):
         h.set_alpha(1.0)
 
 
+def _strip_titles(fig):
+    """Hide the in-figure title/subtitle so a LaTeX caption can carry them; the
+    tight bounding box then crops the freed space away from the plot region."""
+    if getattr(fig, "_suptitle", None) is not None:
+        fig._suptitle.set_visible(False)
+    for txt in list(fig.texts):
+        txt.set_visible(False)
+
+
 def comb_medians(offsets, median_len, n_cycles):
     """Median position of each tooth of ONE periodic reference comb. The comb's
     period is estimated from the data (pitch = median_len / events-per-cycle)
@@ -363,6 +372,9 @@ def main(argv):
                          "poster rasters readable)")
     ap.add_argument("--title", default=None,
                     help="override the figure title text")
+    ap.add_argument("--notitle", action="store_true",
+                    help="suppress the in-figure title and subtitle (let a "
+                         "caption carry them; frees the plot region)")
     ap.add_argument("--color", default=None,
                     help="target color override, e.g. '#2b8cc4' (ACLK blue)")
     ap.add_argument("--png", action="store_true",
@@ -487,6 +499,8 @@ def main(argv):
                                  refs=refs, theme=args.theme, bins=args.bins,
                                  window=window, title=args.title,
                                  color=args.color)
+        if args.notitle:
+            _strip_titles(fig_h)
         written = _save(fig_h, out_hist)
         fig_r = make_raster_figure(off[is_t], row[is_t], off[is_r], row[is_r],
                                    n_rows=stats["n_kept"],
@@ -494,6 +508,8 @@ def main(argv):
                                    target=target, refs=refs, theme=args.theme,
                                    window=window, title=args.title,
                                    color=args.color)
+        if args.notitle:
+            _strip_titles(fig_r)
         written += _save(fig_r, out_raster)
         per_cycle = np.bincount(row[is_t], minlength=stats["n_kept"])
         hist, edges = np.histogram(
