@@ -18,7 +18,7 @@ These figures are additive: they do not replace anything in `poster/figures/`.
 Parsed from the nine `flags-*.csv` files (columns `id,sec,ns,event,fine_phase,fine_valid`):
 
 - **52.46 h continuous**, 2026-07-31 21:11:51 to 2026-08-03 01:39 UTC.
-- **18,562,647 rows** captured. `counters.json` deltas over the same interval:
+- **18,562,135 rows** kept after the two defect filters below. `counters.json` deltas over the same interval:
   `event_count` +18,562,421, `filtered_count` +135,959,068, so roughly 136 M
   further events were seen and discarded by the in-FPGA drop mask.
 - `error_count` = 0 and `null_count` = 0 at both counter samples.
@@ -29,14 +29,15 @@ Parsed from the nine `flags-*.csv` files (columns `id,sec,ns,event,fine_phase,fi
 
 ### Two data defects, handled explicitly
 
-1. **Stale FIFO prefix.** The first 512 rows carry timestamps from
+1. **Stale FIFO prefix.** The first 512 rows (exactly the readout FIFO depth;
+   the earlier 737 k run has 512 too) carry timestamps from
    2026-07-31 16:35 UTC, 4.6 h before the run began: leftovers in the readout
    FIFO from a prior session. The loader drops every row before the first
    large forward time gap.
 2. **Byte-corruption burst.** `flags-20260802-151159.csv` contains a localized
    run of corrupted bytes (~586 non-ASCII bytes in one region, consistent with a
    storage write fault rather than a decode fault). The loader validates each row
-   numerically and in-range; 128 rows of 18.5 M are dropped. The count is
+   numerically and in-range; 135 rows of 18.5 M are dropped. The count is
    reported, never silently swallowed.
 
 ### Precision trap
