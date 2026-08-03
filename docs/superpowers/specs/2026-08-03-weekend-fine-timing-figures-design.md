@@ -110,7 +110,12 @@ measured point.
 The measured ladder: `$8F` 38 ns, `$02` 60 ns, the 15/20 Hz mains-locked family
 13-19 us, the 1 s supercycle-locked family 258 us, 3 s 773 us, 10 s 2.6 ms, and
 the 60 s supercycle codes 14 ms. GPS-locked and supercycle-locked codes separate
-visually.
+visually, and the machine-locked group shares a common **+121.5 ppm** rate offset.
+
+That offset is referenced to `$8F`, the GPS 1 Hz marker, and NOT to the nominal
+period. The board's own WR timebase free-runs at -3.49 ppm against GPS, so
+referencing to nominal folds that oscillator's error into the answer and reports
++118 ppm instead. `$8F` is the only absolute reference in the chain.
 
 Message: the receiver's timing floor is no longer the limiting term anywhere in
 the system, and the fine bits are what put it there.
