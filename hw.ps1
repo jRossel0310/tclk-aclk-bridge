@@ -235,7 +235,7 @@ all:
         $pyMap = @{
             "tclk"            = @("tclk_read.py", "tclk_filter.py", "readout_common.py")
             "aclk"            = @("aclk_read.py", "tclk_filter.py", "readout_common.py")
-            "aclk_pipeline"   = @("tclk_read.py", "aclk_read.py", "wr_time.py", "tclk_filter.py", "readout_common.py", "redis_sink.py", "redis_publish.py", "ra_consumer.py", "redis_smoketest.py", "stats_log.py", "stats_report.py", "stream_archive.py", "run_pipeline.sh", "requirements-board.txt", "redis-kr260.conf", "aclk_pipeline.dts", "capture.md")
+            "aclk_pipeline"   = @("tclk_read.py", "aclk_read.py", "wr_time.py", "tclk_filter.py", "readout_common.py", "redis_sink.py", "redis_publish.py", "ra_consumer.py", "redis_smoketest.py", "verify_no_loss.py", "qa_report.py", "gps_calibrate.py", "tclk_faithfulness.py", "stats_log.py", "stats_report.py", "stream_archive.py", "run_pipeline.sh", "requirements-board.txt", "redis-kr260.conf", "aclk_pipeline.dts", "capture.md")
         }
         $pyFiles = @()
         if ($pyMap.ContainsKey($Name)) {
