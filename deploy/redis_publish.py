@@ -1,36 +1,48 @@
 #!/usr/bin/env python3
-"""Publish WR-timestamped readout events to local Redis (KR260 namespace).
+"""Publish WR-timestamped TCLK readout events to Redis under the {TCLK} base key.
 
-Drains one UIO readout (TCLK or ACLK), drops UNSYNC events (ts==0), and submits a
-record per event to a background RedisSink. The sink writes:
-  per event:                 XADD {KR260}:<src> <RA_Time-ms>-<RA_Time-ns-in-ms>
-                                  {_, sec, ns, event, data, is_tclk, has_data, src}
-  per event code, per batch: HSET {KR260}:event:<src>:0x<CODE> {sec, ns, utc, data}
-                             HINCRBY {KR260}:event:<src>:0x<CODE> count <n-in-batch>
-So consumers read the time-ordered stream OR look an event code up directly. The
-stream entry ID is the event's own RA_Time (ns since epoch, split into <ms>-<ns_in_ms>)
-so it lines up with the RedisAdapter Protocol v1.0 convention; each entry carries both
-the mandatory `_` binary payload and the readable fields (no per-entry utc: derive it
-from sec/ns; the index hash keeps one). The braces around KR260 pin all per-namespace
-keys to one Redis Cluster hash slot. The sink also maintains {KR260}:status /
-{KR260}:watchdog liveness keys. Two threads: this (main) thread drains the FIFO and
-enqueues; the sink's writer thread talks to Redis, so a Redis stall never stalls the
-hardware FIFO drain.
+Drains one UIO readout, drops UNSYNC events (ts==0), and submits a record per event to
+a background RedisSink. This follows the lab redis-clock-server deployment's contract
+(RedisAdapter Protocol v1.0 key schema; see deploy/redis.md), so its redis-pvxs-ioc
+serves our events as EPICS_REDIS_TCLK:RT:* PVs with no producer-specific code.
+
+Three stream writes per event, all raw little-endian bytes in the single field `_`:
+
+    XADD {TCLK}:<HEX>     _ = <q>  RA_Time of this occurrence (ns since the epoch)
+    XADD {TCLK}:<HEX>_C   _ = <q>  occurrences of <HEX> since this process started
+    XADD {TCLK}:STREAM    _ = <H>  the event code (the combined feed)
+
+<HEX> is the event code as two uppercase zero-padded hex digits. Every entry ID is the
+event's own RA_Time encoded as <ms>-<ns_within_ms>, so entries correlate across streams
+by accelerator time; the sink bumps a tie or a backward step to last+1 ns so Redis's
+strictly-increasing rule holds. Liveness is a field in the {TCLK}:watchdog hash with a
+short expiry, refreshed while this process lives.
 
     sudo python3 redis_publish.py /dev/uio4 --src tclk
-    sudo python3 redis_publish.py /dev/uio5 --src aclk
 
-Ctrl-C to stop (flushes the queue, prints final stats). Needs redis-py on the board
-(pip install -r requirements-board.txt) and a running redis-server."""
+Ctrl-C to stop (flushes the queue, prints final stats). Needs redis-py >= 5.1 on the
+board (pip install -r requirements-board.txt) and a reachable redis-server >= 7.4."""
 import struct
 import sys
 import time
-from functools import lru_cache
 
 import readout_common as rc
-from readout_common import say, wr_split, wr_utc, read_hw_counters
+from readout_common import say, wr_split, read_hw_counters
 from redis_sink import RedisSink, resolve_auth
 from stats_log import StatsLog, build_snapshot, sw_counters, now_utc
+
+# Contract defaults for the lab deployment (bidaqt-tclk). {TCLK} is the base key that
+# deployment reserves for this decoder; it trims event streams to ~10000 entries and
+# expects each producer's watchdog field to expire 1 s after it stops refreshing.
+DEFAULT_BASE = "TCLK"
+DEFAULT_MAXLEN = 10_000
+DEFAULT_WATCHDOG_TTL = 1                 # seconds; field expiry in the watchdog hash
+DEFAULT_WATCHDOG_PERIOD = 0.9            # seconds between refreshes (must beat the TTL)
+DEFAULT_WATCHDOG_FIELD = "kr260-tclk"    # this producer's field in the watchdog hash
+BUILD_VERSION = "kr260-readout/1.0"      # the field's value: this producer's build
+
+_PACK_I64 = struct.Struct("<q").pack     # {TCLK}:<HEX> and {TCLK}:<HEX>_C payloads
+_PACK_U16 = struct.Struct("<H").pack     # {TCLK}:STREAM payload
 
 
 class PublisherState:
@@ -51,75 +63,75 @@ class PublisherState:
         return False
 
 
-@lru_cache(maxsize=None)
-def _stream_key(ns, src):
-    return "{%s}:%s" % (ns, src)
-
-
-@lru_cache(maxsize=4096)
-def _index_key(ns, src, event):
-    return "{%s}:event:%s:0x%02X" % (ns, src, event)
-
-
-def event_fields(event, flags, data, ts, src):
-    """Map a decoded event to the Redis Stream field dict. Carries the mandatory
-    RedisAdapter `_` primary payload (little-endian <IIIHB>: sec u32, ns u32, data
-    u32, event u16, flags u8) plus the human-readable extras. A generic RedisAdapter
-    consumer reads only `_`; our archiver/redis-cli read the text fields. No per-entry
-    `utc`: it duplicated sec/ns on every entry and was pure hot-path cost; consumers
-    derive UTC from sec/ns and the per-code index hash keeps a human-readable utc."""
-    sec, ns = wr_split(ts)
-    return {
-        "_": struct.pack("<IIIHB", sec, ns, data, event, flags),
-        "sec": str(sec), "ns": str(ns),
-        "event": str(event), "data": str(data),
-        "is_tclk": str((flags >> 1) & 1), "has_data": str(flags & 1),
-        "src": src,
-    }
-
-
 def should_publish(ts):
     """UNSYNC events (ts==0, WR timebase not locked when stamped) are not published."""
     return ts != 0
 
 
-def build_record(ns, src, event, flags, data, ts):
-    """Build the sink record for one event: the per-source stream write plus the
-    per-event-code index write, all under the `ns` namespace. The stream entry ID is
-    the event's RA_Time (ns since epoch); the sink encodes it as <ms>-<ns_in_ms> and
-    applies the monotonic guard. Keys are lru_cached and the index shares the fields
-    dict's strings: this runs per event on the drain thread's hot path."""
-    sec, nsec = wr_split(ts)
-    fields = event_fields(event, flags, data, ts, src)
-    return {
-        "stream":       _stream_key(ns, src),
-        "ra_time":      sec * 1_000_000_000 + nsec,
-        "fields":       fields,
-        "index_key":    _index_key(ns, src, event),
-        "index_fields": {"sec": fields["sec"], "ns": fields["ns"],
-                         "utc": wr_utc(ts), "data": fields["data"]},
-    }
+class RecordBuilder:
+    """Turns one decoded event into the sink record for its three stream writes.
+
+    Owns the per-code occurrence counters, so counts are exact and in event order (this
+    runs on the drain thread, which sees every event once). A fresh instance starts every
+    counter at zero, which is the restart signal the deployment's consumers expect: a
+    counter going backwards means the producer restarted, not corruption.
+
+    Key strings are cached per code because this is the FIFO-drain hot path; the cache is
+    bounded by the number of distinct event codes seen (<= 256 for TCLK)."""
+
+    def __init__(self, base):
+        self.base = base
+        self._counts = {}                # event code -> occurrences so far
+        self._keys = {}                  # event code -> (ts_key, count_key)
+        self._stream_key = "{%s}:STREAM" % base
+
+    def _code_keys(self, event):
+        keys = self._keys.get(event)
+        if keys is None:
+            keys = ("{%s}:%02X" % (self.base, event),
+                    "{%s}:%02X_C" % (self.base, event))
+            self._keys[event] = keys
+        return keys
+
+    def build(self, event, ts):
+        """One event -> {ra_time, writes}. `ts` is the raw WR stamp ((sec<<32)|ns)."""
+        sec, nsec = wr_split(ts)
+        ra = sec * 1_000_000_000 + nsec
+        count = self._counts.get(event, 0) + 1
+        self._counts[event] = count
+        ts_key, count_key = self._code_keys(event)
+        return {
+            "ra_time": ra,
+            "writes": [
+                (ts_key,           {"_": _PACK_I64(ra)}),
+                (count_key,        {"_": _PACK_I64(count)}),
+                (self._stream_key, {"_": _PACK_U16(event)}),
+            ],
+        }
 
 
 def main(argv):
     rc.line_buffer_stdout()
     pos, flags = rc.parse_args(
-        argv, value_flags=("--src", "--namespace", "--redis-host", "--redis-port",
+        argv, value_flags=("--src", "--namespace", "--base", "--redis-host", "--redis-port",
                            "--redis-username", "--redis-password",
                            "--maxlen", "--queue-size", "--statlog", "--snapshot-interval",
-                           "--drop"))
+                           "--drop", "--watchdog-field", "--build-version"))
     dev      = pos[0] if pos else "/dev/uio4"
     src      = flags.get("--src", "tclk")
-    ns       = flags.get("--namespace", "KR260")
+    # --base is the contract's term; --namespace is the older spelling kept for launchers.
+    base     = flags.get("--base") or flags.get("--namespace") or DEFAULT_BASE
     host     = flags.get("--redis-host", "127.0.0.1")
     port     = int(flags.get("--redis-port", "6379"))
     # Auth: prefer the REDIS_PASSWORD / REDIS_USERNAME env vars (a --redis-password on the
     # command line would be visible in `ps`); the flags exist for manual use and win if set.
     user, pw = resolve_auth(flags.get("--redis-username"), flags.get("--redis-password"))
-    maxlen   = int(flags.get("--maxlen", "1000000"))
+    maxlen   = int(flags.get("--maxlen", str(DEFAULT_MAXLEN)))
     qsize    = int(flags.get("--queue-size", "100000"))
     statpath = flags.get("--statlog", "stats-%s.jsonl" % src)
     interval = float(flags.get("--snapshot-interval", "60"))
+    wd_field = flags.get("--watchdog-field", DEFAULT_WATCHDOG_FIELD)
+    version  = flags.get("--build-version", BUILD_VERSION)
 
     io = rc.open_dev(dev)
     # Suppress flood codes (e.g. the 720 Hz 0x07) in the PL before they ever reach the FIFO,
@@ -128,19 +140,23 @@ def main(argv):
     # launch) makes the drop survive a PL reprogram with no manual step. See capture.md.
     rc.apply_drop_filter(io, rc.parse_drop_codes(flags.get("--drop", "")))
     sink = RedisSink(host=host, port=port, maxlen=maxlen, queue_size=qsize,
-                     status_key="{%s}:status" % ns, watchdog_key="{%s}:watchdog" % ns,
+                     watchdog_key="{%s}:watchdog" % base,
+                     watchdog_field=wd_field, watchdog_value=version,
+                     watchdog_ttl=DEFAULT_WATCHDOG_TTL,
+                     watchdog_period=DEFAULT_WATCHDOG_PERIOD,
                      username=user, password=pw)
     sink.start()
-    stream = "{%s}:%s" % (ns, src)
+    builder = RecordBuilder(base)
     statlog = StatsLog(statpath)
     state = PublisherState()
     auth = "user=%s password=set" % (user or "default") if pw else "none"
-    say("# publishing %s events from %s to Redis stream '%s' (%s:%d, auth=%s); stats -> %s "
-        "every %gs. Ctrl-C to stop." % (src, dev, stream, host, port, auth, statpath, interval))
+    say("# publishing %s events from %s to {%s}:<HEX>|<HEX>_C|STREAM (%s:%d, auth=%s, "
+        "maxlen=%d); stats -> %s every %gs. Ctrl-C to stop."
+        % (src, dev, base, host, port, auth, maxlen, statpath, interval))
 
     def on_event(e):
         if state.note(e["ts"]):
-            sink.submit(build_record(ns, src, e["event"], e["flags"], e["data"], e["ts"]))
+            sink.submit(builder.build(e["event"], e["ts"]))
 
     # Runs on the drain thread (tick_cb): reads are cheap, but the statlog flush is on the
     # FIFO-drain critical path; a wedged disk could stall the drain (bounded, overflow-flagged).
@@ -152,9 +168,10 @@ def main(argv):
     def stats_line():
         s = sink.stats()
         say("[stats] drained=%d unsync=%d published=%d queued=%d queue_dropped=%d "
-            "redis_dropped=%d reconnects=%d" % (
+            "redis_dropped=%d reconnects=%d%s" % (
                 state.drained, state.unsync, s["published"], s["queued"],
-                s["queue_dropped"], s["redis_dropped"], s["reconnects"]))
+                s["queue_dropped"], s["redis_dropped"], s["reconnects"],
+                (" last_error=%s" % s["last_error"]) if s["last_error"] else ""))
 
     snapshot()                                     # baseline before draining
     try:

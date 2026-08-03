@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
-"""Archive the published KR260 Redis streams to daily CSV files (board side).
+"""Archive the published {TCLK}:STREAM Redis feed to daily CSV files (board side).
 
-The Redis streams retain only ~1M entries (~2.8 h at 99 ev/s); this process
-follows them with batched XRANGE reads and appends one row per event to
-events-<src>-YYYYMMDD.csv, resuming from archive-state.json across restarts,
-so multi-day runs stay analyzable (see supercycle_plot.py).
+The deployment trims event streams to ~10000 entries (~100 s at 99 ev/s); this process
+follows the combined feed with batched XRANGE reads and appends one row per event to
+events-<label>-YYYYMMDD.csv, resuming from archive-state.json across restarts, so
+multi-day runs stay analyzable (see supercycle_plot.py, marker_timing.py).
 
-Deliberately a SEPARATE process from the publishers: it only talks to
-redis-server, never /dev/uio*, so it cannot affect the hardware FIFO drain.
-Worst-case Redis backpressure lands in the publishers' bounded sink queue.
+Deliberately a SEPARATE process from the publisher: it only talks to redis-server,
+never /dev/uio*, so it cannot affect the hardware FIFO drain. Worst-case Redis
+backpressure lands in the publisher's bounded sink queue.
 
-    python3 stream_archive.py                              # follow tclk+aclk
-    python3 stream_archive.py --once --src tclk -o tail.csv  # dump retention, exit
+    python3 stream_archive.py                        # follow {TCLK}:STREAM
+    python3 stream_archive.py --once -o tail.csv     # dump retention, exit
 
-Row schema: id,sec,ns,event,data (values exactly as published).
-Ctrl-C exits 0 (clean stop); a crash exits nonzero so the launcher's
-until-loop restarts it."""
+Row schema: id,sec,ns,event. sec/ns are derived from the entry's RA_Time stream ID,
+which under a same-ns tie or a backward WR step can lead the true event time by a few
+ns (the producer's documented monotonic bump). There is no data column: the {TCLK}
+contract carries only the event code, so a data word would have to be invented.
+
+Ctrl-C exits 0 (clean stop); a crash exits nonzero so the launcher's until-loop
+restarts it."""
 import argparse
 import csv
 import json
@@ -23,6 +27,7 @@ import os
 import sys
 import time
 
+from ra_consumer import ra_time_from_id, decode_event_id, stream_key
 from redis_sink import resolve_auth   # shared REDIS_USERNAME/REDIS_PASSWORD resolution
 
 # Redis errors are retried in-process (see main's follow loop); anything else
@@ -34,28 +39,33 @@ except ImportError:
     class RedisError(Exception):
         """Placeholder when redis-py is absent; production uses the real one."""
 
-HEADER = ["id", "sec", "ns", "event", "data"]
+HEADER = ["id", "sec", "ns", "event"]
+
+
+def _as_str(entry_id):
+    return entry_id.decode() if isinstance(entry_id, (bytes, bytearray)) else entry_id
 
 
 def row_from_entry(eid, fields):
-    """One published stream entry -> one CSV row (missing fields never crash)."""
-    return [eid, fields.get("sec", "0"), fields.get("ns", "0"),
-            fields.get("event", ""), fields.get("data", "0")]
+    """One {TCLK}:STREAM entry -> one CSV row. The event code comes from the binary `_`
+    payload; the timestamp comes from the stream ID (RA_Time, ns since the epoch)."""
+    sec, ns = divmod(ra_time_from_id(eid), 1_000_000_000)
+    return [_as_str(eid), str(sec), str(ns), str(decode_event_id(fields))]
 
 
 class DailyCsv:
     """Append-only CSV sink with UTC-daily rotation; header on file creation."""
 
-    def __init__(self, outdir, src, now=time.time):
+    def __init__(self, outdir, label, now=time.time):
         self.outdir = outdir
-        self.src = src
+        self.label = label
         self.now = now
         self._f = None
         self._w = None
         self._day = None
 
     def _path(self, day):
-        return os.path.join(self.outdir, "events-%s-%s.csv" % (self.src, day))
+        return os.path.join(self.outdir, "events-%s-%s.csv" % (self.label, day))
 
     def _roll(self):
         day = time.strftime("%Y%m%d", time.gmtime(self.now()))
@@ -96,7 +106,7 @@ def drain_source(client, stream, last_id, sink, batch=10000):
         if not entries:
             return last_id, total
         sink([row_from_entry(e, f) for e, f in entries])
-        last_id = entries[-1][0]
+        last_id = _as_str(entries[-1][0])
         total += len(entries)
         if len(entries) < batch:
             return last_id, total
@@ -117,21 +127,24 @@ def save_state(path, state):
     os.replace(tmp, path)
 
 
-def _stream_key(namespace, src):
-    return "{%s}:%s" % (namespace, src)
+def _stream_key(base):
+    return stream_key(base)
 
 
 def _default_connect(host, port, username=None, password=None):
     import redis   # lazy: module imports without redis-py (PC unit tests)
+    # decode_responses stays FALSE: the `_` payload is raw bytes and decoding it as
+    # text would corrupt it.
     return redis.Redis(host=host, port=port, username=username, password=password,
-                       decode_responses=True, encoding_errors="replace",
                        socket_connect_timeout=2.0, socket_timeout=5.0)
 
 
 def main(argv, connect=None):
-    ap = argparse.ArgumentParser(description="Archive KR260 Redis streams to CSV.")
-    ap.add_argument("--src", nargs="+", default=["tclk", "aclk"])
-    ap.add_argument("--namespace", default="KR260")
+    ap = argparse.ArgumentParser(description="Archive the {TCLK}:STREAM feed to CSV.")
+    ap.add_argument("--base", "--namespace", dest="base", default="TCLK",
+                    help="Redis base key (braced automatically)")
+    ap.add_argument("--src", dest="label", default="tclk",
+                    help="label used in the output filename and state key")
     ap.add_argument("--redis-host", default="127.0.0.1")
     ap.add_argument("--redis-port", type=int, default=6379)
     ap.add_argument("--redis-username", default=None)
@@ -152,12 +165,12 @@ def main(argv, connect=None):
         user, pw = resolve_auth(args.redis_username, args.redis_password)
         connect = lambda h, p: _default_connect(h, p, username=user, password=pw)
 
+    stream = _stream_key(args.base)
     if args.once:
-        if len(args.src) != 1 or not args.out:
-            print("--once requires exactly one --src and -o FILE", file=sys.stderr)
+        if not args.out:
+            print("--once requires -o FILE", file=sys.stderr)
             return 2
         client = connect(args.redis_host, args.redis_port)
-        stream = _stream_key(args.namespace, args.src[0])
         with open(args.out, "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(HEADER)
@@ -167,23 +180,21 @@ def main(argv, connect=None):
 
     state_path = os.path.join(args.outdir, "archive-state.json")
     state = load_state(state_path)
-    writers = {s: DailyCsv(args.outdir, s) for s in args.src}
+    writer = DailyCsv(args.outdir, args.label)
     client = None
     loops = 0
     print("# archiving %s under %s every %gs (state: %s). Ctrl-C to stop."
-          % (",".join(args.src), args.outdir, args.poll, state_path), flush=True)
+          % (stream, args.outdir, args.poll, state_path), flush=True)
     try:
         while True:
             try:
                 if client is None:
                     client = connect(args.redis_host, args.redis_port)
-                for s in args.src:
-                    stream = _stream_key(args.namespace, s)
-                    last, n = drain_source(client, stream, state.get(s),
-                                           writers[s].write_rows, batch=args.batch)
-                    if n:
-                        state[s] = last
-                        save_state(state_path, state)
+                last, n = drain_source(client, stream, state.get(args.label),
+                                       writer.write_rows, batch=args.batch)
+                if n:
+                    state[args.label] = last
+                    save_state(state_path, state)
             except RedisError as e:   # Redis down/hiccup: log, back off, reconnect
                 print("# archiver: redis error (%s); retrying" % e, flush=True)
                 client = None
@@ -194,8 +205,7 @@ def main(argv, connect=None):
     except KeyboardInterrupt:
         return 0
     finally:
-        for w in writers.values():
-            w.close()
+        writer.close()
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ Run: python test_stream_archive.py   or   pytest deploy -q"""
 import csv
 import json
 import os
+import struct
 import tempfile
 
 from stream_archive import (
@@ -13,12 +14,15 @@ from stream_archive import (
 
 class FakeStreamRedis:
     """Stub of the one redis-py call the archiver uses: xrange with an
-    optional exclusive '(' min bound and a count limit."""
+    optional exclusive '(' min bound and a count limit. Ids and field keys are bytes,
+    as they are with decode_responses=False (required to read a binary `_`)."""
     def __init__(self, entries):
         self.entries = entries          # list of (id, fields), ascending
 
     @staticmethod
     def _key(eid):
+        if isinstance(eid, bytes):
+            eid = eid.decode()
         ms, seq = eid.split("-")
         return (int(ms), int(seq))
 
@@ -36,38 +40,46 @@ class FakeStreamRedis:
         return out
 
 
-def _entries(n, ms0=1000):
-    return [("%d-0" % (ms0 + i),
-             {"sec": "1", "ns": str(i), "event": "7", "data": "0"})
-            for i in range(n)]
+def _entries(n, ms0=1000, event=0x07):
+    return [(b"%d-0" % (ms0 + i), {b"_": struct.pack("<H", event)}) for i in range(n)]
 
 
-def test_archive_stream_key_is_braced():
-    assert _stream_key("KR260", "tclk") == "{KR260}:tclk"
-    assert _stream_key("KR260", "aclk") == "{KR260}:aclk"
+def test_archive_follows_the_combined_stream_feed():
+    assert _stream_key("TCLK") == "{TCLK}:STREAM"
 
 
-def test_row_from_entry_schema_and_defaults():
-    r = row_from_entry("123-0", {"sec": "9", "ns": "8", "event": "29", "data": "5"})
-    assert r == ["123-0", "9", "8", "29", "5"]
-    r = row_from_entry("124-0", {})            # missing fields never crash
-    assert r == ["124-0", "0", "0", "", "0"]
+def test_header_has_no_data_column():
+    # the {TCLK} contract carries no event data word, so the archiver stops claiming one
+    assert HEADER == ["id", "sec", "ns", "event"]
+
+
+def test_row_derives_sec_and_ns_from_the_stream_id():
+    sec, ns = 1_751_800_000, 123_456_789
+    ra = sec * 1_000_000_000 + ns
+    eid = b"%d-%d" % divmod(ra, 1_000_000)
+    r = row_from_entry(eid, {b"_": struct.pack("<H", 0x1D)})
+    assert r == [eid.decode(), str(sec), str(ns), "29"]      # 0x1D == 29
+
+
+def test_row_accepts_str_entry_ids():
+    r = row_from_entry("1000-500", {b"_": struct.pack("<H", 0x0F)})
+    assert r[0] == "1000-500" and r[3] == "15"
 
 
 def test_drain_source_batches_and_resumes():
     fake = FakeStreamRedis(_entries(25))
     got = []
-    last, n = drain_source(fake, "{KR260}:tclk", None, got.extend, batch=10)
+    last, n = drain_source(fake, "{TCLK}:STREAM", None, got.extend, batch=10)
     assert n == 25 and last == "1024-0"
     assert [g[0] for g in got] == ["%d-0" % (1000 + i) for i in range(25)]
     # resume: nothing new after last
     got2 = []
-    last2, n2 = drain_source(fake, "{KR260}:tclk", last, got2.extend, batch=10)
+    last2, n2 = drain_source(fake, "{TCLK}:STREAM", last, got2.extend, batch=10)
     assert n2 == 0 and last2 == last and got2 == []
     # resume picks up only newer entries
     fake.entries += _entries(3, ms0=2000)
     got3 = []
-    last3, n3 = drain_source(fake, "{KR260}:tclk", last, got3.extend, batch=10)
+    last3, n3 = drain_source(fake, "{TCLK}:STREAM", last, got3.extend, batch=10)
     assert n3 == 3 and last3 == "2002-0"
 
 
@@ -75,9 +87,9 @@ def test_daily_csv_rotates_by_utc_date():
     clock = [1_755_000_000.0]                  # mutable fake wall clock
     with tempfile.TemporaryDirectory() as d:
         w = DailyCsv(d, "tclk", now=lambda: clock[0])
-        w.write_rows([["1-0", "1", "2", "7", "0"]])
+        w.write_rows([["1-0", "1", "2", "7"]])
         clock[0] += 86400.0                    # next UTC day -> new file
-        w.write_rows([["2-0", "1", "3", "7", "0"]])
+        w.write_rows([["2-0", "1", "3", "7"]])
         w.close()
         files = sorted(os.listdir(d))
         assert len(files) == 2 and all(f.startswith("events-tclk-") for f in files)
@@ -100,12 +112,18 @@ def test_once_dumps_full_retention_to_file():
     fake = FakeStreamRedis(_entries(7))
     with tempfile.TemporaryDirectory() as d:
         out = os.path.join(d, "tail.csv")
-        rc = main(["--once", "--src", "tclk", "-o", out], connect=lambda h, p: fake)
+        rc = main(["--once", "-o", out], connect=lambda h, p: fake)
         assert rc == 0
         with open(out, newline="") as f:
             rows = list(csv.reader(f))
         assert rows[0] == HEADER and len(rows) == 8       # header + 7 events
         assert rows[1][0] == "1000-0" and rows[-1][0] == "1006-0"
+
+
+def test_once_requires_an_output_file():
+    from stream_archive import main
+    rc = main(["--once"], connect=lambda h, p: FakeStreamRedis([]))
+    assert rc != 0
 
 
 def test_main_accepts_redis_auth_flags():
@@ -115,7 +133,7 @@ def test_main_accepts_redis_auth_flags():
     fake = FakeStreamRedis(_entries(3))
     with tempfile.TemporaryDirectory() as d:
         out = os.path.join(d, "t.csv")
-        rc = main(["--once", "--src", "tclk", "-o", out,
+        rc = main(["--once", "-o", out,
                    "--redis-username", "u", "--redis-password", "secret"],
                   connect=lambda h, p: fake)
         assert rc == 0
@@ -123,18 +141,11 @@ def test_main_accepts_redis_auth_flags():
             assert len(list(csv.reader(f))) == 4      # header + 3 events
 
 
-def test_once_requires_exactly_one_src():
-    from stream_archive import main
-    rc = main(["--once", "--src", "tclk", "aclk", "-o", "x.csv"],
-              connect=lambda h, p: FakeStreamRedis([]))
-    assert rc != 0
-
-
 def test_follow_writes_and_persists_state_then_stops():
     from stream_archive import main
     fake = FakeStreamRedis(_entries(5))
     with tempfile.TemporaryDirectory() as d:
-        rc = main(["--src", "tclk", "--outdir", d, "--poll", "0", "--max-loops", "2"],
+        rc = main(["--outdir", d, "--poll", "0", "--max-loops", "2"],
                   connect=lambda h, p: fake)
         assert rc == 0
         state = json.load(open(os.path.join(d, "archive-state.json")))
@@ -161,7 +172,7 @@ def test_follow_retries_redis_errors():
 
     fake = FlakyRedis(_entries(3))
     with tempfile.TemporaryDirectory() as d:
-        rc = main(["--src", "tclk", "--outdir", d, "--poll", "0", "--max-loops", "3"],
+        rc = main(["--outdir", d, "--poll", "0", "--max-loops", "3"],
                   connect=lambda h, p: fake)
         assert rc == 0
         state = json.load(open(os.path.join(d, "archive-state.json")))
@@ -177,7 +188,7 @@ def test_follow_crashes_on_non_redis_error():
 
     with tempfile.TemporaryDirectory() as d:
         try:
-            main(["--src", "tclk", "--outdir", d, "--poll", "0", "--max-loops", "2"],
+            main(["--outdir", d, "--poll", "0", "--max-loops", "2"],
                  connect=lambda h, p: BrokenRedis([]))
             raised = False
         except RuntimeError:

@@ -2,29 +2,77 @@
 Run: python deploy/test_redis_publish.py   or   pytest deploy -q"""
 import struct
 
-from redis_publish import event_fields, should_publish
+from redis_publish import (
+    RecordBuilder, should_publish, PublisherState,
+    DEFAULT_BASE, DEFAULT_MAXLEN, DEFAULT_WATCHDOG_TTL, DEFAULT_WATCHDOG_PERIOD,
+)
+
+SEC = 1_751_800_000
+NS = 123_456_789
+TS = (SEC << 32) | NS
+RA = SEC * 1_000_000_000 + NS
 
 
-def test_event_fields_schema():
-    SEC = 1_751_800_000
-    f = event_fields(0x07, 0x03, 0xABCD, (SEC << 32) | 1500, "tclk")
-    assert f["sec"] == str(SEC) and f["ns"] == "1500"
-    assert f["event"] == "7" and f["data"] == str(0xABCD)
-    assert f["is_tclk"] == "1" and f["has_data"] == "1"
-    assert f["src"] == "tclk"
-    # readable extras + the mandatory RedisAdapter `_` binary payload
-    assert set(f.keys()) == {"sec", "ns", "event", "data",
-                             "is_tclk", "has_data", "src", "_"}
-    assert all(isinstance(v, str) for k, v in f.items() if k != "_")
-    # `_` is the little-endian <IIIHB> primary struct
-    assert isinstance(f["_"], (bytes, bytearray)) and len(f["_"]) == 15
-    sec, ns, data, event, flags = struct.unpack("<IIIHB", f["_"])
-    assert (sec, ns, data, event, flags) == (SEC, 1500, 0xABCD, 0x07, 0x03)
+def test_defaults_match_the_lab_deployment():
+    # base key reserved for this decoder; retention and watchdog cadence per their doc
+    assert DEFAULT_BASE == "TCLK"
+    assert DEFAULT_MAXLEN == 10_000
+    assert DEFAULT_WATCHDOG_TTL == 1
+    assert DEFAULT_WATCHDOG_PERIOD == 0.9
 
 
-def test_event_fields_flag_variants():
-    f = event_fields(0x18, 0x00, 0, (1 << 32), "aclk")   # is_tclk=0 has_data=0
-    assert f["is_tclk"] == "0" and f["has_data"] == "0" and f["src"] == "aclk"
+def test_record_writes_three_streams_in_contract_order():
+    r = RecordBuilder("TCLK").build(0x1D, TS)
+    assert [k for k, _ in r["writes"]] == ["{TCLK}:1D", "{TCLK}:1D_C", "{TCLK}:STREAM"]
+
+
+def test_record_ra_time_is_ns_since_epoch():
+    r = RecordBuilder("TCLK").build(0x1D, TS)
+    assert r["ra_time"] == RA
+
+
+def test_time_payload_is_int64_ra_time():
+    r = RecordBuilder("TCLK").build(0x1D, TS)
+    _, fields = r["writes"][0]
+    assert list(fields) == ["_"]
+    assert struct.unpack("<q", fields["_"])[0] == RA
+
+
+def test_stream_payload_is_uint16_event_id():
+    r = RecordBuilder("TCLK").build(0x1D, TS)
+    _, fields = r["writes"][2]
+    assert len(fields["_"]) == 2
+    assert struct.unpack("<H", fields["_"])[0] == 0x1D
+
+
+def test_count_starts_at_one_and_increments_per_occurrence():
+    rb = RecordBuilder("TCLK")
+    counts = [struct.unpack("<q", rb.build(0x1D, TS)["writes"][1][1]["_"])[0]
+              for _ in range(3)]
+    assert counts == [1, 2, 3]
+
+
+def test_counts_are_tracked_per_event_code():
+    rb = RecordBuilder("TCLK")
+    rb.build(0x1D, TS)
+    rb.build(0x1D, TS)
+    r = rb.build(0x0F, TS)
+    assert struct.unpack("<q", r["writes"][1][1]["_"])[0] == 1     # 0x0F's own first
+
+
+def test_counts_reset_with_a_new_producer():
+    # "counters reset to zero when their producer restarts" is the intended signal
+    rb = RecordBuilder("TCLK")
+    rb.build(0x1D, TS)
+    fresh = RecordBuilder("TCLK")
+    assert struct.unpack("<q", fresh.build(0x1D, TS)["writes"][1][1]["_"])[0] == 1
+
+
+def test_event_codes_format_as_two_uppercase_hex_digits():
+    rb = RecordBuilder("TCLK")
+    assert rb.build(0x00, TS)["writes"][0][0] == "{TCLK}:00"
+    assert rb.build(0xAB, TS)["writes"][0][0] == "{TCLK}:AB"
+    assert rb.build(0xFF, TS)["writes"][1][0] == "{TCLK}:FF_C"
 
 
 def test_should_publish_drops_unsync():
@@ -32,28 +80,7 @@ def test_should_publish_drops_unsync():
     assert should_publish((1 << 32) | 5) is True
 
 
-def test_build_record():
-    from redis_publish import build_record
-    SEC = 1_751_800_000
-    NS = 123_456_789
-    r = build_record("KR260", "tclk", 0x1D, 0x02, 0, (SEC << 32) | NS)
-    assert r["stream"] == "{KR260}:tclk"
-    assert r["index_key"] == "{KR260}:event:tclk:0x1D"
-    assert r["ra_time"] == SEC * 1_000_000_000 + NS
-    assert r["fields"]["event"] == str(0x1D) and r["fields"]["src"] == "tclk"
-    assert "utc" not in r["fields"]                       # stream entries carry sec/ns only
-    assert r["index_fields"]["sec"] == str(SEC) and r["index_fields"]["ns"] == str(NS)
-    assert r["index_fields"]["data"] == "0"
-    assert r["index_fields"]["utc"].startswith("20") and r["index_fields"]["utc"].endswith("Z")
-    # a wide (16-bit) ACLK event still formats sensibly
-    r2 = build_record("KR260", "aclk", 0xABCD, 0x01, 5, (SEC << 32) | NS)
-    assert r2["stream"] == "{KR260}:aclk"
-    assert r2["index_key"] == "{KR260}:event:aclk:0xABCD"
-    assert r2["index_fields"]["data"] == "5"
-
-
 def test_publisher_state_counts():
-    from redis_publish import PublisherState
     st = PublisherState()
     assert st.note(0) is False and st.unsync == 1 and st.drained == 0
     assert st.note((1 << 32) | 5) is True and st.drained == 1 and st.unsync == 1

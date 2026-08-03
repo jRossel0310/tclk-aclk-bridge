@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
-# Launch the KR260 TCLK+ACLK Redis publishers in a detached tmux session, each writing a
-# JSONL stats log for the later error-check. Pre-flight refuses to launch unless Redis is
-# reachable AND the WR timebase is fully locked, because an unlocked timebase stamps every
-# event UNSYNC and the publisher would drop them all (a wasted day-long run).
+# Launch the KR260 TCLK Redis publisher in a detached tmux session, writing a JSONL stats
+# log for the later error-check. Pre-flight refuses to launch unless Redis is reachable
+# AND the WR timebase is fully locked, because an unlocked timebase stamps every event
+# UNSYNC and the publisher would drop them all (a wasted day-long run).
 #
-# Run as root (the publishers mmap /dev/uio*):
+# ACLK is NOT published. The lab deployment reserves the {TCLK} base key for this decoder
+# and its key space has no room for a second source (see deploy/redis.md); pointing an
+# ACLK publisher at {TCLK} would interleave ACLK codes into the TCLK event streams. ACLK
+# publishing returns when it has a base key of its own.
+#
+# Run as root (the publisher mmaps /dev/uio*):
 #     sudo ./run_pipeline.sh [TCLK_UIO] [ACLK_UIO] [WR_UIO]
-# Defaults: /dev/uio4 (tclk)  /dev/uio5 (aclk)  /dev/uio6 (wr).
+# Defaults: /dev/uio4 (tclk)  /dev/uio5 (aclk, unused)  /dev/uio6 (wr).
 # Match indices with:  grep . /sys/class/uio/uio*/name
 # Override the WR-lock refusal with FORCE=1 (e.g. deliberately capturing UNSYNC).
 # Publish to a different Redis (a lab RedisAdapter server) with REDIS_HOST / REDIS_PORT,
@@ -29,12 +34,14 @@ DROP="${DROP-07}"      # PL drop-mask codes (hex, comma-separated). Default: 0x0
                       # DROP="" does not un-drop codes a previous launch set; clear the bit
                       # explicitly (io.wr(FILTER_CFG, code) with bit8=0) or reload the PL.
 ARCHIVE="${ARCHIVE-1}"  # 1 = also run stream_archive.py (daily CSVs of every published
-                        # event, ~260 MB/day/source; needed for supercycle analysis of
-                        # runs longer than the ~2.8 h Redis stream retention).
+                        # event, ~260 MB/day; needed for any analysis of runs longer than
+                        # the Redis retention, which is now ~10000 entries = ~100 s at
+                        # 99 ev/s, so the archiver is no longer optional in practice).
                         # Set ARCHIVE="" to disable.
-REDIS_HOST="${REDIS_HOST:-127.0.0.1}"   # publish target (publishers + archiver + pre-flight).
+REDIS_HOST="${REDIS_HOST:-127.0.0.1}"   # publish target (publisher + archiver + pre-flight).
 REDIS_PORT="${REDIS_PORT:-6379}"        # A remote server must bind externally and allow this host.
-NAMESPACE="${NAMESPACE:-KR260}"         # Redis base key: keys become {NAMESPACE}:tclk etc.
+BASE="${BASE:-${NAMESPACE:-TCLK}}"      # Redis base key: keys become {BASE}:<HEX>, {BASE}:STREAM.
+                                        # NAMESPACE is the older spelling, still honored.
 # Auth (optional): set REDIS_PASSWORD (and REDIS_USERNAME for ACLs) in the environment for a
 # server with requirepass/ACLs. They are read from the environment, never passed on a command
 # line, so the password never appears in `ps`. Unset = no auth (a trusted link).
@@ -85,9 +92,7 @@ TMUX_ENV=()
 [ -n "${REDIS_PASSWORD:-}" ] && TMUX_ENV+=(-e "REDIS_PASSWORD=$REDIS_PASSWORD")
 [ -n "${REDIS_USERNAME:-}" ] && TMUX_ENV+=(-e "REDIS_USERNAME=$REDIS_USERNAME")
 tmux new-session -d -s "$SESSION" -n tclk "${TMUX_ENV[@]}" \
-    "cd '$HERE' && until python3 redis_publish.py $TCLK_DEV --src tclk --namespace '$NAMESPACE' --drop '$DROP' --statlog stats-tclk.jsonl --redis-host '$REDIS_HOST' --redis-port '$REDIS_PORT'; do echo '# publisher exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
-tmux new-window -t "$SESSION" -n aclk \
-    "cd '$HERE' && until python3 redis_publish.py $ACLK_DEV --src aclk --namespace '$NAMESPACE' --drop '$DROP' --statlog stats-aclk.jsonl --redis-host '$REDIS_HOST' --redis-port '$REDIS_PORT'; do echo '# publisher exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
+    "cd '$HERE' && until python3 redis_publish.py $TCLK_DEV --src tclk --base '$BASE' --drop '$DROP' --statlog stats-tclk.jsonl --redis-host '$REDIS_HOST' --redis-port '$REDIS_PORT'; do echo '# publisher exited nonzero; restarting in 5 s'; sleep 5; done; exec bash"
 # The guard and archiver restart UNCONDITIONALLY (even after a clean Ctrl-C):
 # a stray Ctrl-C in one of these panes once silently ended archiving for hours.
 # Their intended stop is killing the session, which is the normal stop flow.
@@ -95,13 +100,13 @@ tmux new-window -t "$SESSION" -n wr \
     "cd '$HERE' && while true; do python3 wr_time.py $WR_DEV guard; echo '# wr guard exited; restarting in 5 s'; sleep 5; done"
 if [ -n "$ARCHIVE" ]; then
     tmux new-window -t "$SESSION" -n archive \
-        "cd '$HERE' && while true; do nice -n 10 python3 stream_archive.py --namespace '$NAMESPACE' --redis-host '$REDIS_HOST' --redis-port '$REDIS_PORT'; echo '# archiver exited; restarting in 5 s'; sleep 5; done"
+        "cd '$HERE' && while true; do nice -n 10 python3 stream_archive.py --base '$BASE' --redis-host '$REDIS_HOST' --redis-port '$REDIS_PORT'; echo '# archiver exited; restarting in 5 s'; sleep 5; done"
 fi
 
-echo "# publishing to Redis $REDIS_HOST:$REDIS_PORT as {$NAMESPACE}${REDIS_PASSWORD:+ (auth)}"
-echo "# launched tmux session '$SESSION' (windows: tclk, aclk, wr guard${ARCHIVE:+, archive})."
+echo "# publishing to Redis $REDIS_HOST:$REDIS_PORT as {$BASE}:<HEX>|<HEX>_C|STREAM${REDIS_PASSWORD:+ (auth)}"
+echo "# launched tmux session '$SESSION' (windows: tclk, wr guard${ARCHIVE:+, archive})."
 echo "#   attach : sudo tmux attach -t $SESSION      (detach with Ctrl-b d)"
-echo "#   stop   : sudo tmux send-keys -t $SESSION:tclk C-c ; sudo tmux send-keys -t $SESSION:aclk C-c"
-echo "#            (Ctrl-C makes each publisher write its FINAL snapshot), then:"
+echo "#   stop   : sudo tmux send-keys -t $SESSION:tclk C-c"
+echo "#            (Ctrl-C makes the publisher write its FINAL snapshot), then:"
 echo "#            sudo tmux kill-session -t $SESSION"
-echo "#   report : sudo python3 stats_report.py stats-tclk.jsonl stats-aclk.jsonl"
+echo "#   report : sudo python3 stats_report.py stats-tclk.jsonl"

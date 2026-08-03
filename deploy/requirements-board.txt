@@ -1,4 +1,8 @@
 # Board-side Python deps for the KR260 readout tooling (NOT the sim venv; the sim
 # deps are in the repo-root requirements.txt). Install on the board with:
 #   pip install -r requirements-board.txt
-redis
+# >= 5.1 for HEXPIRE (hash-field TTLs): the {TCLK}:watchdog field must expire ~1 s after
+# the publisher stops refreshing it, which is how the deployment detects a dead producer.
+# Needs redis-server >= 7.4 on the other end. An older client is reported in the
+# publisher's last_error rather than silently publishing a watchdog that never expires.
+redis>=5.1

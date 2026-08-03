@@ -3,22 +3,28 @@
 A bounded in-process queue decouples the caller (the UIO drain thread) from Redis
 latency: submit() never blocks; if the queue is full it drops the OLDEST record
 (counted) so the hardware FIFO drain can never stall on a Redis hiccup. A writer
-thread pops records in batches and pipelines:
-  per record:                XADD <stream> <guarded_ms>-<guarded_ns_in_ms> <fields>
-                                  MAXLEN ~ <maxlen>
-  per event code, per batch: HSET <index_key> <latest index_fields>
-                             HINCRBY <index_key> count <occurrences in batch>
-The per-code index writes are AGGREGATED per batch (last event wins the HSET, counts
-sum exactly): redis-py command BUILDING is the throughput cap on the board (~560 us per
-3-command record), so collapsing 3 commands/event to ~1 tripled the sustained rate. The
-index hash therefore updates once per batch (<= 1 s typically) instead of per event;
-counts stay exact.
-On any Redis error it counts the dropped batch, reconnects with backoff, continues.
+thread pops records in batches and pipelines every write the record carries:
+
+    per write:   XADD <key> <guarded_ms>-<guarded_ns_in_ms> <fields> MAXLEN ~ <maxlen>
+
+A record is {ra_time, writes: [(key, fields), ...]}: the publisher decides which keys
+one event touches (see redis_publish.RecordBuilder, which emits the contract's
+{TCLK}:<HEX>, {TCLK}:<HEX>_C and {TCLK}:STREAM writes), and the sink stays generic.
+`published` counts RECORDS (events), not XADDs.
 
 Stream IDs come from the event's RA_Time (ns since epoch), encoded as <ms>-<ns_in_ms>,
-with a per-stream monotonic guard at ns resolution so a backward WR re-arm jump (or two
-events with an identical RA_Time, a ns-exact tie) cannot make XADD error (Redis requires
-increasing IDs).
+with a monotonic guard PER KEY at ns resolution so a backward WR re-arm jump (or two
+events with an identical RA_Time) cannot make XADD error (Redis requires increasing
+IDs). Per-key means the shared STREAM feed absorbs the bumps that its per-code streams
+never see, matching the deployment's documented max(raw, last+1) policy.
+
+Liveness is one field in a watchdog HASH: HSET the producer's build version, then
+HEXPIRE that field with a short TTL, refreshed on a period that beats the TTL. Field
+TTLs need redis-server >= 7.4 and redis-py >= 5.1; an older client is reported through
+`last_error` rather than failing silently.
+
+On any Redis error it counts the dropped batch, records `last_error`, reconnects with
+backoff, continues.
 
 Redis is reached through an injected `connect` factory (default: a real redis-py
 client). redis-py is imported lazily inside that factory so this module imports cleanly
@@ -46,14 +52,16 @@ def _default_connect(host, port, username=None, password=None):
 
 
 class RedisSink:
-    def __init__(self, host="127.0.0.1", port=6379, maxlen=1_000_000,
-                 queue_size=100_000, batch=1000, status_key=None,
-                 watchdog_key=None, watchdog_ttl=30, watchdog_period=10,
+    def __init__(self, host="127.0.0.1", port=6379, maxlen=10_000,
+                 queue_size=100_000, batch=1000, watchdog_key=None,
+                 watchdog_field=None, watchdog_value=None,
+                 watchdog_ttl=1, watchdog_period=0.9,
                  connect=None, username=None, password=None):
         self.maxlen = maxlen
         self.batch = batch
-        self.status_key = status_key
         self.watchdog_key = watchdog_key
+        self.watchdog_field = watchdog_field
+        self.watchdog_value = watchdog_value
         self.watchdog_ttl = watchdog_ttl
         self.watchdog_period = watchdog_period
         self._connect = connect or (lambda: _default_connect(host, port,
@@ -63,19 +71,18 @@ class RedisSink:
         self._stop = threading.Event()
         self._thread = None
         self._lock = threading.Lock()
-        self._last_ratime = {}                   # per-stream monotonic RA_Time (ns) guard
-        self._status_set = False                 # re-announced after each (re)connect
-        self._last_wd = 0.0                       # monotonic time of last watchdog refresh
+        self._last_ratime = {}                   # per-KEY monotonic RA_Time (ns) guard
+        self._last_wd = 0.0                      # monotonic time of last watchdog refresh
         self.published = 0
         self.queue_dropped = 0
         self.redis_dropped = 0
         self.reconnects = 0
+        self.last_error = None                   # most recent Redis failure, None when healthy
 
     # ---- producer side (drain thread) ----
     def submit(self, record):
         """Enqueue one event record. Never blocks: on a full queue drop the OLDEST
-        record (counted), then enqueue this one. A record is:
-        {stream, ra_time, fields, index_key, index_fields}."""
+        record (counted), then enqueue this one. A record is {ra_time, writes}."""
         try:
             self._q.put_nowait(record)
             return
@@ -107,7 +114,11 @@ class RedisSink:
         with self._lock:
             return {"published": self.published, "queue_dropped": self.queue_dropped,
                     "redis_dropped": self.redis_dropped, "reconnects": self.reconnects,
-                    "queued": self._q.qsize()}
+                    "queued": self._q.qsize(), "last_error": self.last_error}
+
+    def _note_error(self, exc):
+        with self._lock:
+            self.last_error = "%s: %s" % (type(exc).__name__, exc)
 
     def _drain_batch(self):
         batch = []
@@ -118,42 +129,43 @@ class RedisSink:
                 break
         return batch
 
+    def _guarded_id(self, key, ra):
+        """RA_Time -> a stream ID strictly greater than this key's previous one."""
+        last = self._last_ratime.get(key, 0)
+        if ra <= last:                           # strictly increasing IDs: bump 1 ns
+            ra = last + 1
+        self._last_ratime[key] = ra
+        ms, seq = divmod(ra, 1_000_000)          # RA_Time -> <ms>-<ns_within_ms>
+        return "%d-%d" % (ms, seq)
+
     def _write_batch(self, client, batch):
         pipe = client.pipeline(transaction=False)
-        idx_last = {}                            # index_key -> latest index_fields in batch
-        idx_cnt = {}                             # index_key -> occurrences in batch
         for rec in batch:
-            stream = rec["stream"]
             ra = rec["ra_time"]
-            last = self._last_ratime.get(stream, 0)
-            if ra <= last:                       # strictly increasing IDs: bump 1 ns
-                ra = last + 1
-            self._last_ratime[stream] = ra
-            ms, seq = divmod(ra, 1_000_000)      # RA_Time -> <ms>-<ns_within_ms>
-            pipe.xadd(stream, rec["fields"], id="%d-%d" % (ms, seq),
-                      maxlen=self.maxlen, approximate=True)
-            k = rec["index_key"]
-            idx_last[k] = rec["index_fields"]    # batch order = event order: last wins
-            idx_cnt[k] = idx_cnt.get(k, 0) + 1
-        for k, f in idx_last.items():            # one HSET + one HINCRBY per code per batch
-            pipe.hset(k, mapping=f)
-            pipe.hincrby(k, "count", idx_cnt[k])
+            for key, fields in rec["writes"]:
+                pipe.xadd(key, fields, id=self._guarded_id(key, ra),
+                          maxlen=self.maxlen, approximate=True)
         pipe.execute()
 
     def _maybe_watchdog(self, client):
-        """Set status once per (re)connect (announced immediately, not throttled) and
-        refresh the watchdog TTL key every watchdog_period seconds. Raises on a Redis
-        error so the caller reconnects."""
-        if self.status_key is None and self.watchdog_key is None:
+        """Refresh this producer's field in the watchdog hash every watchdog_period
+        seconds: HSET the build version, then HEXPIRE the field so it disappears
+        watchdog_ttl seconds after we stop refreshing. Raises on a Redis error (or on a
+        redis-py too old for HEXPIRE) so the caller reconnects and records it."""
+        if self.watchdog_key is None:
             return
-        if self.status_key is not None and not self._status_set:
-            client.set(self.status_key, 1)
-            self._status_set = True
-        if self.watchdog_key is not None:
-            now = time.monotonic()
-            if self._last_wd == 0.0 or (now - self._last_wd) >= self.watchdog_period:
-                client.set(self.watchdog_key, int(time.time()), ex=self.watchdog_ttl)
-                self._last_wd = now
+        now = time.monotonic()
+        if self._last_wd != 0.0 and (now - self._last_wd) < self.watchdog_period:
+            return
+        hexpire = getattr(client, "hexpire", None)
+        if hexpire is None:
+            raise RuntimeError(
+                "this redis-py has no HEXPIRE, so the watchdog field cannot expire and "
+                "liveness would read as alive forever; needs redis-py >= 5.1 "
+                "(pip install -U redis) against redis-server >= 7.4")
+        client.hset(self.watchdog_key, self.watchdog_field, self.watchdog_value)
+        hexpire(self.watchdog_key, self.watchdog_ttl, self.watchdog_field)
+        self._last_wd = now
 
     def _run(self):
         client = None
@@ -163,10 +175,10 @@ class RedisSink:
             if client is None:
                 try:
                     client = self._connect()
-                    self._status_set = False     # re-announce status after (re)connect
-                except Exception:
+                except Exception as e:
                     with self._lock:
                         self.reconnects += 1
+                    self._note_error(e)
                     if self._stop.is_set():
                         break                    # stopping AND cannot connect: give up rest
                     time.sleep(0.5)
@@ -174,9 +186,10 @@ class RedisSink:
             if not self._stop.is_set():
                 try:
                     self._maybe_watchdog(client)
-                except Exception:
+                except Exception as e:
                     with self._lock:
                         self.reconnects += 1
+                    self._note_error(e)
                     client = None
                     time.sleep(0.5)          # back off on a Redis error (no busy-spin)
                     continue
@@ -190,10 +203,12 @@ class RedisSink:
                 self._write_batch(client, batch)
                 with self._lock:
                     self.published += len(batch)
-            except Exception:
+                    self.last_error = None       # healthy again
+            except Exception as e:
                 with self._lock:
                     self.redis_dropped += len(batch)
                     self.reconnects += 1
+                self._note_error(e)
                 client = None                    # force reconnect next iteration
                 if not self._stop.is_set():
                     time.sleep(0.5)          # back off on a Redis error (no busy-spin)
