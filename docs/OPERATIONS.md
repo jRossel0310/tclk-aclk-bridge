@@ -14,10 +14,12 @@ pins, and every decoded TCLK event is White-Rabbit-timestamped with an absolute
 as gigabit ACLK, sent out the SFP+ transceiver, looped back into the same board
 over a physical fiber, decoded again against the same WR timeline, mirrored out
 as ACLK-Lite (Manchester) on Pmod pin B10 as a scope probe, and published to the
-PS on a second readout. On the board, one Python publisher per readout drains the
-event FIFO and writes each event into local Redis Streams under the `{KR260}:`
-namespace (RedisAdapter Protocol v1.0 key schema, base key braced for Redis
-Cluster hash tagging).
+PS on a second readout. On the board, a Python publisher drains the TCLK event
+FIFO and writes each event into Redis Streams under the `{TCLK}:` base key
+(RedisAdapter Protocol v1.0 key schema, braced for Redis Cluster hash tagging),
+which is what the lab's redis-clock-server deployment reads to serve
+`EPICS_REDIS_TCLK:RT:*` PVs. ACLK is decoded and mirrored but not published:
+that key space has no second source yet (see deploy/redis.md).
 
 ## 2. One-time setup
 
@@ -58,22 +60,23 @@ settings) and is what Fermilab's docs recommend for drag-and-drop transfers.
 
 ### Board prerequisites
 
-The publishers write to a local Redis server. Redis >= 7.0 is no longer
-required: the publisher sends explicit, complete `<ms>-<ns_within_ms>` stream
-IDs (never a server-assigned `-*` sequence), and that syntax is accepted on
-Redis 6 as well as Redis 7. Install Redis and the KR260 settings once, on the
-board:
+The publisher targets either the lab Redis or a local one for bench work. The
+stream IDs are explicit, complete `<ms>-<ns_within_ms>` values (never a
+server-assigned `-*` sequence), so they work on Redis 6 and later, but the
+watchdog uses hash-field TTLs (`HEXPIRE`), which need **redis-server >= 7.4 and
+redis-py >= 5.1**. Install Redis and the KR260 settings once, on the board:
 
 ```bash
-sudo apt update && sudo apt install -y redis-server python3-redis
-redis-cli INFO server | grep redis_version    # informational only, any version works
+sudo apt update && sudo apt install -y redis-server
+sudo pip3 install -r requirements-board.txt   # redis-py >= 5.1, for HEXPIRE
+redis-cli INFO server | grep redis_version    # want >= 7.4 for the watchdog
 
 # apply the KR260 Redis tuning (ephemeral streams, persistence off), then restart
 cat redis-kr260.conf | sudo tee -a /etc/redis/redis.conf
 sudo systemctl enable --now redis-server
 sudo systemctl restart redis-server
 redis-cli ping                                # -> PONG
-sudo python3 -c "import redis; print(redis.__version__)"   # redis-py visible to root
+sudo python3 -c "import redis; print(redis.__version__)"   # >= 5.1, visible to root
 ```
 
 Install the board-side Python dependencies:
@@ -121,7 +124,8 @@ board-side script and config the pipeline needs and copies them with `scp`:
 
 It copies: `uart_echo_bd_wrapper.bit.bin`, `tclk_read.py`, `aclk_read.py`,
 `wr_time.py`, `tclk_filter.py`, `readout_common.py`, `redis_sink.py`,
-`redis_publish.py`, `stats_log.py`, `stats_report.py`, `stream_archive.py`,
+`redis_publish.py`, `ra_consumer.py`, `redis_smoketest.py`, `stats_log.py`,
+`stats_report.py`, `stream_archive.py`,
 `run_pipeline.sh`, `requirements-board.txt`, `redis-kr260.conf`,
 `aclk_pipeline.dts`, and `capture.md`, all to `~` on the board.
 
@@ -218,7 +222,7 @@ redis-cli ping                           # PONG
 ### Launch (survives SSH disconnect)
 
 ```bash
-sudo ./run_pipeline.sh                   # defaults: uio4 tclk, uio5 aclk, uio6 wr
+sudo ./run_pipeline.sh                   # defaults: uio4 tclk, uio6 wr
 # or pass indices:  sudo ./run_pipeline.sh /dev/uio4 /dev/uio5 /dev/uio6
 ```
 
@@ -227,32 +231,32 @@ fully locked (an unlocked timebase stamps every event UNSYNC and they would all
 be dropped, wasting the run). Override with `FORCE=1` only if you deliberately
 want to capture while unlocked.
 
-The launcher opens four `tmux` windows: `tclk` and `aclk` publishers, a `wr`
-window running `wr_time.py guard` (which auto-re-arms the strict timebase after
-any WR blip so a glitch costs seconds, not the run), and an `archive` window
-running `stream_archive.py` (daily CSVs of every published event). Two
-environment variables tune the launch:
+The launcher opens three `tmux` windows: the `tclk` publisher, a `wr` window
+running `wr_time.py guard` (which auto-re-arms the strict timebase after any WR
+blip so a glitch costs seconds, not the run), and an `archive` window running
+`stream_archive.py` (daily CSVs of every published event). Two environment
+variables tune the launch:
 
 - `DROP` (default `07`): PL drop-mask event codes, hex, comma-separated. The
   default drops $07, the 720 Hz flood. `DROP=""` keeps every code. The mask
   register persists across launches (it clears only on PL reload).
 - `ARCHIVE` (default `1`): also run `stream_archive.py`. It writes about
-  260 MB/day/source and is needed for supercycle analysis of runs longer than
-  the ~2.8 h Redis stream retention. Set `ARCHIVE=""` to disable.
+  260 MB/day and is needed for any analysis of runs longer than the Redis stream
+  retention, which is now ~10000 entries (about 100 s at 99 ev/s), so in practice
+  it is no longer optional. Set `ARCHIVE=""` to disable.
 
 Spot-check while it runs:
 
 ```bash
 sudo tmux attach -t kr260                # Ctrl-b d to detach
-redis-cli XLEN '{KR260}:tclk'            # climbs
+redis-cli XLEN '{TCLK}:STREAM'           # climbs
 tail -f stats-tclk.jsonl                 # one JSON line per snapshot (~60 s)
 ```
 
 ### Stop cleanly (writes a final post-flush snapshot)
 
 ```bash
-sudo tmux send-keys -t kr260:tclk C-c    # Ctrl-C makes each publisher write its FINAL snapshot
-sudo tmux send-keys -t kr260:aclk C-c
+sudo tmux send-keys -t kr260:tclk C-c    # Ctrl-C makes the publisher write its FINAL snapshot
 sudo tmux kill-session -t kr260
 ```
 
@@ -264,7 +268,7 @@ snapshot; you lose up to the last interval (~60 s) of counts.
 ### Error check (on the board)
 
 ```bash
-sudo python3 stats_report.py stats-tclk.jsonl stats-aclk.jsonl
+sudo python3 stats_report.py stats-tclk.jsonl
 ```
 
 Per source it prints `decoded` (good events the PL enqueued), `published`,
@@ -280,58 +284,66 @@ the log between runs to keep them separate.
 ### Redis liveness and stream checks
 
 ```bash
-redis-cli XLEN '{KR260}:tclk'                     # climbs while publishing
-redis-cli XREVRANGE '{KR260}:tclk' + - COUNT 3    # newest 3 events (event-time ordered)
-redis-cli GET '{KR260}:status'                    # 1 while a publisher is alive (sticky, see below)
-redis-cli TTL '{KR260}:watchdog'                  # counts down from ~30 while alive
+redis-cli XLEN '{TCLK}:STREAM'                    # climbs while publishing
+redis-cli XREVRANGE '{TCLK}:STREAM' + - COUNT 3   # newest 3 events (event-time ordered)
+redis-cli HGETALL '{TCLK}:watchdog'               # our field = the publisher build version
+redis-cli HTTL '{TCLK}:watchdog' FIELDS 1 kr260-tclk   # counts down ~1 s while alive
 ```
 
-`{KR260}:watchdog` is the **authoritative** liveness signal: it is a TTL key
-refreshed every ~10 s that expires within ~30 s if a publisher dies.
-`{KR260}:status` is sticky (set to 1 on connect, never cleared on stop), so do not
-trust it alone. If `XLEN` stays 0, the WR timebase is almost certainly not
+Liveness is the watchdog FIELD's TTL, not its presence: the publisher refreshes
+it every ~0.9 s and it expires ~1 s after the publisher dies, so check `HTTL`,
+not `HGETALL`. If `XLEN` stays 0, the WR timebase is almost certainly not
 locked (all events are UNSYNC and dropped): re-check
 `sudo python3 wr_time.py /dev/uio6 status`.
 
 The publisher's own 1 Hz stats line reports
-`drained / published / queued / queue_dropped / redis_dropped / reconnects`. A
-rising `queue_dropped` or `redis_dropped` means Redis is not keeping up; if
-`published` stays 0 while `reconnects` climbs, Redis is unreachable or redis-py
-is not visible under `sudo` (see Section 9).
+`drained / unsync / published / queued / queue_dropped / redis_dropped /
+reconnects`, plus `last_error` whenever Redis is unhealthy. A rising
+`queue_dropped` or `redis_dropped` means Redis is not keeping up; if `published`
+stays 0 while `reconnects` climbs, read `last_error`: Redis unreachable, redis-py
+not visible under `sudo` (see Section 9), or a redis-py older than 5.1 (no
+HEXPIRE, so the watchdog field could never expire and the publisher refuses to
+fake liveness).
 
 ## 8. Get the data out
 
-### Redis key schema (base key `{KR260}`)
+### Redis key schema (base key `{TCLK}`)
 
-The publisher writes three things per event, matching the Fermilab
-RedisAdapter Protocol v1.0 convention:
+The publisher writes three streams per event, matching the lab
+redis-clock-server deployment's contract and RedisAdapter Protocol v1.0. Every
+entry carries exactly one field, `_`, holding raw little-endian bytes. The
+**entry ID is the event's RA_Time** (nanoseconds since the Unix epoch) encoded
+as `<ms>-<ns_within_ms>`, guarded per key so a duplicate or backward RA_Time is
+bumped to the previous ID + 1 ns rather than making `XADD` error.
 
-- `XADD {KR260}:<src>` : the time-ordered event feed (`{KR260}:tclk`,
-  `{KR260}:aclk`). The **entry ID is the event's RA_Time** (nanoseconds since
-  the Unix epoch) encoded as `<ms>-<ns_within_ms>`, guarded so a duplicate or
-  backward RA_Time is bumped to the previous ID + 1 ns rather than making
-  `XADD` error. Fields: a mandatory `_` (the little-endian `<IIIHB>`
-  RedisAdapter primary payload: sec, ns, data, event, flags) plus the readable
-  string extras `sec, ns, event, data, is_tclk, has_data, src`. There is no
-  per-entry `utc` field here; derive it from `sec`/`ns` (building it per event
-  measurably cost sink throughput).
-- `HSET {KR260}:event:<src>:0x<CODE>` : a per-event-code index holding that code's
-  latest `{sec, ns, utc, data}`.
-- `HINCRBY {KR260}:event:<src>:0x<CODE> count` : a running per-code count.
+- `XADD {TCLK}:<HEX>` : that occurrence's RA_Time, `int64` LE (8 B).
+- `XADD {TCLK}:<HEX>_C` : occurrences of `<HEX>` since the publisher started,
+  `int64` LE (8 B). Resets to zero on publisher restart, which is the intended
+  restart signal.
+- `XADD {TCLK}:STREAM` : the event code, `uint16` LE (2 B). One entry per event,
+  the combined feed.
 
-Inspect a single code's latest value and count directly:
+`<HEX>` is the event code as two uppercase zero-padded hex digits. The widths
+are load-bearing: a consumer reading the wrong one gets garbage, not an error.
+There is no event data word and no ACLK source in this key space; both are
+deferred (see deploy/redis.md).
+
+Payloads are binary, so decode with `ra_consumer.py` rather than reading
+`redis-cli` output directly:
 
 ```bash
-redis-cli HGETALL '{KR260}:event:tclk:0x1D'   # latest event for that code + count
+python3 -c "import redis, ra_consumer as ra; c=redis.Redis();   print([ra.decode_event_id(f) for _,f in c.xrange(ra.stream_key('TCLK'))][-5:])"
 ```
 
-Streams are in-memory only (persistence is off) and capped, so they hold roughly
-the last ~2.8 h. For anything longer, use the on-disk archive.
+Streams are in-memory only (persistence is off) and capped at ~10000 entries,
+roughly 100 s at 99 ev/s. For anything longer, use the on-disk archive.
 
 ### Pull the archived CSVs and plot (on the PC)
 
 With `ARCHIVE=1` the capture writes daily CSVs on the board named
-`events-<src>-YYYYMMDD.csv` (schema `id,sec,ns,event,data`). Pull the CSVs and
+`events-<label>-YYYYMMDD.csv` (schema `id,sec,ns,event`; `sec`/`ns` are derived
+from the entry's RA_Time stream ID, and there is no data column because the
+`{TCLK}` contract carries no data word). Pull the CSVs and
 the stats logs to the PC (`pscp` on the lab network, `scp` otherwise):
 
 ```powershell

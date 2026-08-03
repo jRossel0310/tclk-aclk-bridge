@@ -372,33 +372,41 @@ runs a background writer so Redis latency cannot directly block the hardware FIF
 The queue is bounded and drops the oldest item when full, with separate counters
 for queue loss, Redis errors, reconnects, queued records, and published records.
 
-The default base key is `KR260`, braced as a Redis Cluster hash tag. The primary
-streams are:
+The default base key is `TCLK`, braced as a Redis Cluster hash tag. It is the base
+key the lab's redis-clock-server deployment reserves for this decoder, and its
+`redis-pvxs-ioc` serves our keys as `EPICS_REDIS_TCLK:RT:*` PVs. `RecordBuilder`
+turns one event into three stream writes:
 
 ```text
-{KR260}:tclk
-{KR260}:aclk
+{TCLK}:<HEX>      int64  LE, 8 B   RA_Time of that occurrence, ns since the epoch
+{TCLK}:<HEX>_C    int64  LE, 8 B   occurrences of <HEX> since the publisher started
+{TCLK}:STREAM     uint16 LE, 2 B   the event code, one entry per event
 ```
 
-Each entry follows RedisAdapter Protocol v1.0:
+`<HEX>` is the event code as two uppercase zero-padded hex digits. Each entry
+follows RedisAdapter Protocol v1.0:
 
 - The stream ID encodes RA_Time, nanoseconds since Unix epoch, as
   `<milliseconds>-<nanoseconds-within-millisecond>`.
-- The mandatory `_` field is a 15-byte little-endian `<IIIHB>` structure:
-  seconds `u32`, nanoseconds `u32`, data `u32`, event `u16`, flags `u8`.
-- Flag bit 0 is `has_data`; bit 1 is `is_tclk`.
-- Readable `sec`, `ns`, `event`, `data`, `is_tclk`, `has_data`, and `src` fields
-  are included for local tools but are not required by a generic RA consumer.
+- The mandatory `_` field is the entry's only field and holds raw little-endian
+  bytes at the width above. The widths are load-bearing: a consumer reading the
+  wrong one gets a garbage value rather than an error.
+- Counters live in the publisher process, so they reset to zero on restart. That
+  is the intended restart signal, not corruption.
 
-Explicit complete stream IDs work with Redis 6 and later. If two events have the
-same timestamp, or WR re-arms backward, the sink advances the stream ID by one
-nanosecond to satisfy Redis's increasing-ID rule. The `_` payload retains the true
-hardware seconds and nanoseconds.
+If two events share a timestamp, or WR re-arms backward, the sink advances the
+stream ID by one nanosecond to satisfy Redis's increasing-ID rule. The guard is
+per key, so the shared `STREAM` feed absorbs bumps its per-code streams never see,
+and a `{TCLK}:<HEX>` payload still carries the true unbumped RA_Time.
 
-Per-code hashes use `{KR260}:event:<src>:0x<CODE>`. They retain the latest event
-and exact count. Updates are aggregated by writer batch to reduce redis-py command
-construction overhead. `{KR260}:watchdog` is the authoritative TTL liveness key;
-`{KR260}:status` is sticky and insufficient by itself.
+Liveness is one field in the `{TCLK}:watchdog` hash: `HSET` the build version,
+then `HEXPIRE` that field with a 1 s TTL, refreshed every 0.9 s. That needs
+redis-server >= 7.4 and redis-py >= 5.1; an older client is surfaced through the
+sink's `last_error` rather than silently publishing a watchdog that never expires.
+
+There is no event data word and no ACLK source in this key space; the contract has
+nowhere to put either, so both are deferred and `run_pipeline.sh` launches the
+TCLK publisher only.
 
 `ra_consumer.py` is reference consumer code that reads only the braced key,
 RA_Time stream ID, and binary `_` field. `test_ra_roundtrip.py` can start a private

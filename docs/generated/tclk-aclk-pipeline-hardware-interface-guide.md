@@ -14,7 +14,7 @@
 
 ## 1. Purpose and Scope
 
-`aclk_pipeline_bd_top` is a single-board, single-bitstream pipeline that closes the full timing-link loop on one KR260 and hands every event to a board-side Redis publisher. It receives Fermilab **TCLK** on a 3.3V logic pin, decodes and **White-Rabbit-timestamps** every event and publishes it to the PS over AXI4-Lite; re-encodes that same event stream as a **gigabit ACLK** 8b10b word and transmits it over the SFP+ optical transceiver; receives the ACLK back on the **same board** through a physical fiber loopback, decodes and timestamps it against the **same WR timeline**, and publishes it to the PS over a **second** AXI4-Lite node; re-encodes the decoded-back events as **ACLK-Lite** (Manchester biphase-mark) on a Pmod pin as a scope probe; and exposes the WR timebase itself on a **third** AXI4-Lite node for arming and health. On the PS, one Python publisher per readout drains the FIFO and writes each event into **local Redis Streams** under the `{KR260}:` namespace.
+`aclk_pipeline_bd_top` is a single-board, single-bitstream pipeline that closes the full timing-link loop on one KR260 and hands every event to a board-side Redis publisher. It receives Fermilab **TCLK** on a 3.3V logic pin, decodes and **White-Rabbit-timestamps** every event and publishes it to the PS over AXI4-Lite; re-encodes that same event stream as a **gigabit ACLK** 8b10b word and transmits it over the SFP+ optical transceiver; receives the ACLK back on the **same board** through a physical fiber loopback, decodes and timestamps it against the **same WR timeline**, and publishes it to the PS over a **second** AXI4-Lite node; re-encodes the decoded-back events as **ACLK-Lite** (Manchester biphase-mark) on a Pmod pin as a scope probe; and exposes the WR timebase itself on a **third** AXI4-Lite node for arming and health. On the PS, a Python publisher drains the TCLK readout's FIFO and writes each event into **Redis Streams** under the `{TCLK}` base key, the key space the lab's redis-clock-server deployment reserves for this decoder.
 
 Both readouts stamp events from one White-Rabbit-disciplined `{sec, ns}` timeline, so `ts(ACLK-back) − ts(TCLK-in)` for a matched event is the true H12 → decode → encode → SFP → decode round-trip latency in real nanoseconds, and every published event carries an absolute UTC time that correlates across boards.
 
@@ -57,18 +57,19 @@ The design has two tiers: the **PL bitstream** (the timing loop and its three AX
 ### 2.2 PS software / Redis path
 
 ```
-  /dev/uio (tclk) --> redis_publish.py --src tclk --\
-                        (drop UNSYNC ts==0)           >-- RedisSink --> local Redis
-  /dev/uio (aclk) --> redis_publish.py --src aclk --/    (bg thread)   ({KR260}: ns)
+  /dev/uio (tclk) --> redis_publish.py --src tclk -----> RedisSink -----> Redis
+                        (drop UNSYNC ts==0)               (bg thread)   ({TCLK} base)
+  /dev/uio (aclk) --> decoded + mirrored, NOT published                       |
                                                                               |
   /dev/uio (wr)   --> wr_time.py arm/status  (arm the WR clock; not published)|
                                                                               v
-                                          {KR260}:tclk / {KR260}:aclk  (Streams)
-                                          {KR260}:event:<src>:0x<CODE> (index)
-                                          {KR260}:status / {KR260}:watchdog (liveness)
+                                          {TCLK}:<HEX>     (Stream, int64  8 B)
+                                          {TCLK}:<HEX>_C   (Stream, int64  8 B)
+                                          {TCLK}:STREAM    (Stream, uint16 2 B)
+                                          {TCLK}:watchdog  (Hash, field TTL)
 ```
 
-External TCLK enters on H12 and is decoded by the single `TCLK_RCV` inside readout #1 (published at `0x8000_0000`) and also fed to the TCLK-to-ACLK encoder. The encoder drives the GT transmitter out the SFP+ cage; an external fiber loop returns it to the SFP+ receiver, where the GT 8b10b-decodes and comma-aligns it and the single `ACLK_RCV` inside readout #2 recovers events (published at `0x8001_0000`). That decoder's tap feeds the ACLK-Lite mirror on B10. A White Rabbit node's 10 MHz + PPS discipline three `wr_timebase` copies so both readouts stamp one `{sec, ns}`; the monitor copy is exposed at `0x8002_0000`. On the PS, one `redis_publish.py` per readout drains its FIFO and writes each event into Redis. (rtl/aclk_pipeline_bd_top.v; vivado/build_aclk_pipeline.tcl; deploy/redis_publish.py).
+External TCLK enters on H12 and is decoded by the single `TCLK_RCV` inside readout #1 (published at `0x8000_0000`) and also fed to the TCLK-to-ACLK encoder. The encoder drives the GT transmitter out the SFP+ cage; an external fiber loop returns it to the SFP+ receiver, where the GT 8b10b-decodes and comma-aligns it and the single `ACLK_RCV` inside readout #2 recovers events (published at `0x8001_0000`). That decoder's tap feeds the ACLK-Lite mirror on B10. A White Rabbit node's 10 MHz + PPS discipline three `wr_timebase` copies so both readouts stamp one `{sec, ns}`; the monitor copy is exposed at `0x8002_0000`. On the PS, `redis_publish.py` drains the TCLK readout's FIFO and writes each event into Redis under the `{TCLK}` base key; the ACLK readout is decoded and mirrored but has no base key in the lab deployment's key space yet, so it is not published. (rtl/aclk_pipeline_bd_top.v; vivado/build_aclk_pipeline.tcl; deploy/redis_publish.py).
 
 ## 3. Major Blocks and Responsibilities
 
@@ -353,37 +354,36 @@ sudo python3 redis_publish.py /dev/uio5 --src aclk            # ACLK readout
 
 The `/dev/uioN` indices above are illustrative; resolve them from `/sys/class/uio/*/name`, not by assuming a fixed number (deploy/redis.md:26-33). Nothing publishes until the WR timebase is armed and locked (UNSYNC events, `ts==0`, are dropped) (deploy/redis_publish.py:37-39,81-84).
 
-**Publisher options** (all optional): `--src` (stream suffix, default `tclk`), `--namespace` (default `KR260`), `--redis-host` (127.0.0.1), `--redis-port` (6379), `--maxlen` (stream cap, default 1,000,000), `--queue-size` (in-process queue, default 100,000) (deploy/redis_publish.py:59-68).
+**Publisher options** (all optional): `--src` (stats-log label, default `tclk`), `--base` (default `TCLK`; `--namespace` still accepted), `--redis-host` (127.0.0.1), `--redis-port` (6379), `--maxlen` (stream cap, default 10,000), `--queue-size` (in-process queue, default 100,000), `--watchdog-field` (default `kr260-tclk`), `--build-version`.
 
-### 9.2 Redis key schema (namespace `KR260`, matches the Fermilab RedisAdapter Protocol v1.0 convention)
+### 9.2 Redis key schema (base key `{TCLK}`, per the lab redis-clock-server contract and RedisAdapter Protocol v1.0)
 
-Per published event the sink pipelines three writes:
+Per published event the sink pipelines three XADDs. Every entry carries exactly one field, `_`, holding raw little-endian bytes:
 
 ```
-  XADD   {KR260}:<src>  <ms>-<ns_in_ms>  { _, sec, ns, event, data,
-                                           is_tclk, has_data, src }   MAXLEN ~ <maxlen>
-  HSET   {KR260}:event:<src>:0x<CODE>      { sec, ns, utc, data }
-  HINCRBY {KR260}:event:<src>:0x<CODE> count 1
+  XADD {TCLK}:<HEX>    <ms>-<ns_in_ms>  { _ : int64  RA_Time }  MAXLEN ~ <maxlen>
+  XADD {TCLK}:<HEX>_C  <ms>-<ns_in_ms>  { _ : int64  count   }  MAXLEN ~ <maxlen>
+  XADD {TCLK}:STREAM   <ms>-<ns_in_ms>  { _ : uint16 event   }  MAXLEN ~ <maxlen>
 ```
 
-The entry ID is the event's RA_Time (nanoseconds since the Unix epoch) encoded as `<ms>-<ns_within_ms>` (no server `-*` sequence, so it works on Redis 6 as well as Redis 7), and `_` is the mandatory little-endian `<IIIHB>` RedisAdapter primary payload (sec, ns, data, event, flags) that a generic RedisAdapter consumer reads.
+`<HEX>` is the event code as exactly two uppercase zero-padded hex digits. The entry ID is the event's RA_Time (nanoseconds since the Unix epoch) encoded as `<ms>-<ns_within_ms>`. The payload widths are load-bearing: a consumer reading the wrong width gets a garbage value, not an error.
 
-| Key | Type | Purpose |
-|-----|------|---------|
-| `{KR260}:tclk`, `{KR260}:aclk` | Stream | Time-ordered event feed; **entry ID is the event's RA_Time** encoded `<ms>-<ns_within_ms>`, with a duplicate/backward RA_Time bumped to the previous ID + 1 ns rather than making XADD error |
-| `{KR260}:event:<src>:0x<CODE>` | Hash | Per-event-code index: latest `{sec, ns, utc, data}` for that code plus a running `count` |
-| `{KR260}:status` | String | `1` while a publisher is alive; **sticky** (set on connect, not cleared on stop), do not trust alone |
-| `{KR260}:watchdog` | String (TTL) | Refreshed every ~10 s, expires in ~30 s, the **authoritative** liveness signal |
+| Key | Type | Payload `_` | Purpose |
+|-----|------|-------------|---------|
+| `{TCLK}:<HEX>` | Stream | `int64` LE, 8 B | RA_Time of that occurrence, ns since the epoch. **Entry ID is the same RA_Time**, with a duplicate or backward value bumped to the previous ID + 1 ns rather than making XADD error; the payload keeps the true unbumped time |
+| `{TCLK}:<HEX>_C` | Stream | `int64` LE, 8 B | Occurrences of `<HEX>` since the publisher started; resets to zero on restart, which is the intended restart signal |
+| `{TCLK}:STREAM` | Stream | `uint16` LE, 2 B | The event code. One entry per event in time order, the combined feed |
+| `{TCLK}:watchdog` | Hash | (field value is text) | Field `kr260-tclk` = publisher build version, given a 1 s TTL via HEXPIRE and refreshed every 0.9 s. The **authoritative** liveness signal is the field's TTL, not its presence |
 
-Stream fields: `_` is the binary RedisAdapter primary payload (little-endian `<IIIHB>`); the rest are strings: `sec`/`ns` (WR split), `event`, `data`, `is_tclk`, `has_data`, `src` (deploy/redis_publish.py:26-54; deploy/redis_sink.py:100-127).
+The monotonic ID guard is **per key**, so the shared `STREAM` feed absorbs the bumps its per-code streams never see. There is no event data word and no ACLK source in this key space; both are deferred (deploy/redis_publish.py; deploy/redis_sink.py).
 
-**Consume (read-side examples):**
+**Consume (read-side examples):** payloads are binary, so `ra_consumer.py` decodes them.
 
 ```bash
-redis-cli XLEN '{KR260}:tclk'                    # climbs while publishing
-redis-cli XREVRANGE '{KR260}:tclk' + - COUNT 3   # newest 3 (event-time ordered)
-redis-cli HGETALL '{KR260}:event:tclk:0x1D'      # latest event for code 0x1D + count
-redis-cli TTL '{KR260}:watchdog'                 # counts down from ~30 while alive
+redis-cli XLEN '{TCLK}:STREAM'                   # climbs while publishing
+redis-cli XREVRANGE '{TCLK}:STREAM' + - COUNT 3  # newest 3 (event-time ordered)
+redis-cli XREVRANGE '{TCLK}:1D' + - COUNT 1      # latest time for code 0x1D
+redis-cli HTTL '{TCLK}:watchdog' FIELDS 1 kr260-tclk   # counts down ~1 s while alive
 ```
 
 ### 9.3 Publisher robustness and liveness

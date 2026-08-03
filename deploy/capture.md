@@ -19,8 +19,11 @@ persistence stays off).
 
 ## 2. Launch the capture (survives SSH disconnect)
 
-    sudo ./run_pipeline.sh                   # defaults: uio4 tclk, uio5 aclk, uio6 wr
+    sudo ./run_pipeline.sh                   # defaults: uio4 tclk, uio6 wr
     # or pass indices:  sudo ./run_pipeline.sh /dev/uio4 /dev/uio5 /dev/uio6
+
+Only TCLK is published. ACLK has no base key in the lab deployment's key space yet, so
+the launcher no longer starts an ACLK publisher (see redis.md).
 
 Pre-flight refuses to launch unless Redis answers PONG and the WR timebase is fully
 locked (an unlocked timebase stamps every event UNSYNC and they would all be dropped).
@@ -28,7 +31,7 @@ Override with FORCE=1 only if you deliberately want to capture while unlocked.
 
 To publish to a different Redis (e.g. a lab RedisAdapter server instead of the board's
 local one), set REDIS_HOST / REDIS_PORT (default 127.0.0.1:6379). The pre-flight ping,
-both publishers, and the archiver all follow the same target, and the launch banner
+the publisher, and the archiver all follow the same target, and the launch banner
 prints it:
 
     sudo env REDIS_HOST=redis.example.fnal.gov bash run_pipeline.sh
@@ -39,34 +42,35 @@ the exported form is silently ignored and you would publish to the local Redis w
 believing it went remote. The launch banner prints the target actually used; check it.
 
 Other launcher knobs (all via `sudo env NAME=... bash run_pipeline.sh`):
-- `NAMESPACE` (default KR260): the Redis base key. Keys become `{NAMESPACE}:tclk` etc., so a
-  lab server that wants a different base key just needs `NAMESPACE=MYDEV`.
+- `BASE` (default TCLK, `NAMESPACE` still honored): the Redis base key. Keys become
+  `{BASE}:<HEX>`, `{BASE}:<HEX>_C`, `{BASE}:STREAM`, `{BASE}:watchdog`. `TCLK` is the base
+  key the lab deployment reserves for this decoder; a bench server wanting a different
+  one just needs `BASE=MYDEV`.
 - `REDIS_PASSWORD` / `REDIS_USERNAME`: authenticate to a server with requirepass or ACLs.
   They are read from the environment and never placed on a command line, so the password
   does not appear in `ps` (the launcher passes them to the publishers through the tmux
   session environment, and the pre-flight `redis-cli` reads REDISCLI_AUTH / `--user`).
   Unset means no auth. Example, remote authenticated server with a custom base key:
 
-    sudo env REDIS_HOST=redis.example.fnal.gov REDIS_PASSWORD=s3cret NAMESPACE=BOOSTER \
+    sudo env REDIS_HOST=bidaqt-tclk REDIS_PASSWORD=s3cret BASE=TCLK \
         bash run_pipeline.sh
 
-Running a publisher by hand takes the matching flags: `--namespace`, `--redis-username`,
+Running the publisher by hand takes the matching flags: `--base`, `--redis-username`,
 `--redis-password` (prefer the REDIS_PASSWORD env var; a CLI value is visible in `ps`).
 
 A remote server must bind externally (not just 127.0.0.1) and have protected-mode off,
 or every publish fails. No auth is configured, so keep it on a trusted link. Inspect a
-remote instance with `redis-cli -h <host> -p <port> xlen '{KR260}:tclk'`.
+remote instance with `redis-cli -h <host> -p <port> xlen '{TCLK}:STREAM'`.
 
 Spot-check while it runs:
 
     sudo tmux attach -t kr260                # Ctrl-b d to detach
-    redis-cli XLEN '{KR260}:tclk'            # climbs
+    redis-cli XLEN '{TCLK}:STREAM'           # climbs (capped ~10000, see redis.md)
     tail -f stats-tclk.jsonl                 # one JSON line per snapshot (~60 s)
 
 ## 3. Stop cleanly (writes a final post-flush snapshot)
 
     sudo tmux send-keys -t kr260:tclk C-c
-    sudo tmux send-keys -t kr260:aclk C-c
     sudo tmux kill-session -t kr260
 
 If a publisher dies uncleanly, the report still works off the last periodic snapshot; you
@@ -74,7 +78,7 @@ just lose up to the last interval (~60 s) of counts.
 
 ## 4. Error check (on the board)
 
-    sudo python3 stats_report.py stats-tclk.jsonl stats-aclk.jsonl
+    sudo python3 stats_report.py stats-tclk.jsonl
 
 Per source it prints decoded (good events the PL enqueued), published, failed CRCs,
 nulls/filtered, missed at the hardware (FIFO overflow) and at the publisher (queue+redis
@@ -89,7 +93,7 @@ the most recent run (delete or rename the log between runs to keep them separate
 ## 5. Plots (on the PC)
 
     scp ubuntu@<board>:~/aclk_pipeline/stats-*.jsonl .
-    python plot_stats.py stats-tclk.jsonl stats-aclk.jsonl   # -> plot-tclk.png, plot-aclk.png
+    python plot_stats.py stats-tclk.jsonl                    # -> plot-tclk.png
 
 ## Options
 
