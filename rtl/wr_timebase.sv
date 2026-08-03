@@ -21,13 +21,31 @@
 // in through one cdc_word_pulse, so the AXI slave drives many instances with
 // the same wires. cfg_valid strobes with cfg_disarm=0 arm cfg_sec (the Unix UTC
 // label of the NEXT PPS); with cfg_disarm=1 they force an unlock.
+//
+// GLITCH REJECTION: every accepted PPS edge adds a whole second, so one spurious
+// edge on the pin puts every later timestamp 1 s into the future while `locked`,
+// `pps_alive` and `cells_last` all stay perfectly healthy. That is not
+// hypothetical: a 2026-08-03 capture ran 4 s fast for 5 hours with no indication
+// anywhere. An edge is therefore accepted only once PPS_MIN_CELLS wr_clk10 cells
+// have elapsed since the previous accepted one, and rejections are counted on
+// pps_rejected so the condition is observable rather than silent.
+//
+// The filter is deliberately one-sided: it rejects EARLY edges only. An edge that
+// arrives LATE (a genuinely missed pulse) still passes, so the filter can never
+// worsen a dropped-pulse case, and the seconds counter never stalls waiting for
+// an edge it decided to ignore. The first edge after reset is accepted
+// unconditionally, since there is no previous interval to measure against.
 
 `timescale 1ns / 1ps
 
 module wr_timebase #(
     parameter int unsigned CLK_PERIOD_DS = 250,        // local clock period, 0.1 ns units
     parameter int unsigned CLK10_TIMEOUT = 16,         // cycles w/o a 10 MHz edge -> unlock
-    parameter int unsigned PPS_TIMEOUT   = 44_000_000  // cycles w/o a PPS edge -> unlock
+    parameter int unsigned PPS_TIMEOUT   = 44_000_000, // cycles w/o a PPS edge -> unlock
+    // Minimum wr_clk10 cells between accepted PPS edges. A real second is
+    // 10,000,000 cells, so 9,000,000 (0.9 s) accepts every genuine edge with wide
+    // margin while rejecting any glitch closer than 0.9 s to the last one.
+    parameter int unsigned PPS_MIN_CELLS = 9_000_000
 ) (
     input  logic        clk,
     input  logic        rstn,             // async, active-low
@@ -45,8 +63,9 @@ module wr_timebase #(
     output logic        arm_pending,
     output logic        pps_alive,
     output logic        clk10_alive,
-    output logic        pps_edge,         // 1-cycle strobe per PPS rising edge
-    output logic [31:0] cells_last        // wr_clk10 cells in the previous PPS interval
+    output logic        pps_edge,         // 1-cycle strobe per ACCEPTED PPS edge
+    output logic [31:0] cells_last,       // wr_clk10 cells in the previous PPS interval
+    output logic [31:0] pps_rejected      // PPS edges discarded as too early (glitches)
 );
 
     localparam int unsigned PERIOD_NS_INT = CLK_PERIOD_DS / 10;
@@ -72,7 +91,6 @@ module wr_timebase #(
     end
     wire clk10_re = clk10_s & ~clk10_d;
     wire pps_re   = pps_s   & ~pps_d;
-    assign pps_edge = pps_re;
 
     // ---- arm / disarm from the cfg domain (one toggle-handshake CDC) ----
     wire        req_v;
@@ -112,6 +130,15 @@ module wr_timebase #(
     logic [3:0]  interp_frac;  // 0.1 ns remainder of the accumulation
     logic [31:0] cells;
     logic        lk;
+    logic        pps_seen;     // an edge has been accepted, so `cells` is meaningful
+
+    // ---- PPS glitch rejection ----
+    // `cells` counts wr_clk10 cells since the last ACCEPTED edge, so it already IS
+    // the interval measurement this needs; the filter costs one comparator. Before
+    // the first accepted edge there is nothing to compare against, so accept.
+    wire pps_valid  = pps_re && (!pps_seen || (cells >= PPS_MIN_CELLS));
+    wire pps_glitch = pps_re && !pps_valid;
+    assign pps_edge = pps_valid;
 
     wire [4:0] frac_next  = {1'b0, interp_frac} + {1'b0, PERIOD_FRAC};
     wire       frac_carry = (frac_next >= 5'd10);
@@ -125,10 +152,12 @@ module wr_timebase #(
             ns_base     <= '0;
             interp      <= '0;
             interp_frac <= '0;
-            cells       <= '0;
-            cells_last  <= '0;
-            lk          <= 1'b0;
-            pps_shadow  <= 2'd0;
+            cells        <= '0;
+            cells_last   <= '0;
+            lk           <= 1'b0;
+            pps_shadow   <= 2'd0;
+            pps_seen     <= 1'b0;
+            pps_rejected <= '0;
             clk10_wd    <= CLK10_TIMEOUT;   // start expired: not alive until edges arrive
             pps_wd      <= PPS_TIMEOUT;
         end else begin
@@ -149,8 +178,15 @@ module wr_timebase #(
             // Watchdogs: cleared by their edge, saturate at the timeout.
             if (clk10_re)                      clk10_wd <= '0;
             else if (clk10_wd < CLK10_TIMEOUT) clk10_wd <= clk10_wd + 1'b1;
-            if (pps_re)                        pps_wd   <= '0;
+            // Only an ACCEPTED edge counts as liveness. If a glitch could feed the
+            // watchdog, a dead PPS line that merely picks up noise would report
+            // healthy forever, which is the opposite of what STRICT means here.
+            if (pps_valid)                     pps_wd   <= '0;
             else if (pps_wd < PPS_TIMEOUT)     pps_wd   <= pps_wd + 1'b1;
+
+            // Count discards so the condition is visible in the register map
+            // instead of being silently absorbed.
+            if (pps_glitch) pps_rejected <= pps_rejected + 32'd1;
 
             // STRICT: a dead reference unlocks; re-locking needs a fresh arm.
             if (!clk10_alive || !pps_alive) lk <= 1'b0;
@@ -161,10 +197,10 @@ module wr_timebase #(
             // skew) is suppressed as a cell of the new interval; credit it
             // to the interval it closes so cells_last is exact in all three
             // skew alignments (clk10-first, same-cycle, pps-first).
-            if (clk10_re && !pps_re && (pps_shadow != 2'd0))
+            if (clk10_re && !pps_valid && (pps_shadow != 2'd0))
                 cells_last <= cells_last + 32'd1;
 
-            if (pps_re) begin
+            if (pps_valid) begin
                 // PPS boundary: zero ns, latch the interval cell count, seconds.
                 ns_base     <= '0;
                 interp      <= '0;
@@ -182,6 +218,7 @@ module wr_timebase #(
                 cells_last  <= cells + (clk10_re ? 32'd1 : 32'd0);
                 cells       <= '0;
                 pps_shadow  <= 2'd2;
+                pps_seen    <= 1'b1;
                 if (armed) begin
                     sec   <= arm_sec_q;
                     armed <= 1'b0;

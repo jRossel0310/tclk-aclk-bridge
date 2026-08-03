@@ -133,7 +133,8 @@ module tb_aclk_pipeline_chain_top (
     wr_timebase #(
         .CLK_PERIOD_DS (250),
         .CLK10_TIMEOUT (16),     // 400 ns at 40 MHz
-        .PPS_TIMEOUT   (240)     // 6 us at 40 MHz
+        .PPS_TIMEOUT   (240),    // 6 us at 40 MHz
+        .PPS_MIN_CELLS (45)      // 0.9 s (SIM-SCALED; real build = 9_000_000)
     ) u_tb_tclk (
         .clk(clk_40m), .rstn(rstn), .wr_clk10(wr_clk10), .wr_pps(wr_pps),
         .cfg_clk(s_axi_aclk), .cfg_rstn(s_axi_aresetn),
@@ -145,7 +146,8 @@ module tb_aclk_pipeline_chain_top (
     wr_timebase #(
         .CLK_PERIOD_DS (160),
         .CLK10_TIMEOUT (25),     // 400 ns at 62.5 MHz
-        .PPS_TIMEOUT   (375)     // 6 us at 62.5 MHz
+        .PPS_TIMEOUT   (375),    // 6 us at 62.5 MHz
+        .PPS_MIN_CELLS (45)      // 0.9 s (SIM-SCALED; real build = 9_000_000)
     ) u_tb_aclk (
         .clk(clk_tx), .rstn(rstn), .wr_clk10(wr_clk10), .wr_pps(wr_pps),
         .cfg_clk(s_axi_aclk), .cfg_rstn(s_axi_aresetn),
@@ -157,7 +159,8 @@ module tb_aclk_pipeline_chain_top (
     wr_timebase_axi #(
         .AXI_ADDR_W        (8),
         .MON_CLK10_TIMEOUT (40),    // 400 ns at 100 MHz
-        .MON_PPS_TIMEOUT   (600)    // 6 us at 100 MHz
+        .MON_PPS_TIMEOUT   (600),   // 6 us at 100 MHz
+        .MON_PPS_MIN_CELLS (45)     // 0.9 s (SIM-SCALED; real build = 9_000_000)
     ) u_tb_axi (
         .wr_clk10   (wr_clk10),
         .wr_pps     (wr_pps),

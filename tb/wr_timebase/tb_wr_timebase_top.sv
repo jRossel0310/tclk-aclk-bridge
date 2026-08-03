@@ -28,6 +28,7 @@ module tb_wr_timebase_top (
     output wire        clk10_alive_a,
     output wire        pps_edge_a,
     output wire [31:0] cells_last_a,
+    output wire [31:0] pps_rejected_a,
 
     output wire [63:0] ts_b,
     output wire        locked_b
@@ -36,26 +37,30 @@ module tb_wr_timebase_top (
     wr_timebase #(
         .CLK_PERIOD_DS (250),
         .CLK10_TIMEOUT (16),     // 400 ns at 40 MHz
-        .PPS_TIMEOUT   (240)     // 6 us at 40 MHz
+        .PPS_TIMEOUT   (240),    // 6 us at 40 MHz
+        .PPS_MIN_CELLS (45)      // sim second is 50 cells, so 0.9 s = 45
     ) u_a (
         .clk(clk_a), .rstn(rstn), .wr_clk10(wr_clk10), .wr_pps(wr_pps),
         .cfg_clk(cfg_clk), .cfg_rstn(cfg_rstn),
         .cfg_valid(cfg_valid), .cfg_disarm(cfg_disarm), .cfg_sec(cfg_sec),
         .ts(ts_a), .locked(locked_a), .arm_pending(arm_pending_a),
         .pps_alive(pps_alive_a), .clk10_alive(clk10_alive_a),
-        .pps_edge(pps_edge_a), .cells_last(cells_last_a)
+        .pps_edge(pps_edge_a), .cells_last(cells_last_a),
+        .pps_rejected(pps_rejected_a)
     );
 
     wr_timebase #(
         .CLK_PERIOD_DS (64),
         .CLK10_TIMEOUT (63),     // ~403 ns at 156.25 MHz
-        .PPS_TIMEOUT   (940)     // ~6 us at 156.25 MHz
+        .PPS_TIMEOUT   (940),    // ~6 us at 156.25 MHz
+        .PPS_MIN_CELLS (45)
     ) u_b (
         .clk(clk_b), .rstn(rstn), .wr_clk10(wr_clk10), .wr_pps(wr_pps),
         .cfg_clk(cfg_clk), .cfg_rstn(cfg_rstn),
         .cfg_valid(cfg_valid), .cfg_disarm(cfg_disarm), .cfg_sec(cfg_sec),
         .ts(ts_b), .locked(locked_b), .arm_pending(),
-        .pps_alive(), .clk10_alive(), .pps_edge(), .cells_last()
+        .pps_alive(), .clk10_alive(), .pps_edge(), .cells_last(),
+        .pps_rejected()
     );
 
 endmodule

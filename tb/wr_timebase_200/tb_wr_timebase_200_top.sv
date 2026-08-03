@@ -21,7 +21,8 @@ module tb_wr_timebase_200_top (
     wr_timebase #(
         .CLK_PERIOD_DS (50),        // 5.0 ns at 200 MHz  (the real value)
         .CLK10_TIMEOUT (80),        // 400 ns window       (the real value)
-        .PPS_TIMEOUT   (1200)       // 6 us  (SIM-SCALED; real build = 220_000_000)
+        .PPS_TIMEOUT   (1200),      // 6 us  (SIM-SCALED; real build = 220_000_000)
+        .PPS_MIN_CELLS (45)         // 0.9 s (SIM-SCALED; real build = 9_000_000)
     ) u_tb (
         .clk(clk), .rstn(rstn),
         .wr_clk10(wr_clk10), .wr_pps(wr_pps),

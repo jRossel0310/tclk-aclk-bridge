@@ -17,6 +17,9 @@
 //   0x40 PPS_COUNT   RO  PPS edges seen since reset
 //   0x50 CELLS_LAST  RO  10 MHz cells in the last PPS interval (expect 10,000,000)
 //   0x60 CTRL        WO  [0] clear lost_lock  [1] broadcast disarm
+//   0x70 PPS_REJECT  RO  PPS edges discarded as too early (glitch filter).
+//                        Nonzero means the WR PPS line is glitching: each one
+//                        WOULD have silently added a whole second.
 //
 // STRICT semantics note: SEC_NOW/NS_NOW read 0 while the monitor is unlocked
 // (the monitor's ts is forced to 0), so a zero pair means "not synced".
@@ -27,7 +30,10 @@ module wr_timebase_axi #(
     parameter int AXI_ADDR_W = 8,
     parameter int unsigned MON_CLK_PERIOD_DS = 100,        // s_axi_aclk = 100 MHz
     parameter int unsigned MON_CLK10_TIMEOUT = 40,         // 400 ns at 100 MHz
-    parameter int unsigned MON_PPS_TIMEOUT   = 110_000_000 // 1.1 s at 100 MHz
+    parameter int unsigned MON_PPS_TIMEOUT   = 110_000_000, // 1.1 s at 100 MHz
+    // wr_clk10 cells required between accepted PPS edges (0.9 s of a 10 MHz
+    // reference). Rejected edges are counted and readable at 0x70 PPS_REJECT.
+    parameter int unsigned MON_PPS_MIN_CELLS = 9_000_000
 ) (
     // ---- WR pins (async) ----
     input  logic        wr_clk10,
@@ -69,11 +75,13 @@ module wr_timebase_axi #(
     wire        locked_mon, arm_pending_mon, pps_alive_mon, clk10_alive_mon;
     wire        pps_edge_mon;
     wire [31:0] cells_last_mon;
+    wire [31:0] pps_rejected_mon;
 
     wr_timebase #(
         .CLK_PERIOD_DS (MON_CLK_PERIOD_DS),
         .CLK10_TIMEOUT (MON_CLK10_TIMEOUT),
-        .PPS_TIMEOUT   (MON_PPS_TIMEOUT)
+        .PPS_TIMEOUT   (MON_PPS_TIMEOUT),
+        .PPS_MIN_CELLS (MON_PPS_MIN_CELLS)
     ) u_mon (
         .clk         (s_axi_aclk),
         .rstn        (s_axi_aresetn),
@@ -90,7 +98,8 @@ module wr_timebase_axi #(
         .pps_alive   (pps_alive_mon),
         .clk10_alive (clk10_alive_mon),
         .pps_edge    (pps_edge_mon),
-        .cells_last  (cells_last_mon)
+        .cells_last  (cells_last_mon),
+        .pps_rejected(pps_rejected_mon)
     );
 
     // ---------------------------------------------------------------
@@ -133,6 +142,9 @@ module wr_timebase_axi #(
                 'd3: rdata_r <= ns_latch;
                 'd4: rdata_r <= pps_count;
                 'd5: rdata_r <= cells_last_mon;
+                // Deliberately reg 7, not 6: reg 6 is the write-only CTRL, and
+                // aliasing a read and a write at one address invites mistakes.
+                'd7: rdata_r <= pps_rejected_mon;
                 default: rdata_r <= 32'b0;
             endcase
         end else if (rvalid_r && s_axi_rready) begin

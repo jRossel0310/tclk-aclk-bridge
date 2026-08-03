@@ -20,11 +20,12 @@ import readout_common as rc
 from readout_common import say
 
 # wr_timebase_axi register map (16-byte stride)
-WR_STATUS, WR_SEC_ARM, WR_SEC_NOW, WR_NS_NOW, WR_PPS_COUNT, WR_CELLS_LAST, WR_CTRL = (
-    0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60)
+(WR_STATUS, WR_SEC_ARM, WR_SEC_NOW, WR_NS_NOW, WR_PPS_COUNT, WR_CELLS_LAST,
+ WR_CTRL, WR_PPS_REJECT) = (0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70)
 WR_NAME = {WR_STATUS: "STATUS", WR_SEC_ARM: "SEC_ARM", WR_SEC_NOW: "SEC_NOW",
            WR_NS_NOW: "NS_NOW", WR_PPS_COUNT: "PPS_COUNT",
-           WR_CELLS_LAST: "CELLS_LAST", WR_CTRL: "CTRL"}
+           WR_CELLS_LAST: "CELLS_LAST", WR_CTRL: "CTRL",
+           WR_PPS_REJECT: "PPS_REJECT"}
 
 CELLS_EXPECTED = 10_000_000     # 10 MHz cells per real second
 ARM_FRAC_LO, ARM_FRAC_HI = 0.10, 0.80   # safe window within the second for arming
@@ -59,6 +60,16 @@ def cmd_status(io):
     say("# STATUS: " + "  ".join("%s=%d" % (k, int(v)) for k, v in s.items()))
     say("# PPS_COUNT=%d  CELLS_LAST=%d (expect %d; far off => flaky 10 MHz or PPS line)"
         % (io.rd(WR_PPS_COUNT), io.rd(WR_CELLS_LAST), CELLS_EXPECTED))
+    # Each rejected edge is a glitch the PL refused to turn into a whole extra
+    # second. Before the filter existed these were accepted silently: a 2026-08-03
+    # capture ran 4 s fast for 5 h with every health flag green.
+    rejected = io.rd(WR_PPS_REJECT)
+    if rejected:
+        say("# !! PPS_REJECT=%d spurious PPS edge(s) discarded. The WR PPS line is "
+            "glitching; each one would have added a whole second. Scope the PPS pin."
+            % rejected)
+    else:
+        say("# PPS_REJECT=0 (no spurious PPS edges seen)")
     sec, ns = read_now(io)
     if sec == 0 and ns == 0:
         say("# HW time: UNSYNC (strict zero: not armed / not locked)")

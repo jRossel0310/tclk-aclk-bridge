@@ -200,6 +200,114 @@ async def test_disarm_unlocks(dut):
     gen.stop()
 
 
+async def _glitch_pps(dut, high_ns=200):
+    """Inject a spurious PPS rising edge, the way line noise or a marginal driver
+    would. The real generator leaves wr_pps low between pulses, so forcing it high
+    mid-second creates exactly one extra rising edge for the DUT to see."""
+    dut.wr_pps.value = 1
+    await Timer(high_ns, unit="ns")
+    dut.wr_pps.value = 0
+    await Timer(high_ns, unit="ns")
+
+
+@cocotb.test()
+async def test_early_pps_edge_is_rejected(dut):
+    """A spurious PPS edge must NOT advance the seconds counter.
+
+    Each accepted edge adds a whole second, so a single glitch on the WR PPS pin
+    silently puts every subsequent timestamp 1 s into the future while lock stays
+    valid and every health flag stays green. This is the failure that put 4 s of
+    error into a 5 h capture on 2026-08-03."""
+    _start_clocks(dut)
+    await _reset(dut)
+    gen = WrGen(dut.wr_clk10, dut.wr_pps)
+    gen.start()
+    await ClockCycles(dut.clk_a, 300)
+    await _arm(dut, SEC0)
+    await _wait_locked(dut)
+
+    # settle onto a known second, mid-interval so the glitch is unambiguous
+    n_pps = len(gen.pps_times_ns)
+    while len(gen.pps_times_ns) < n_pps + 1:
+        await ClockCycles(dut.clk_a, 4)
+    await ClockCycles(dut.clk_a, 40)          # ~1000 ns into a 5000 ns second
+    await Timer(1, unit="ns")
+    sec_before, _ = _split(_b(dut.ts_a))
+    rejected_before = _b(dut.pps_rejected_a)
+
+    await _glitch_pps(dut)
+    await ClockCycles(dut.clk_a, 8)           # let it cross the 2-FF sync
+    await Timer(1, unit="ns")
+
+    sec_after, _ = _split(_b(dut.ts_a))
+    assert sec_after == sec_before, (
+        f"spurious PPS advanced seconds: {sec_before} -> {sec_after}")
+    assert _b(dut.pps_rejected_a) == rejected_before + 1, (
+        "rejected edge was not counted; a silent discard is as bad as a silent accept")
+    assert _b(dut.locked_a) == 1, "glitch must not unlock a healthy timebase"
+    gen.stop()
+
+
+@cocotb.test()
+async def test_real_pps_still_accepted_after_a_glitch(dut):
+    """The filter must reject only EARLY edges. The next genuine PPS still lands,
+    the seconds counter advances exactly once, and ns re-zeroes."""
+    _start_clocks(dut)
+    await _reset(dut)
+    gen = WrGen(dut.wr_clk10, dut.wr_pps)
+    gen.start()
+    await ClockCycles(dut.clk_a, 300)
+    await _arm(dut, SEC0)
+    await _wait_locked(dut)
+
+    n_pps = len(gen.pps_times_ns)
+    while len(gen.pps_times_ns) < n_pps + 1:
+        await ClockCycles(dut.clk_a, 4)
+    await ClockCycles(dut.clk_a, 40)
+    await Timer(1, unit="ns")
+    sec_before, _ = _split(_b(dut.ts_a))
+
+    await _glitch_pps(dut)                    # glitch mid-second
+    n_pps = len(gen.pps_times_ns)
+    while len(gen.pps_times_ns) < n_pps + 1:  # then wait for a genuine PPS
+        await ClockCycles(dut.clk_a, 4)
+    await ClockCycles(dut.clk_a, 8)
+    await Timer(1, unit="ns")
+
+    sec_after, _ = _split(_b(dut.ts_a))
+    assert sec_after == sec_before + 1, (
+        f"real PPS after a glitch should add exactly 1 s: {sec_before} -> {sec_after}")
+    gen.stop()
+
+
+@cocotb.test()
+async def test_cells_last_ignores_a_glitch(dut):
+    """cells_last must keep measuring the REAL PPS interval. If a glitch latched it,
+    the one register that could reveal a bad PPS line would instead hide it."""
+    _start_clocks(dut)
+    await _reset(dut)
+    gen = WrGen(dut.wr_clk10, dut.wr_pps)
+    gen.start()
+    await ClockCycles(dut.clk_a, 300)
+    await _arm(dut, SEC0)
+    await _wait_locked(dut)
+
+    n_pps = len(gen.pps_times_ns)
+    while len(gen.pps_times_ns) < n_pps + 1:
+        await ClockCycles(dut.clk_a, 4)
+    await ClockCycles(dut.clk_a, 40)
+    await _glitch_pps(dut)
+    n_pps = len(gen.pps_times_ns)
+    while len(gen.pps_times_ns) < n_pps + 1:
+        await ClockCycles(dut.clk_a, 4)
+    await ClockCycles(dut.clk_a, 8)
+    await Timer(1, unit="ns")
+
+    assert _b(dut.cells_last_a) == 50, (
+        f"cells_last {_b(dut.cells_last_a)} != 50; a glitch corrupted the interval")
+    gen.stop()
+
+
 def _save_plot(samples):
     try:
         import matplotlib
