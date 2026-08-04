@@ -265,21 +265,47 @@ grep . /sys/class/uio/uio*/name          # note the tclk_readout / wr_timebase i
 Use the `-o <overlay>.dtbo` form. `-f Full` programs the PL but creates no UIO node and
 does not release reset, so every AXI access bus-errors.
 
-```bash
-timedatectl                              # want: System clock synchronized: yes
+### Wait for NTP before arming: this board has a dead RTC
+
+`timedatectl` reports `RTC time: Thu 1970-01-01`, so **every boot starts with the system
+clock about 58 days wrong** until chrony reaches the network and steps it:
+
+```
+Aug 3 01:46:01  System clock was stepped by 5047494.677722 seconds
+Aug 3 12:31:19  System clock was stepped by 5086002.156533 seconds
 ```
 
-This one matters: `wr_time.py arm` reads the system clock to label the current second.
-An unsynced clock arms the timebase to the wrong second and every timestamp is off by a
-whole number of seconds, which is invisible in the data and obvious to the admin.
+`wr_time.py arm` reads that clock to label the second, so arming inside that window
+labels the timebase weeks off, and it is invisible afterwards because `status` compares
+HW against the same wrong clock and both agree. Block until the clock is real:
+
+```bash
+chronyc waitsync 60 0.1        # wait up to ~10 min for the offset to fall under 0.1 s
+timedatectl                    # confirm: System clock synchronized: yes
+chronyc tracking               # confirm a real Reference ID, not 00000000
+```
+
+`arm` now refuses outright if those are not satisfied, so a forgotten wait gives a clear
+refusal instead of hours of silently wrong timestamps. `--force` overrides deliberately.
 
 Arm the timebase (substitute your wr index):
 
 ```bash
 sudo python3 ~/aclk_pipeline/wr_time.py /dev/uio6 status   # want pps_alive=1 clk10_alive=1
-sudo python3 ~/aclk_pipeline/wr_time.py /dev/uio6 arm
+sudo python3 ~/aclk_pipeline/wr_time.py /dev/uio6 arm --verify-after 90
 sudo python3 ~/aclk_pipeline/wr_time.py /dev/uio6 status   # want locked_tclk=1 locked_aclk=1
 ```
+
+`--verify-after 90` re-reads HW against the system clock 90 s later. That catches an NTP
+correction landing just after the arm, which is exactly the failure that put 4 s into the
+2026-08-03 capture while looking clean at the time.
+
+Two lines in `status` matter most:
+
+- `HW - system clock = ...` should be well under 1 s. Close to a whole number of seconds
+  means the arm labelled the wrong second: re-arm.
+- `PPS_REJECT=` counts spurious PPS edges the PL discarded. Nonzero means the WR PPS line
+  is glitching, and each one would previously have added a whole second silently.
 
 Nothing publishes until this locks: unlocked stamps every event UNSYNC and the publisher
 drops it by design.
