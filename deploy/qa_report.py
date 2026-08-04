@@ -111,10 +111,28 @@ class Verdict:
 
 # ------------------------------------------------------------------ loaders
 
-def load_archive(patterns):
-    """Archive CSVs (id,sec,ns,event) -> [(ra_time_ns, code), ...]. Rows that do not
-    parse are skipped rather than fatal: a capture in progress can have a torn last line."""
-    events = []
+ArchiveScan = namedtuple(
+    "ArchiveScan", "n span_s rate per_code distinct first_ns last_ns markers holes")
+
+
+def scan_archive(patterns, hole_ns, gps_event=GPS_EVENT):
+    """ONE streaming pass over the archive CSVs -> ArchiveScan.
+
+    Deliberately does not materialise the events. A multi-day capture is millions of
+    rows, and building a list of tuples first made this take minutes and gigabytes
+    before printing anything (it was Ctrl-C'd on the board on 2026-08-04). Everything
+    the report needs is either a running aggregate (count, span, per-code tally),
+    O(1) state (the previous timestamp, for hole detection), or a small subset (the
+    1 Hz $8F markers, ~86k/day).
+
+    Rows that do not parse are skipped rather than fatal: a capture in progress
+    routinely has a torn last line."""
+    n = 0
+    first = last = None
+    per_code = Counter()
+    markers = []
+    holes = []
+    prev = None
     for pat in patterns:
         for path in sorted(glob.glob(pat)):
             with open(path, newline="") as f:
@@ -124,10 +142,27 @@ def load_archive(patterns):
                     if len(row) < 4:
                         continue
                     try:
-                        events.append((int(row[1]) * NS + int(row[2]), int(row[3])))
+                        t = int(row[1]) * NS + int(row[2])
+                        code = int(row[3])
                     except ValueError:
                         continue
-    return events
+                    n += 1
+                    per_code[code] += 1
+                    if code == gps_event:
+                        markers.append(t)
+                    if first is None or t < first:
+                        first = t
+                    if last is None or t > last:
+                        last = t
+                    if prev is not None and t - prev > hole_ns:
+                        holes.append((prev, t, t - prev))
+                    prev = t
+    if not n:
+        return ArchiveScan(0, 0.0, 0.0, Counter(), 0, None, None, [], [])
+    span = (last - first) / NS
+    return ArchiveScan(n=n, span_s=span, rate=(n / span) if span > 0 else 0.0,
+                       per_code=per_code, distinct=len(per_code),
+                       first_ns=first, last_ns=last, markers=markers, holes=holes)
 
 
 def load_from_redis(client, base):
@@ -139,9 +174,8 @@ def load_from_redis(client, base):
 
 # ------------------------------------------------------------------ sections
 
-def section_coverage(v, events, source):
+def section_coverage(v, c, source):
     print("== COVERAGE ==")
-    c = coverage(events)
     if not c.n:
         v.skip("coverage", "no events found (%s)" % source)
         print("  no events found (%s)\n" % source)
@@ -220,9 +254,9 @@ def section_ledger(v, statlog):
     print()
 
 
-def section_clock(v, events):
+def section_clock(v, marks):
     print("== CLOCK (stamp clock vs GPS $8F) ==")
-    marks = sorted(t for t, c in events if c == GPS_EVENT)
+    marks = sorted(marks)
     if len(marks) < 4:
         v.skip("clock", "fewer than 4 $8F markers")
         print("  skipped: need >= 4 $8F markers, found %d\n" % len(marks))
@@ -248,13 +282,12 @@ def section_clock(v, events):
     print()
 
 
-def section_archive(v, events, hole_s):
+def section_archive(v, holes, have_archive, hole_s):
     print("== ARCHIVE CONTINUITY ==")
-    if not events:
+    if not have_archive:
         v.skip("archive", "no archived events")
         print("  skipped: no archive CSVs\n")
         return
-    holes = find_holes([t for t, _ in events], int(hole_s * NS))
     if not holes:
         print("  no gaps > %.1f s" % hole_s)
         v.ok("archive", "continuous")
@@ -295,11 +328,17 @@ def main(argv):
                   % (args.redis_host, args.redis_port, e))
             client = None
 
-    events = load_archive(args.archive)
+    # ONE streaming pass over the archive. Materialising it first made this take
+    # minutes on a multi-day capture before printing anything.
+    scan = scan_archive(args.archive, int(args.hole_seconds * NS))
     source = "archive %s" % ", ".join(args.archive)
-    if not events and client is not None:
+    have_archive = scan.n > 0
+    if not have_archive and client is not None:
         events = load_from_redis(client, args.base)
+        cov, marks, holes = coverage(events), [t for t, c in events if c == GPS_EVENT], []
         source = "live {%s}:STREAM (retained window only)" % args.base
+    else:
+        cov, marks, holes = scan, scan.markers, scan.holes
 
     import os
     statlog = args.statlog if args.statlog and os.path.exists(args.statlog) else None
@@ -308,11 +347,11 @@ def main(argv):
     print("QA REPORT   base {%s}   redis %s:%d" % (args.base, args.redis_host, args.redis_port))
     print("=" * 70)
     v = Verdict()
-    section_coverage(v, events, source)
+    section_coverage(v, cov, source)
     section_loss(v, client, args.base)
     section_ledger(v, statlog)
-    section_clock(v, events)
-    section_archive(v, events, args.hole_seconds)
+    section_clock(v, marks)
+    section_archive(v, holes, have_archive, args.hole_seconds)
     print("=" * 70)
     print(v.summary())
     return v.exit_code

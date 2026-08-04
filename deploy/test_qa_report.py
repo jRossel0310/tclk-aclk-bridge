@@ -1,6 +1,64 @@
 """Unit tests for qa_report pure helpers (no Redis, no board, no files).
 Run: python deploy/test_qa_report.py   or   pytest deploy -q"""
-from qa_report import coverage, find_holes, Verdict, NS
+import csv
+import os
+import tempfile
+
+from qa_report import coverage, find_holes, Verdict, NS, scan_archive, GPS_EVENT
+
+
+def _write_csv(path, rows):
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["id", "sec", "ns", "event"])
+        for sec, ns, ev in rows:
+            w.writerow(["%d-%d" % (sec * 1000 + ns // 1_000_000, ns % 1_000_000),
+                        sec, ns, ev])
+
+
+def test_scan_archive_matches_the_in_memory_helpers():
+    # the streaming scan must agree exactly with coverage()/find_holes(), which are
+    # the versions the other tests pin
+    rows = [(1000, 0, 0x0C), (1001, 0, 0x0F), (1002, 0, 0x0C), (1010, 0, 0x0C)]
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "events-tclk-20260804.csv")
+        _write_csv(p, rows)
+        sc = scan_archive([p], hole_ns=2 * NS)
+    events = [(s * NS + n, e) for s, n, e in rows]
+    cov = coverage(events)
+    assert sc.n == cov.n == 4
+    assert sc.span_s == cov.span_s
+    assert sc.per_code == cov.per_code
+    assert sc.holes == find_holes([t for t, _ in events], 2 * NS)
+
+
+def test_scan_archive_collects_only_gps_markers_not_every_event():
+    # holding every event is what made this unusable on a 1.7 M-row archive
+    rows = [(1000 + i, 0, GPS_EVENT if i % 10 == 0 else 0x0C) for i in range(100)]
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "events-tclk-20260804.csv")
+        _write_csv(p, rows)
+        sc = scan_archive([p], hole_ns=NS)
+    assert sc.n == 100
+    assert len(sc.markers) == 10                 # only the $8F times are retained
+
+
+def test_scan_archive_skips_torn_and_short_rows():
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "events-tclk-20260804.csv")
+        with open(p, "w", newline="") as f:
+            f.write("id,sec,ns,event\n")
+            f.write("1000000-0,1000,0,12\n")
+            f.write("short,row\n")                # torn last line of a live capture
+            f.write("1001000-0,1001,0,15\n")
+            f.write("bad,notanumber,0,12\n")
+        sc = scan_archive([p], hole_ns=NS)
+    assert sc.n == 2
+
+
+def test_scan_archive_handles_no_files():
+    sc = scan_archive([], hole_ns=NS)
+    assert sc.n == 0 and sc.markers == [] and sc.holes == []
 
 SEC0 = 1_785_774_000
 
