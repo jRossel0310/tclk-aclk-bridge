@@ -3,6 +3,8 @@
 
     sudo python3 wr_time.py /dev/uio6 status     # lock state + HW-vs-system delta
     sudo python3 wr_time.py /dev/uio6 arm        # arm the next-PPS Unix label from NTP time
+    sudo python3 wr_time.py /dev/uio6 arm --verify-after 90   # re-check 90 s later
+    sudo python3 wr_time.py /dev/uio6 arm --force             # arm despite a bad clock
     sudo python3 wr_time.py /dev/uio6 disarm     # force unlock (CTRL[1])
     sudo python3 wr_time.py /dev/uio6 clear      # clear the lost_lock sticky (CTRL[0])
     sudo python3 wr_time.py /dev/uio6 guard      # unattended: auto re-arm on any unlock
@@ -18,6 +20,7 @@ import time
 
 import readout_common as rc
 from readout_common import say
+from clock_guard import check_system_clock
 
 # wr_timebase_axi register map (16-byte stride)
 (WR_STATUS, WR_SEC_ARM, WR_SEC_NOW, WR_NS_NOW, WR_PPS_COUNT, WR_CELLS_LAST,
@@ -83,7 +86,29 @@ def cmd_status(io):
     return s
 
 
-def cmd_arm(io):
+def cmd_arm(io, force=False, verify_after=0.0):
+    """Label the next PPS with the current UTC second.
+
+    The system clock is the ONLY input to that label, and a wrong clock produces a
+    whole-second error in every later timestamp that the immediate status check
+    cannot detect (it compares HW against the same wrong clock). So the clock is
+    checked BEFORE arming, not after. See clock_guard for why this board in
+    particular needs it: its RTC is dead, so every boot starts ~58 days out."""
+    ok, why = check_system_clock()
+    if ok:
+        say("# clock check: %s" % why)
+    elif force:
+        say("# !! clock check FAILED: %s" % why)
+        say("# !! --force given: arming anyway. Every timestamp may be a whole "
+            "number of seconds wrong, and STATUS will NOT show it.")
+    else:
+        say("# !! REFUSING TO ARM: %s" % why)
+        say("#    Arming against an untrustworthy clock writes a silent whole-second")
+        say("#    error into every timestamp. Wait for NTP to settle, then re-run.")
+        say("#    Check with:  timedatectl ; chronyc tracking")
+        say("#    Override with:  wr_time.py <dev> arm --force")
+        return
+
     # wait for a mid-second moment so the SEC_ARM write cannot race the PPS
     while True:
         t = time.time()
@@ -109,6 +134,23 @@ def cmd_arm(io):
         say("# !! arm did not reach full lock within timeout; check STATUS below "
             "(pps_alive/clk10_alive and CELLS_LAST). Re-run 'arm' or check the WR wiring.")
     cmd_status(io)
+
+    # A clock correction landing just AFTER the arm produces exactly the 2026-08-03
+    # failure: the arm looked clean because HW and system were wrong together, and
+    # the discrepancy only appeared once NTP stepped the system clock. Re-checking
+    # after a delay catches that while it is still cheap to fix.
+    if verify_after > 0:
+        say("# verifying the arm in %.0f s (a late NTP correction would show here) ..."
+            % verify_after)
+        time.sleep(verify_after)
+        sec, ns = read_now(io)
+        if sec or ns:
+            delta = (sec + ns / 1e9) - time.time()
+            if abs(delta) > 0.5:
+                say("# !! POST-ARM CHECK FAILED: HW - system = %+0.6f s. The system "
+                    "clock moved after arming; RE-ARM NOW." % delta)
+            else:
+                say("# post-arm check OK: HW - system = %+0.6f s" % delta)
 
 
 def cmd_guard(io, interval=2.0, arm_retry=5.0, logpath="wr-guard.log"):
@@ -157,6 +199,12 @@ def cmd_guard(io, interval=2.0, arm_retry=5.0, logpath="wr-guard.log"):
                 rearms += 1
                 last_arm = time.monotonic()
                 log("# guard: re-arming (attempt %d)" % rearms)
+                # The clock guard can refuse. That is the correct outcome: an
+                # UNSYNC gap is recoverable, a silently mislabelled second is not.
+                # Log it so a guard that is stuck waiting for NTP is visible.
+                ok, why = check_system_clock()
+                if not ok:
+                    log("# guard: re-arm BLOCKED by the clock guard: %s" % why)
                 cmd_arm(io)
             time.sleep(interval)
     except KeyboardInterrupt:
@@ -165,7 +213,8 @@ def cmd_guard(io, interval=2.0, arm_retry=5.0, logpath="wr-guard.log"):
 
 def main(argv):
     rc.line_buffer_stdout()
-    pos, _flags = rc.parse_args(argv)
+    pos, flags = rc.parse_args(argv, value_flags=("--verify-after",),
+                               bool_flags=("--force",))
     dev = pos[0] if pos else "/dev/uio6"
     cmd = pos[1] if len(pos) > 1 else "status"
     io = rc.open_dev(dev)
@@ -173,7 +222,8 @@ def main(argv):
     if cmd == "status":
         cmd_status(io)
     elif cmd == "arm":
-        cmd_arm(io)
+        cmd_arm(io, force=bool(flags.get("--force")),
+                verify_after=float(flags.get("--verify-after", "0")))
     elif cmd == "disarm":
         io.wr(WR_CTRL, 0x2)
         say("# disarmed (all copies unlock; timestamps read UNSYNC until re-armed).")
@@ -183,7 +233,8 @@ def main(argv):
     elif cmd == "guard":
         cmd_guard(io)
     else:
-        say("usage: wr_time.py /dev/uioN [status|arm|disarm|clear|guard]")
+        say("usage: wr_time.py /dev/uioN [status|arm|disarm|clear|guard]\n"
+            "       arm [--force] [--verify-after SECONDS]")
 
 
 if __name__ == "__main__":
