@@ -36,7 +36,7 @@ the same GSSAPI path as the working PuTTY session, so with a valid ticket there
 is no password prompt.
 
 Prerequisites: on the lab network or VPN (to reach the board and the KDC), and
-a live ticket (`klist` shows `krbtgt/FNAL.GOV`; renew with `kinit jrossel`).
+a live ticket (`klist` shows `krbtgt/FNAL.GOV`; renew with `kinit <principal>`).
 An expired ticket is the usual cause of GSSAPI/permission failures.
 
 ```powershell
@@ -44,7 +44,7 @@ An expired ticket is the usual cause of GSSAPI/permission failures.
 pscp -scp "C:\path\to\localfile.txt" ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/
 
 # board -> laptop
-pscp -scp ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/somefile.log "C:\Users\jacob\Downloads\"
+pscp -scp ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/somefile.log "C:\path\to\downloads\"
 
 # whole directory
 pscp -scp -r "C:\path\to\folder" ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/

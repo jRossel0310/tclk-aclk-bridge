@@ -50,16 +50,16 @@ and never again. This matters because it rules out whole classes of explanation.
 
 Frequency offset of the WR-derived clock, all measurements against the same hardware:
 
-| when | span | reference | result | fit residual |
-|---|---|---|---|---|
-| 2026-07-31 | 52.46 h | TCLK `$8F`, 188,850 markers | **-3.48092 ppm** | 190 µs sd |
-| 2026-08-03 | 5 h | TCLK `$8F` | +0.201 ppm | 217 µs sd |
-| 2026-08-03/04 | 8 min | NTP (chrony) | +0.422 ppm | n/a |
-| 2026-08-03/04 | 29 min | NTP (chrony) | +0.421 ppm | n/a |
-| 2026-08-03/04 | 16.08 h | NTP (chrony) | **+0.366 ppm** | n/a |
-| 2026-08-04 | 22.04 h | TCLK `$8F`, 78,563 markers | **+0.343 ppm** | 473 µs sd |
+| when | reference | result | fit residual |
+|---|---|---|---|
+| 2026-07-31 | TCLK `$8F` | **-3.48092 ppm** | 190 µs sd |
+| 2026-08-03 | TCLK `$8F` | +0.201 ppm | 217 µs sd |
+| 2026-08-03/04 | NTP (chrony) | +0.422 ppm | n/a |
+| 2026-08-03/04 | NTP (chrony) | +0.421 ppm | n/a |
+| 2026-08-03/04 | NTP (chrony) | **+0.366 ppm** | n/a |
+| 2026-08-04 | TCLK `$8F` | **+0.343 ppm** | 473 µs sd |
 
-The weekend measurement was **very stable**: hourly windows gave sd 0.0079 ppm, ptp
+The 07-31 measurement was **very stable**: hourly windows gave sd 0.0079 ppm, ptp
 0.0297 ppm. It does not look like a bad fit. It looks like a real, steady -3.48 ppm.
 
 The recent measurements are **mutually consistent across two independent references**.
@@ -72,7 +72,7 @@ Candidate explanations, none confirmed:
 - the grandmaster was changed, rebooted, or re-disciplined between the two dates
 - a free-running oscillator wandering with temperature (3.8 ppm is large but not
   impossible for an undisciplined crystal across a wide swing)
-- something wrong with the weekend measurement that the low residual hides
+- something wrong with the 07-31 measurement that the low residual hides
 - the two eras measured different physical paths (verify the topology was identical)
 
 **Deciding between these is the job.** Prefer evidence from the grandmaster itself over
@@ -111,9 +111,9 @@ rather than rate, and it does not depend on TCLK or `$8F` at all.
 
 ### The PPS edge count is perfect
 
-- `CELLS_LAST` read exactly 10,000,000 on every interval across ~1.9 billion cells
-- over a separate 16.08 h window, `PPS_COUNT` advanced 57,891 against 57,891 wall
-  seconds, exactly, not one extra or missing pulse
+- `CELLS_LAST` read exactly 10,000,000 on every interval
+- over a separate window, `PPS_COUNT` advanced exactly in step with wall seconds,
+  not one extra or missing pulse
 - `PPS_REJECT` (a new glitch filter, see below) reads 0
 
 The 10 MHz and the PPS are coherent, which is expected since the PPS is the 10 MHz
@@ -176,16 +176,16 @@ genuinely varies (reads -3.89 ppm, with 2 s excursions in its residual).
 Treat `$8F` with some caution over short spans. Its fit residual is 190 to 473 µs
 depending on the capture, dominated by physical marker delivery jitter, by ~512-event
 stale-FIFO blocks at each capture restart, and by gaps in the archive. It agrees well
-with NTP over 22 h. It disagreed sharply over the weekend, which is exactly what needs
-explaining.
+with NTP on the later captures. It disagreed sharply on the 07-31 one, which is
+exactly what needs explaining.
 
 ---
 
 ## Separate finding, probably unrelated but do not assume
 
-On 2026-08-03 the published timestamps ran **exactly 4.000000 s fast** for 5 hours
-across 1.7 M events. Re-arming removed exactly 4.000000 s. `wr-guard.log` showed no
-re-arms and no lock loss, and a subsequent 16 h window showed a perfectly clean PPS.
+On 2026-08-03 the published timestamps ran **exactly 4.000000 s fast**. Re-arming
+removed exactly 4.000000 s. `wr-guard.log` showed no re-arms and no lock loss, and a
+later window showed a perfectly clean PPS.
 
 Two candidate causes remain and were not separated: a transient burst of spurious PPS
 edges, or an arm against a system clock that was briefly wrong. Both are now defended

@@ -38,8 +38,8 @@ authoritatively in **[docs/aclk-lite-framing.md](docs/aclk-lite-framing.md)**.
 
 ## Status
 
-Hardware-validated in a 15.6 h dual-source capture (5.55 M events/source, zero loss),
-2026-07-16.
+Runs on hardware: the board decodes real Fermilab TCLK, loops ACLK over the SFP fiber,
+and publishes both readouts on the shared White Rabbit timeline into Redis.
 
 ## Prerequisites
 

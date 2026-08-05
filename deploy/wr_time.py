@@ -9,11 +9,14 @@
     sudo python3 wr_time.py /dev/uio6 clear      # clear the lost_lock sticky (CTRL[0])
     sudo python3 wr_time.py /dev/uio6 guard      # unattended: auto re-arm on any unlock
 
-Arm protocol: the PS system clock is NTP-disciplined; mid-second (to avoid racing
-the PPS boundary) we write floor(now)+1, the label of the NEXT PPS, to SEC_ARM.
-Hardware loads it at that PPS in every timebase copy and locks. Verify compares
-SEC_NOW against the system clock afterwards. STRICT: any reference loss (or a GT
-relock, which resets the ACLK replica) unlocks and needs a fresh `arm`.
+The hardware counts PPS edges but has no idea which UTC second it is sitting on, so
+arming is how we tell it. The PS system clock is NTP-disciplined; mid-second, where
+the write cannot race the PPS boundary, we put floor(now)+1 into SEC_ARM, which is the
+label the next PPS should carry. Every timebase copy loads it at that PPS and locks.
+Verifying afterwards is just SEC_NOW compared against the system clock.
+
+The timebase is strict on purpose. Losing the reference unlocks it, and so does a GT
+relock, which resets the ACLK replica. It stays unlocked until a fresh `arm`.
 """
 import sys
 import time
@@ -58,14 +61,26 @@ def read_now(io):
     return sec, ns
 
 
+def label_error(sec, ns, now):
+    """HW-minus-system seconds, or None while UNSYNC (ts == 0).
+
+    A whole-second error with the health flags still green means the seconds label is
+    wrong rather than the PPS itself. That is what happened on 2026-08-04: an arm
+    pended through a PPS outage and the relock came up 16 s slow. One more arm fixes
+    it, since that relabels the next PPS in place and never unlocks."""
+    if not (sec or ns):
+        return None
+    return (sec + ns / 1e9) - now
+
+
 def cmd_status(io):
     s = decode_status(io.rd(WR_STATUS))
     say("# STATUS: " + "  ".join("%s=%d" % (k, int(v)) for k, v in s.items()))
     say("# PPS_COUNT=%d  CELLS_LAST=%d (expect %d; far off => flaky 10 MHz or PPS line)"
         % (io.rd(WR_PPS_COUNT), io.rd(WR_CELLS_LAST), CELLS_EXPECTED))
-    # Each rejected edge is a glitch the PL refused to turn into a whole extra
-    # second. Before the filter existed these were accepted silently: a 2026-08-03
-    # capture ran 4 s fast for 5 h with every health flag green.
+    # Each rejected edge is a glitch that the PL declined to turn into a whole extra
+    # second. Before the filter existed they were accepted in silence, which is how a
+    # capture ended up running several seconds fast with every health flag green.
     rejected = io.rd(WR_PPS_REJECT)
     if rejected:
         say("# !! PPS_REJECT=%d spurious PPS edge(s) discarded. The WR PPS line is "
@@ -89,18 +104,18 @@ def cmd_status(io):
 def cmd_arm(io, force=False, verify_after=0.0):
     """Label the next PPS with the current UTC second.
 
-    The system clock is the ONLY input to that label, and a wrong clock produces a
-    whole-second error in every later timestamp that the immediate status check
-    cannot detect (it compares HW against the same wrong clock). So the clock is
-    checked BEFORE arming, not after. See clock_guard for why this board in
-    particular needs it: its RTC is dead, so every boot starts ~58 days out."""
+    That label comes from the system clock and nothing else, so a wrong clock writes a
+    whole-second error into every timestamp that follows. The status check right after
+    arming cannot catch it, because it compares the hardware against the same wrong
+    clock. Hence the check happens first. clock_guard explains why this board in
+    particular needs one: its RTC is dead, so every boot starts ~58 days out."""
     ok, why = check_system_clock()
     if ok:
         say("# clock check: %s" % why)
     elif force:
         say("# !! clock check FAILED: %s" % why)
         say("# !! --force given: arming anyway. Every timestamp may be a whole "
-            "number of seconds wrong, and STATUS will NOT show it.")
+            "number of seconds wrong, and STATUS will not show it.")
     else:
         say("# !! REFUSING TO ARM: %s" % why)
         say("#    Arming against an untrustworthy clock writes a silent whole-second")
@@ -135,10 +150,10 @@ def cmd_arm(io, force=False, verify_after=0.0):
             "(pps_alive/clk10_alive and CELLS_LAST). Re-run 'arm' or check the WR wiring.")
     cmd_status(io)
 
-    # A clock correction landing just AFTER the arm produces exactly the 2026-08-03
-    # failure: the arm looked clean because HW and system were wrong together, and
-    # the discrepancy only appeared once NTP stepped the system clock. Re-checking
-    # after a delay catches that while it is still cheap to fix.
+    # A clock correction that lands just after the arm hides itself at arm time: the
+    # hardware and the system clock are wrong together, so the immediate status check
+    # looks clean, and the disagreement only shows up once NTP steps the system clock.
+    # Re-checking after a delay catches it while it still costs one command to fix.
     if verify_after > 0:
         say("# verifying the arm in %.0f s (a late NTP correction would show here) ..."
             % verify_after)
@@ -148,20 +163,24 @@ def cmd_arm(io, force=False, verify_after=0.0):
             delta = (sec + ns / 1e9) - time.time()
             if abs(delta) > 0.5:
                 say("# !! POST-ARM CHECK FAILED: HW - system = %+0.6f s. The system "
-                    "clock moved after arming; RE-ARM NOW." % delta)
+                    "clock moved after arming; re-arm now." % delta)
             else:
                 say("# post-arm check OK: HW - system = %+0.6f s" % delta)
 
 
 def cmd_guard(io, interval=2.0, arm_retry=5.0, logpath="wr-guard.log"):
-    """Unattended lock guard for multi-day runs. The timebase is deliberately STRICT:
-    ~400 ns of missing 10 MHz edges, ~1 s of missing PPS, or a GT relock (which resets
-    the ACLK replica) unlocks it PERMANENTLY until a fresh arm, and every event stamped
-    while unlocked is UNSYNC-dropped by the publisher. This loop polls STATUS and
-    re-arms automatically, turning a WR blip into a seconds-long UNSYNC gap instead of
-    a dead remainder-of-run. Re-arm labels come from the system clock, so keep NTP
-    (chrony) running. Lock transitions are logged (timestamped) to wr-guard.log; the
-    lost_lock sticky is left latched as evidence. Ctrl-C to stop."""
+    """Unattended lock guard for multi-day runs.
+
+    The timebase is deliberately unforgiving. Roughly 400 ns of missing 10 MHz edges,
+    roughly a second of missing PPS, or a GT relock (which resets the ACLK replica)
+    will unlock it, and it stays unlocked until someone arms it again. Everything
+    stamped in the meantime is UNSYNC and the publisher drops it. Left alone, a
+    two-second WR blip on the first night costs you the rest of the run.
+
+    So this loop polls STATUS and re-arms by itself. Re-arm labels still come from the
+    system clock, so keep NTP (chrony) running. Lock transitions go to wr-guard.log
+    with timestamps, and the lost_lock sticky is left latched as evidence. Ctrl-C to
+    stop."""
     def log(msg):
         line = "%s %s" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), msg)
         say(line)
@@ -176,9 +195,18 @@ def cmd_guard(io, interval=2.0, arm_retry=5.0, logpath="wr-guard.log"):
     down_mono = None
     last_arm = 0.0
     rearms = 0
+    last_rej = io.rd(WR_PPS_REJECT)
     try:
         while True:
             s = decode_status(io.rd(WR_STATUS))
+            # The hardware only counts rejections. The time they happened is
+            # recorded nowhere else, so stamp each change into the log. That
+            # gives the timing to the poll interval, 2 s by default.
+            rej = io.rd(WR_PPS_REJECT)
+            if rej != last_rej:
+                log("# guard: PPS_REJECT %d -> %d (spurious edge(s) on the PPS "
+                    "line, discarded)" % (last_rej, rej))
+                last_rej = rej
             full = s["locked_mon"] and s["locked_tclk"] and s["locked_aclk"]
             if full != was_full:
                 if full:
@@ -193,19 +221,36 @@ def cmd_guard(io, interval=2.0, arm_retry=5.0, logpath="wr-guard.log"):
                     log("# guard: UNLOCKED: " +
                         "  ".join("%s=%d" % (k, int(v)) for k, v in s.items()))
                 was_full = full
-            # Re-arm when unlocked, but never spam: an arm stays pending in hardware
-            # until a PPS consumes it, and repeat attempts are throttled to arm_retry.
-            if not full and not s["arm_pending"] and (time.monotonic() - last_arm) >= arm_retry:
+            # Re-arm when unlocked, throttled to arm_retry. A pending arm must not
+            # suppress retries: its label goes stale at 1 s/s for as long as the PPS
+            # is absent, and the hardware always takes the newest label, so a retry
+            # costs nothing and refreshes it. (2026-08-04: a pending arm did suppress
+            # the refreshes through a PPS outage, and the relock came up 16 s slow.)
+            if not full and (time.monotonic() - last_arm) >= arm_retry:
                 rearms += 1
                 last_arm = time.monotonic()
                 log("# guard: re-arming (attempt %d)" % rearms)
-                # The clock guard can refuse. That is the correct outcome: an
-                # UNSYNC gap is recoverable, a silently mislabelled second is not.
-                # Log it so a guard that is stuck waiting for NTP is visible.
+                # The clock guard can refuse, and refusing is the better failure.
+                # A gap in the data announces itself; a second that is quietly
+                # labelled wrong does not. Log the refusal, otherwise a guard
+                # sitting and waiting on NTP looks exactly like a healthy one.
                 ok, why = check_system_clock()
                 if not ok:
                     log("# guard: re-arm BLOCKED by the clock guard: %s" % why)
                 cmd_arm(io)
+            # While locked, audit the label itself. The health flags cannot see a
+            # stale-arm relock, because every second is still exactly one PPS long;
+            # only a comparison against the system clock can. One arm fixes it at
+            # the next PPS, without unlocking and without losing any events.
+            if full and (time.monotonic() - last_arm) >= arm_retry:
+                sec, ns = read_now(io)
+                delta = label_error(sec, ns, time.time())
+                if delta is not None and abs(delta) > 0.5:
+                    rearms += 1
+                    last_arm = time.monotonic()
+                    log("# guard: label error %+.3f s with green flags; "
+                        "re-arming to relabel the next PPS" % delta)
+                    cmd_arm(io)
             time.sleep(interval)
     except KeyboardInterrupt:
         log("# guard: stopped (re-arms: %d)" % rearms)

@@ -15,7 +15,7 @@
 - **Fine encoding:** `FLAGS[3:2]` = `fine_phase` (2 bits, 0..3), `FLAGS[4]` = `fine_valid`; `FLAGS[1:0]` stay `is_tclk`/`has_data`. Matches Part 1 and the spec.
 - **Graceful fallback / additive:** with the TDC wired in, a clean run must still decode every event with correct coarse timestamps; fine bits are advisory (`fine_valid` per event). Worst case = the shipped build.
 - **Verilog-2001 for `.v` files** (`TCLK_DESERIALIZER2.v`, `TCLK_RCV.v`, `aclk_pipeline_bd_top.v`): `integer` not `int`, sized literals, no SV-only constructs.
-- **Runner pattern** and **toolchain PATH** as in Part 1: tests via `tb/<name>/runner.py`; before any test run `export PATH="/c/Users/jacob/tools/oss-cad-suite/bin:/c/Users/jacob/tools/oss-cad-suite/lib:$PATH"` in Git Bash.
+- **Runner pattern** and **toolchain PATH** as in Part 1: tests via `tb/<name>/runner.py`; before any test run `export PATH="/c/path/to/oss-cad-suite/bin:/c/path/to/oss-cad-suite/lib:$PATH"` in Git Bash.
 - **Board deferred:** bitstream synth, timing closure, and live-line validation are NOT part of this plan. The MMCM task (Task 4) is written + elaboration-checked only; Task 6 documents the board bring-up.
 
 ---

@@ -6,7 +6,7 @@ injects a mix of real and null/idle ACLK frames on the recovered-RX clock; a
 separate read clock drains the FIFO. The test proves that:
   - the link aligns and real events reach the read side,
   - null / idle packets (event low byte 0xFF) are dropped, never forwarded,
-  - events arrive in order with zero loss (overflow stays low),
+  - events arrive in order and the overflow flag stays low,
   - the FIFO absorbs an initial reader stall (burst tolerance) without dropping.
 
 On completion it writes an events-in vs events-out / occupancy plot under

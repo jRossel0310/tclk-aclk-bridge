@@ -14,8 +14,8 @@ reaches the network and steps it:
     Aug 3 01:46:01  System clock was stepped by 5047494.677722 seconds
     Aug 3 12:31:19  System clock was stepped by 5086002.156533 seconds
 
-Arming inside that window would label the timebase weeks off. On 2026-08-03 a
-milder version of the same class of failure put 4 s into 1.7 M published events.
+Arming inside that window would label the timebase weeks off. A milder version of
+the same class of failure has already put whole seconds into published events.
 
 This module is pure text parsing so it is testable without hardware; wr_time.py
 supplies the command output.

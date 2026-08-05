@@ -202,7 +202,7 @@ def test_last_segment_flag_drops_pre_seam_cycles():
     import io
     from contextlib import redirect_stdout
     from supercycle_plot import main
-    # segment A: 4 clean cycles, then a 10 min capture hole, then segment B
+    # segment A: 4 clean cycles, then a capture hole, then segment B
     # (the _synthetic set: 8 kept + 1 folded-rejected cycle)
     tb, evb = _synthetic()
     ta, eva = [], []

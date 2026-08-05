@@ -443,7 +443,7 @@ The chain sim omits the GT and BRAM IP (pure RTL), so the GT transceiver, SFP el
 
 **Open questions (need confirmation)**
 - The PMOD1 header **position** numbers for B10 / D11 disagree across repo docs (connector-position numbering is documented as ambiguous); confirm against the carrier silkscreen before soldering. Package pins are unambiguous.
-- End-to-end hardware validation of *this* integrated bitstream (all three slaves + WR + fiber + Redis on one board) is the pending step; the constituent pieces are individually HW-verified.
+- End-to-end hardware validation of *this* integrated bitstream (all three slaves + WR + fiber + Redis on one board) is the pending step.
 
 <div class="appendix"></div>
 

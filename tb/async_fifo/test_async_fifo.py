@@ -6,7 +6,7 @@ The write and read clocks run at different, unrelated rates here on purpose, so
 the Gray-coded pointer crossing is genuinely exercised. The tests prove:
 
   1. integrity under backpressure: every word written comes out exactly once, in
-     order, with zero loss, even when the reader stalls and the FIFO fills.
+     order, even when the reader stalls and the FIFO fills.
   2. overflow alarm: if the writer ignores `full` and overruns the FIFO, the
      sticky `overflow` flag latches and only the first DEPTH words survive.
 

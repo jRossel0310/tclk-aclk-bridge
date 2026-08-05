@@ -371,10 +371,11 @@ ip -br addr show eth0 && ping -c 1 10.200.12.100
 
 ## Known caveat: stamp-clock frequency offset
 
-The WR PPS source measured **-3.48 ppm** against TCLK's GPS marker over the 52 h
-weekend capture (see gps_calibrate.py). The PL counts PPS edges, so a HW second is a
-PPS period by construction and that offset accumulates against real time: about
-**12.5 ms per hour**, roughly 0.3 s per day. Published timestamps are the raw hardware
+The WR PPS source is free-running, so it sits at some offset from GPS (see
+gps_calibrate.py, which measures it). The PL counts PPS edges, so a HW second is a PPS
+period by construction and that offset accumulates against real time. The offset
+belongs to the source's current boot rather than to the installation, so measure it
+per run instead of assuming a constant. Published timestamps are the raw hardware
 stamps, uncorrected.
 
 `gps_calibrate.py` measures the offset but is a *duration* correction for offline CSV

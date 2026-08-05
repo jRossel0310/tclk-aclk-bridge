@@ -10,8 +10,8 @@ logistics.
 Placeholders used below (edit to taste):
 - Board: `ubuntu@aclk-timestamper.fnal.gov`
 - New board folder: `~/finetdc` (the existing `~/aclk_pipeline` is left alone)
-- New PC folder for artifacts + returned CSVs: `C:\Users\jacob\Fermilab\Summer-2026\board-finetdc`
-- Repo root (PC): `C:\Users\jacob\Fermilab\Summer-2026\kria-2-hardware`
+- New PC folder for artifacts + returned CSVs: `C:\path\to\board-finetdc`
+- Repo root (PC): `C:\path\to\kria-2-hardware`
 
 ---
 
@@ -20,7 +20,7 @@ Placeholders used below (edit to taste):
 The 4-phase `clk_wiz` is the FIRST synth of this build, so watch timing closure.
 
 ```powershell
-cd C:\Users\jacob\Fermilab\Summer-2026\kria-2-hardware
+cd C:\path\to\kria-2-hardware
 .\hw.ps1 build
 ```
 
@@ -38,8 +38,8 @@ Artifact:
 Stage everything to copy into one folder:
 
 ```powershell
-mkdir C:\Users\jacob\Fermilab\Summer-2026\board-finetdc 2>$null
-cd C:\Users\jacob\Fermilab\Summer-2026\board-finetdc
+mkdir C:\path\to\board-finetdc 2>$null
+cd C:\path\to\board-finetdc
 copy ..\kria-2-hardware\build\kria\aclk_pipeline\aclk_pipeline.runs\impl_1\uart_echo_bd_wrapper.bit.bin .
 copy ..\kria-2-hardware\deploy\aclk_pipeline.dts .
 copy ..\kria-2-hardware\deploy\readout_common.py .
@@ -67,7 +67,7 @@ with a live ticket.
 
 ```powershell
 klist              # look for a non-expired krbtgt/FNAL.GOV
-kinit jrossel      # renew if expired (expired ticket = the usual GSSAPI failure)
+kinit <principal>  # renew if expired (expired ticket = the usual GSSAPI failure)
 ```
 
 ---
@@ -77,7 +77,7 @@ kinit jrossel      # renew if expired (expired ticket = the usual GSSAPI failure
 ```powershell
 # create the isolated folder on the board and copy the whole staged set into it
 ssh ubuntu@aclk-timestamper.fnal.gov "mkdir -p ~/finetdc"     # or use PuTTY session
-pscp -scp -r "C:\Users\jacob\Fermilab\Summer-2026\board-finetdc\*" ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/finetdc/
+pscp -scp -r "C:\path\to\board-finetdc\*" ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/finetdc/
 ```
 
 (If Git Bash `ssh` also can't auth, make the folder from a PuTTY terminal, or
@@ -131,8 +131,8 @@ ls -lh ~/finetdc/events-tclk-*.csv
 ## 6. Bring the CSV back + re-check decode faithfulness (PC)
 
 ```powershell
-pscp -scp "ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/finetdc/events-tclk-*.csv" C:\Users\jacob\Fermilab\Summer-2026\board-finetdc\
-cd C:\Users\jacob\Fermilab\Summer-2026\kria-2-hardware\deploy
+pscp -scp "ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/finetdc/events-tclk-*.csv" C:\path\to\board-finetdc\
+cd C:\path\to\kria-2-hardware\deploy
 
 # decode faithfulness: should match the prior clean captures (100% defined codes, 0 invalid, 0 $FE)
 python tclk_faithfulness.py ..\..\board-finetdc\events-tclk-*.csv
@@ -161,8 +161,8 @@ ls -lh events-tclk-flags.csv     # columns: id,sec,ns,event,fine_phase,fine_vali
 Bring it back and run the fine-timing analysis:
 
 ```powershell
-pscp -scp "ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/finetdc/events-tclk-flags.csv" C:\Users\jacob\Fermilab\Summer-2026\board-finetdc\
-cd C:\Users\jacob\Fermilab\Summer-2026\kria-2-hardware\deploy
+pscp -scp "ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/finetdc/events-tclk-flags.csv" C:\path\to\board-finetdc\
+cd C:\path\to\kria-2-hardware\deploy
 ```
 
 ```python

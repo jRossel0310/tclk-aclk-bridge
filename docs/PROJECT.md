@@ -128,11 +128,10 @@ sourced by the build and are not part of the pipeline hardware.
 
 ## What is verified, where
 
-- **HW-verified:** the full pipeline ran a **15.6 h dual-source capture on 2026-07-16**
-  (5.55 M events/source, zero loss), decoding real Fermilab TCLK, looping ACLK over the
-  SFP fiber, and publishing both readouts on the shared WR timeline into Redis. This is
-  the load-bearing hardware validation. TCLK decode, the WR timebase arm/lock, the GT
-  SFP loop, and both readouts are all exercised by it.
+- **On hardware:** the full pipeline runs end to end on the board, decoding real
+  Fermilab TCLK, looping ACLK over the SFP fiber, and publishing both readouts on the
+  shared WR timeline into Redis. That path exercises TCLK decode, the WR timebase
+  arm/lock, the GT SFP loop, and both readouts together.
 - **Sim-only:** the cocotb suite is the inner loop. `tb/aclk_pipeline_chain` exercises
   the end-to-end chain; per-block testbenches cover `tclk_rcv`, `aclk_rcv`,
   `aclk_readout_axi`, `async_fifo`, `aclk_lite_encoder`, `aclk_lite_bridge`,

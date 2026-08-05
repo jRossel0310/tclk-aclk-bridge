@@ -2,7 +2,7 @@
 # Launch the KR260 TCLK Redis publisher in a detached tmux session, writing a JSONL stats
 # log for the later error-check. Pre-flight refuses to launch unless Redis is reachable
 # AND the WR timebase is fully locked, because an unlocked timebase stamps every event
-# UNSYNC and the publisher would drop them all (a wasted day-long run).
+# UNSYNC and the publisher would drop them all, wasting the whole run.
 #
 # ACLK is NOT published. The lab deployment reserves the {TCLK} base key for this decoder
 # and its key space has no room for a second source (see deploy/redis.md); pointing an

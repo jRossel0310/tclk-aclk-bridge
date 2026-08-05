@@ -216,8 +216,8 @@ async def test_early_pps_edge_is_rejected(dut):
 
     Each accepted edge adds a whole second, so a single glitch on the WR PPS pin
     silently puts every subsequent timestamp 1 s into the future while lock stays
-    valid and every health flag stays green. This is the failure that put 4 s of
-    error into a 5 h capture on 2026-08-03."""
+    valid and every health flag stays green. This is the failure mode that put a
+    whole-number-of-seconds error into real captured data."""
     _start_clocks(dut)
     await _reset(dut)
     gen = WrGen(dut.wr_clk10, dut.wr_pps)

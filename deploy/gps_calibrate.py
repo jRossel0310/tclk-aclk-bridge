@@ -5,10 +5,10 @@ WHY THIS EXISTS. The PL timebase counts WR PPS edges (wr_timebase.sv: `sec` is
 loaded once at arm, then incremented once per PPS forever), so a HW second IS a
 PPS period by construction -- `CELLS_LAST` reads exactly 10,000,000 every
 interval. That makes the timebase perfectly uniform but only as *accurate* as
-the PPS source. Measured on the 52 h weekend capture, the source is a
-free-running oscillator sitting -3.48 ppm from GPS and stable to 0.008 ppm, i.e.
-a WR-LEN that is NOT slaved to a grandmaster. Until that is fixed in hardware,
-the offset is a calibration constant, and this module measures and removes it.
+the PPS source, which is a free-running oscillator rather than a disciplined one.
+The offset it contributes is per-boot, not a property of the installation, so do
+not bake a constant in: measure it per run from that run's own markers. This
+module does that measurement and removes it.
 
 THE REFERENCE. TCLK's $8F is the GPS-locked 1 Hz event, and it is the only
 absolute time reference in the chain. Do NOT use $02 for frequency: it is a
@@ -142,8 +142,8 @@ def to_true_ns(hw_ns, ppm, t0_ns=None):
 def to_true_ns_tracked(hw_ns, marker_ns, nominal_ns=NS, smooth_markers=3600):
     """Like to_true_ns, but follows slow wander using the markers as a ruler.
 
-    A single scale factor leaves the oscillator's drift in the result (0.027 ppm
-    of wander over the weekend run accumulated to ~0.7 ms). This subtracts a
+    A single scale factor leaves the oscillator's drift in the result, since even
+    a fraction of a ppm of wander accumulates over a long capture. This subtracts a
     boxcar-smoothed version of the marker fit residual, so long-term wander is
     removed while per-marker jitter is NOT injected into every timestamp."""
     hw = np.asarray(hw_ns, dtype=np.float64)

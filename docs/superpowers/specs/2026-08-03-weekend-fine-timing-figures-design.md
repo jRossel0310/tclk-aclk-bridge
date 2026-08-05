@@ -7,9 +7,9 @@
 ## Purpose
 
 The PIP-II poster is already printed. Since then the multiphase fine-timing TDC
-was validated on the board and a 52 h weekend capture was taken. This work
-produces a figure set for on-screen presenting (iPad) that explains the
-four-phase sampling technique and reports what the weekend run measured.
+was brought up on the board and a weekend capture was taken. This work produces a
+figure set for on-screen presenting (iPad) that explains the four-phase sampling
+technique and reports what that capture measured.
 
 These figures are additive: they do not replace anything in `poster/figures/`.
 
@@ -17,10 +17,10 @@ These figures are additive: they do not replace anything in `poster/figures/`.
 
 Parsed from the nine `flags-*.csv` files (columns `id,sec,ns,event,fine_phase,fine_valid`):
 
-- **52.46 h continuous**, 2026-07-31 21:11:51 to 2026-08-03 01:39 UTC.
-- **18,562,135 rows** kept after the two defect filters below. `counters.json` deltas over the same interval:
-  `event_count` +18,562,421, `filtered_count` +135,959,068, so roughly 136 M
-  further events were seen and discarded by the in-FPGA drop mask.
+- Continuous, 2026-07-31 21:11:51 to 2026-08-03 01:39 UTC.
+- Rows kept after the two defect filters below, plus the `counters.json` deltas over
+  the same interval, show a large further population of events seen and discarded by
+  the in-FPGA drop mask.
 - `error_count` = 0 and `null_count` = 0 at both counter samples.
 - `fine_valid` = 1 for every row.
 - 41 distinct event codes; 3145 supercycles anchored on `$00`.
@@ -30,14 +30,13 @@ Parsed from the nine `flags-*.csv` files (columns `id,sec,ns,event,fine_phase,fi
 ### Two data defects, handled explicitly
 
 1. **Stale FIFO prefix.** The first 512 rows (exactly the readout FIFO depth;
-   the earlier 737 k run has 512 too) carry timestamps from
-   2026-07-31 16:35 UTC, 4.6 h before the run began: leftovers in the readout
-   FIFO from a prior session. The loader drops every row before the first
-   large forward time gap.
+   an earlier run has 512 too) carry timestamps from 2026-07-31 16:35 UTC, well
+   before the run began: leftovers in the readout FIFO from a prior session. The
+   loader drops every row before the first large forward time gap.
 2. **Byte-corruption burst.** `flags-20260802-151159.csv` contains a localized
    run of corrupted bytes (~586 non-ASCII bytes in one region, consistent with a
    storage write fault rather than a decode fault). The loader validates each row
-   numerically and in-range; 135 rows of 18.5 M are dropped. The count is
+   numerically and in-range; a negligible fraction of rows is dropped. The count is
    reported, never silently swallowed.
 
 ### Precision trap
@@ -78,7 +77,7 @@ Source of truth: `rtl/aclk_lite/tclk_fine_tdc.sv`,
 
 Code-density calibration per `deploy/fine_calibrate.py`: an asynchronous edge
 lands in each bin with probability equal to that bin's fractional width, so the
-`fine_phase` histogram over 18.5 M events recovers the bin widths.
+`fine_phase` histogram over the captured events recovers the bin widths.
 
 - Upper panel: measured cumulative bin edges as a staircase against the ideal
   1.25 ns ramp.
@@ -129,9 +128,9 @@ per-code-normalized density as color, over 3145 supercycles.
 
 ### F - Schedule-stability raster
 
-Phase within the supercycle on x, wall-clock hour across the 52 h on y, density
+Phase within the supercycle on x, wall-clock hour across the capture on y, density
 as color, for the deterministic codes. `$7A` occupies 18 of 600 phase bins,
-`$EF` 25, `$B3` 54, so these draw straight vertical lines across two days. The
+`$EF` 25, `$B3` 54, so these draw straight vertical lines end to end. The
 figure shows both the accelerator's determinism and the receiver's stability
 over the full run.
 

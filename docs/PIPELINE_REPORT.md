@@ -233,18 +233,17 @@ testbench, and each emits a matplotlib plot on completion. The board-side Python
 `pytest` suite covering the register map, the Redis publisher, and the statistics
 reconciliation.
 
-The load-bearing hardware validation is a **15.6-hour continuous dual-source capture** run on
-2026-07-16. Over that run the board decoded real Fermilab TCLK, looped every event through the
-ACLK gigabit fiber path, stamped both sources against the shared White Rabbit timeline, and
-published both streams into Redis, accumulating roughly **5.55 million events per source with
-zero loss** (verified by reconciling the hardware event counters against the number of records
-that reached Redis and the on-disk statistics log). That single run exercises TCLK decode, the
-White Rabbit arm and lock, the gigabit SFP loop, and both readouts together under sustained
-real load.
+The pipeline runs end to end on the board as a continuous dual-source capture. The board
+decodes real Fermilab TCLK, loops every event through the ACLK gigabit fiber path, stamps both
+sources against the shared White Rabbit timeline, and publishes both streams into Redis. Event
+accounting is reconciled by comparing the hardware event counters against the number of records
+that reached Redis and the on-disk statistics log. That path exercises TCLK decode, the White
+Rabbit arm and lock, the gigabit SFP loop, and both readouts together under sustained real
+load.
 
-![Event-code occupancy over the 15.6 h capture.](../poster/figures/redis_events.png)
+![Event-code occupancy across a continuous capture.](../poster/figures/redis_events.png)
 
-*Figure 4. Event-code occupancy from the 15.6 h run: 5,556,662 events published to the
+*Figure 4. Event-code occupancy from a continuous capture: events published to the
 `KR260:aclk` stream at about 99 events per second, resolved into the 43 distinct event codes
 seen (top 12 shown), with code `0x07` demonstrating the hardware drop-mask filter in action.
 The strongly non-uniform distribution is the real structure of the Fermilab timing broadcast,

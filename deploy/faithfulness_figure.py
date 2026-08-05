@@ -2,7 +2,7 @@
 
 Three panels:
   A  faithfulness scorecard  - live capture coverage + invalid-frame rate per file
-  B  ACLK-0716 capture timeline - valid event rate vs time, the 5 h hole, and the
+  B  ACLK capture timeline - valid event rate vs time, the capture hole, and the
      post-resync $FF00|code corruption burst overlaid
   C  timestamp scale - GPS $8F reveals our stamp clock is ~7.5 ppm slow; the real
      TCLK-vs-GPS offset (residual) is tiny

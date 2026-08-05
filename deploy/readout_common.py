@@ -126,7 +126,7 @@ class RegIO:
 
     def _view(self, o):
         """Cached ctypes uint32 view of one register. ctypes scalar access is a single
-        32-bit load/store (HW-verified for the store side); an mmap slice goes through
+        32-bit load/store on the store side; an mmap slice goes through
         glibc memcpy, which multi-loads/multi-stores (2 bus transactions for 4 bytes).
         Caching the view also keeps object creation off the hot path."""
         v = self._views.get(o)
@@ -183,10 +183,10 @@ class RegIO:
         store a separate AXI write. On POP that popped the FIFO 2-3 times per call, and
         every extra pop while >=2 events were buffered silently DISCARDED an unread event.
         That ate the second member of every back-to-back TCLK chain (~24% of all events;
-        the survivor gap was quantized at 2x the 1.2 us on-wire chain pitch). HW-verified
-        2026-07-15: draining N buffered events took N/2 slice-write pops vs N ctypes pops
-        (147 vs 298 for ~297 events). A ctypes scalar assignment stores the word exactly
-        once. The written value is 0; POP fires on any write."""
+        the survivor gap was quantized at 2x the 1.2 us on-wire chain pitch). On hardware
+        a slice write drains N buffered events in N/2 pops where ctypes takes N. A ctypes
+        scalar assignment stores the word exactly once. The written value is 0; POP fires
+        on any write."""
         self._enter(self._label("pulse", o))
         self._view(o).value = 0
         self._leave()

@@ -33,7 +33,7 @@ def test_scan_archive_matches_the_in_memory_helpers():
 
 
 def test_scan_archive_collects_only_gps_markers_not_every_event():
-    # holding every event is what made this unusable on a 1.7 M-row archive
+    # holding every event in memory is what made this unusable on a large archive
     rows = [(1000 + i, 0, GPS_EVENT if i % 10 == 0 else 0x0C) for i in range(100)]
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "events-tclk-20260804.csv")

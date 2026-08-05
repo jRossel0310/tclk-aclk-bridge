@@ -15,7 +15,7 @@ decode (~60 % PERR; a 15 ns glitch-reject debounce did not help). See
 `rtl/aclk_bridge/serdec4_9MHz.v` comments and the
 `2026-07-17-tclk-clock-upgrade-aclk-hardening-design.md` risk section.
 
-Separately, analysis of the day-long captures showed the *current* stamp is
+Separately, analysis of the captured data showed the *current* stamp is
 taken at **byte-completion** (`aclk_valid = ~DAVn`, latched into the packed word
 at the VALID cycle - `rtl/aclk_readout/aclk_readout_core.sv`). DAVn fires ~8
 bit-cells (~800 ns) after the event begins on the wire, and its firing dithers

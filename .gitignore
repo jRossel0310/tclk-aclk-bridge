@@ -2,6 +2,9 @@
 .venv/
 __pycache__/
 *.pyc
+# pytest scratch. It self-ignores (pytest writes a .gitignore inside), but listing
+# it here means that still holds if the directory is ever created another way.
+.pytest_cache/
 
 # Simulation build artifacts & waveforms
 sim_build/
@@ -84,13 +87,21 @@ deploy/stats-*.jsonl
 deploy/archive-state.json
 deploy/archive-state.json.tmp
 deploy/flags-*.csv
+# wr_time.py guard appends here on every lock transition, so a multi-day run leaves
+# one of these in the working tree. No .log file in deploy/ is tracked.
+deploy/*.log
 # generated figures only, named explicitly so a blanket deploy/*.png cannot start
 # skipping a committed figure like deploy/fine_timing_wr_result.png
 deploy/marker_timing.png
 deploy/faithfulness.png
 deploy/plot-*.png
+deploy/pps-*.png
 deploy/*_hist.png
 deploy/*_raster.png
+# supercycle_plot.py writes <stem>_hist.svg + <stem>_raster.svg. deploy/sc_*.svg
+# below only catches the -o sc_*.svg naming; the default stem is supercycle.
+deploy/*_hist.svg
+deploy/*_raster.svg
 
 # transfer bundles (deploy/lab-redis.md builds these for USB or jump-host copies)
 *.tar.gz

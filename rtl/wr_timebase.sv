@@ -25,8 +25,8 @@
 // GLITCH REJECTION: every accepted PPS edge adds a whole second, so one spurious
 // edge on the pin puts every later timestamp 1 s into the future while `locked`,
 // `pps_alive` and `cells_last` all stay perfectly healthy. That is not
-// hypothetical: a 2026-08-03 capture ran 4 s fast for 5 hours with no indication
-// anywhere. An edge is therefore accepted only once PPS_MIN_CELLS wr_clk10 cells
+// hypothetical: it has happened on this board, with no indication anywhere that
+// anything was wrong. An edge is accepted only once PPS_MIN_CELLS wr_clk10 cells
 // have elapsed since the previous accepted one, and rejections are counted on
 // pps_rejected so the condition is observable rather than silent.
 //

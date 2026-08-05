@@ -37,8 +37,8 @@ KDC), and hold a live ticket. Check and renew it:
 
 ```powershell
 klist            # look for a krbtgt/FNAL.GOV entry that has not expired
-kinit jrossel    # renew when it has expired (an expired ticket is the usual
-                 # cause of GSSAPI / permission-denied failures)
+kinit <principal>   # renew when it has expired (an expired ticket is the usual
+                    # cause of GSSAPI / permission-denied failures)
 ```
 
 Copy files with `pscp` (the `-scp` flag forces the SCP protocol so behavior is
@@ -49,7 +49,7 @@ predictable):
 pscp -scp "C:\path\to\localfile" ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/
 
 # board -> laptop
-pscp -scp ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/somefile.log "C:\Users\jacob\Downloads\"
+pscp -scp ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/somefile.log "C:\path\to\downloads\"
 
 # whole directory
 pscp -scp -r "C:\path\to\folder" ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/
