@@ -105,3 +105,17 @@ deploy/*_raster.svg
 
 # archives of captures or artifacts staged for a pscp transfer
 *.tar.gz
+
+# internal working docs: kept locally, not published in this repo
+docs/superpowers
+docs/MAINTAINER_GUIDE.md
+docs/PIPELINE_REPORT.md
+docs/PIPELINE_REPORT.pdf
+docs/wr-reference-findings.md
+docs/wr-reference-investigation.md
+docs/generated/
+
+# publication material lives outside this repo's remit; 2026-08-05 these were
+# briefly swept into a commit when .gitignore itself got deleted: never again
+paper/
+poster/
