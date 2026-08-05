@@ -103,5 +103,5 @@ deploy/*_raster.png
 deploy/*_hist.svg
 deploy/*_raster.svg
 
-# transfer bundles (deploy/lab-redis.md builds these for USB or jump-host copies)
+# archives of captures or artifacts staged for a pscp transfer
 *.tar.gz

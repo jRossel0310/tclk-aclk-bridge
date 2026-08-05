@@ -166,11 +166,10 @@ def load_marker_ns(paths, event):
     Integer ns throughout: epoch seconds are ~1.79e9, so sec + ns/1e9 in float64
     loses the nanosecond digit.
 
-    Corrupt rows are skipped, not fatal. USB flash write bursts have twice
-    scrambled ~9 kB of a capture in place, which puts arbitrary bytes mid-file;
-    the default locale codec raises UnicodeDecodeError on those, so read as
-    latin-1 (total, never throws) and reject any row whose numeric fields are
-    not pure digits."""
+    Corrupt rows are skipped, not fatal. A capture has twice come back with a
+    block scrambled in place, which puts arbitrary bytes mid-file; the default
+    locale codec raises UnicodeDecodeError on those, so read as latin-1 (total,
+    never throws) and reject any row whose numeric fields are not pure digits."""
     want = str(int(event))
     out, skipped = [], 0
     for p in paths:

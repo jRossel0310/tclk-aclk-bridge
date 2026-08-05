@@ -22,29 +22,29 @@ runbook: ../docs/OPERATIONS.md.
 
 ---
 
-## 0. Copy the files off the USB stick
+## 0. Copy the files onto the board
 
-The stick has a folder `kr260-tclk-redis-<date>`. Mount it and copy:
+Everything goes over the network with `pscp`, which needs a live Kerberos ticket (see
+../docs/OPERATIONS.md for the ticket and the pscp invocation). This step therefore
+assumes the board is already reachable. If it is not, do Steps 1 and 2 first and come
+back here.
 
-```bash
-lsblk                                   # find the stick, e.g. sda1
-sudo mkdir -p /mnt/usb
-sudo mount /dev/sda1 /mnt/usb
-ls /mnt/usb/kr260-tclk-redis-*/
+From the PC:
 
-mkdir -p ~/aclk_pipeline
-cp -r /mnt/usb/kr260-tclk-redis-*/aclk_pipeline/. ~/aclk_pipeline/
-cp /mnt/usb/kr260-tclk-redis-*/uart_echo_bd_wrapper.bit.bin ~/
+```powershell
+ssh ubuntu@aclk-timestamper.fnal.gov "mkdir -p ~/aclk_pipeline"
+pscp -scp -r "C:\path\to\kria-2-hardware\deploy\*" ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/aclk_pipeline/
+pscp -scp "C:\path\to\uart_echo_bd_wrapper.bit.bin" ubuntu@aclk-timestamper.fnal.gov:/home/ubuntu/
 ```
 
-Verify nothing was corrupted in transit before you trust any of it:
+Then on the board, confirm the bitstream arrived intact before you trust any of it:
 
 ```bash
-cd /mnt/usb/kr260-tclk-redis-*/ && sha256sum -c MANIFEST.sha256; cd ~
-sudo umount /mnt/usb
+md5sum ~/uart_echo_bd_wrapper.bit.bin    # must match the MD5 in build-manifest.json
 ```
 
-Every line must say `OK`. Then make the launcher executable (FAT32 loses the bit):
+A mismatch means a truncated or stale copy; re-send it. Then make the launcher
+executable, since pscp does not reliably carry the bit across:
 
 ```bash
 chmod +x ~/aclk_pipeline/run_pipeline.sh
@@ -255,7 +255,7 @@ Detail in ../docs/OPERATIONS.md sections 4 and 6.
 
 ```bash
 cd ~
-md5sum uart_echo_bd_wrapper.bit.bin      # compare against MANIFEST.sha256's sibling MD5
+md5sum uart_echo_bd_wrapper.bit.bin      # compare against the MD5 in build-manifest.json
 dtc -@ -O dtb -o aclk_pipeline.dtbo ~/aclk_pipeline/aclk_pipeline.dts
 sudo xmutil unloadapp
 sudo fpgautil -b ~/uart_echo_bd_wrapper.bit.bin -o aclk_pipeline.dtbo

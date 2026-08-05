@@ -130,9 +130,9 @@ def test_stale_block_does_not_corrupt_the_windowed_stability():
     assert ppms.mean() == pytest.approx(-3.5, abs=0.01)
 
 
-def test_loader_survives_a_flash_corruption_burst(tmp_path):
-    """A real capture had ~9 kB scrambled in place by a USB write burst, which
-    puts non-UTF8 bytes mid-file. The loader must skip those rows, not die."""
+def test_loader_survives_a_corruption_burst(tmp_path):
+    """A real capture came back with a block scrambled in place, which puts
+    non-UTF8 bytes mid-file. The loader must skip those rows, not die."""
     p = tmp_path / "flags-corrupt.csv"
     good = ["0,1785441088,100,143,1,1",
             "1,1785441089,120,143,2,1",
