@@ -6,3 +6,9 @@
 # Needs redis-server >= 7.4 on the other end. An older client is reported in the
 # publisher's last_error rather than silently publishing a watchdog that never expires.
 redis>=5.1
+
+# gps_calibrate.py and tclk_faithfulness.py import numpy at module level, and
+# qa_report.py imports gps_calibrate for its timing section, so the one-command QA
+# check needs this too. The publisher and the readers do not: if you only need to
+# capture, redis alone is enough.
+numpy

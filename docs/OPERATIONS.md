@@ -123,11 +123,17 @@ board-side script and config the pipeline needs and copies them with `scp`:
 ```
 
 It copies: `uart_echo_bd_wrapper.bit.bin`, `tclk_read.py`, `aclk_read.py`,
-`wr_time.py`, `tclk_filter.py`, `readout_common.py`, `redis_sink.py`,
-`redis_publish.py`, `ra_consumer.py`, `redis_smoketest.py`, `stats_log.py`,
-`stats_report.py`, `stream_archive.py`,
+`wr_time.py`, `wr_pps_live.py`, `tclk_filter.py`, `readout_common.py`,
+`redis_sink.py`, `redis_publish.py`, `ra_consumer.py`, `clock_guard.py`,
+`redis_smoketest.py`, `verify_no_loss.py`, `qa_report.py`, `gps_calibrate.py`,
+`tclk_faithfulness.py`, `stats_log.py`, `stats_report.py`, `stream_archive.py`,
 `run_pipeline.sh`, `requirements-board.txt`, `redis-kr260.conf`,
 `aclk_pipeline.dts`, and `capture.md`, all to `~` on the board.
+
+The list lives in `$pyMap` in `hw.ps1`; add new board-side tools there or they
+will not reach the board. `plot_pps_log.py` is deliberately absent: it needs
+numpy and matplotlib, which are not in `requirements-board.txt`, so it runs on
+the PC against a log copied back.
 
 Note: `hw.ps1 deploy` uses plain `scp`, which will **not** authenticate to
 `aclk-timestamper.fnal.gov` (the GSSAPI board). For the lab board, copy those
@@ -281,6 +287,32 @@ near zero. If you re-run into the same log the snapshots append; the report
 detects the restart and reconciles only the most recent run, so delete or rename
 the log between runs to keep them separate.
 
+### One-command verdict
+
+`stats_report.py` covers the drain side. To check the whole published stream at once:
+
+```bash
+sudo python3 qa_report.py --statlog stats-tclk.jsonl
+```
+
+It runs the full QA battery (coverage, loss, timing, faithfulness, drain health),
+prints one PASS/FAIL verdict, and exits 0 or 1, so it also works from cron or a
+watchdog. Each section is skipped cleanly when its input is missing. Add `--no-redis`
+to check the CSVs and stat log alone, or `--redis-host`/`--redis-port`/`--base` when
+running it off-board.
+
+Its loss section can also be run on its own:
+
+```bash
+sudo python3 verify_no_loss.py --base TCLK
+```
+
+Both lean on the per-code counter streams, `{TCLK}:<HEX>_C`, which the publisher
+numbers on the drain thread before the sink queue. A hole in that sequence therefore
+means an event was lost somewhere after the drain, and the sequence is its own
+checksum. Neither can see loss *upstream* of the counter, so a PL FIFO overflow, a
+CRC-failed frame or a drop-mask suppression shows up in `stats_report.py` instead.
+
 ### Redis liveness and stream checks
 
 ```bash
@@ -366,6 +398,22 @@ as SVGs:
 ```powershell
 python supercycle_plot.py events-tclk-*.csv --target 1E --ref 0C,BA
 python supercycle_plot.py tail.csv --target 1F --theme poster -o bes.svg
+```
+
+Check the CSVs against the TCLK spec (live-capture coverage, invalid-frame rate, and
+the stamp clock against the GPS `$8F` marker) with `tclk_faithfulness.py`.
+`faithfulness_figure.py` renders that analysis as one three-panel figure:
+
+```powershell
+python faithfulness_figure.py events-tclk-*.csv     # -> faithfulness.png
+```
+
+If you captured a WR PPS log on the board with `wr_pps_live.py`, plot its phase wander
+and derived ppm here too. This one is PC-side because it needs numpy and matplotlib,
+which the board does not have:
+
+```powershell
+python plot_pps_log.py pps-live.log                 # -> pps-live.png
 ```
 
 ## 9. Known failure modes

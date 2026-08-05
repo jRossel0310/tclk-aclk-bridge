@@ -194,7 +194,10 @@ The validity contract is strict:
 There are three timebase instances: TCLK-domain, ACLK-domain, and an AXI monitor
 inside `wr_timebase_axi.sv`. The monitor fans arm/disarm requests to both event
 domains and reports all three locks, reference activity, PPS count, measured
-10 MHz cells per interval, current time, and a sticky lost-lock flag.
+10 MHz cells per interval, current time, a sticky lost-lock flag, and a count of
+PPS edges the glitch filter discarded as too early (`PPS_REJECT`, `0x70`). Each
+rejected edge is one that would otherwise have added a whole second to every
+later timestamp with every health flag still reading green.
 
 The PPS pulse must be wide enough for the local sampler. In the deployed setup it
 must be roughly 100 ns or wider; a native 10 ns WR PPS can be missed entirely.

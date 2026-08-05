@@ -326,6 +326,7 @@ Same 16-byte stride. Register select = `addr[7:4]` (rtl/wr_timebase_axi.sv:8-22)
 | `0x40` | PPS_COUNT | RO | PPS edges seen since reset |
 | `0x50` | CELLS_LAST | RO | 10 MHz cells in the last PPS interval (expect 10,000,000) |
 | `0x60` | CTRL | WO | [0] clear lost_lock sticky [1] broadcast disarm (force unlock) |
+| `0x70` | PPS_REJECT | RO | PPS edges discarded as too early by the glitch filter. Nonzero means the PPS line is glitching, and each one would otherwise have added a whole second |
 
 **Arm flow (`wr_time.py`):** at a mid-second moment write `SEC_ARM = floor(now)+1`; HW loads it at the next PPS and locks; poll `STATUS` for `locked_tclk & locked_aclk & locked_mon`; verify `SEC_NOW` vs system clock within 0.5 s. `SEC_NOW/NS_NOW` read `0` while the monitor is unlocked (rtl/wr_timebase_axi.sv:21-22; deploy/wr_time.py:74-99).
 
@@ -443,7 +444,7 @@ The chain sim omits the GT and BRAM IP (pure RTL), so the GT transceiver, SFP el
 
 **Open questions (need confirmation)**
 - The PMOD1 header **position** numbers for B10 / D11 disagree across repo docs (connector-position numbering is documented as ambiguous); confirm against the carrier silkscreen before soldering. Package pins are unambiguous.
-- End-to-end hardware validation of *this* integrated bitstream (all three slaves + WR + fiber + Redis on one board) is the pending step.
+- This integrated bitstream has since been run end to end on the board (all three slaves + WR + fiber + Redis), so the note that it was awaiting that step no longer applies. See README.md and docs/PROJECT.md for the current status.
 
 <div class="appendix"></div>
 
