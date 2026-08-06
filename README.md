@@ -12,11 +12,14 @@ Everything is developed in simulation first (cocotb + Icarus, no Vivado or hardw
 needed) and then built to one bitstream with Vivado.
 
 > **New here?**
-> - Running the board? Start with the operator runbook **[docs/OPERATIONS.md](docs/OPERATIONS.md)**.
+> - Just need it publishing? The 15-minute cold-start tutorial is
+>   **[docs/HANDOFF.md](docs/HANDOFF.md)**.
+> - Running the board day to day? The operator runbook is
+>   **[docs/OPERATIONS.md](docs/OPERATIONS.md)**.
 > - Want the architecture, the module-to-file map, and what is hardware-verified vs.
 >   simulation-only? Read **[docs/PROJECT.md](docs/PROJECT.md)**.
-> - Taking over development? Start with the comprehensive
->   **[repository maintainer guide](docs/MAINTAINER_GUIDE.md)**.
+> - Taking over development? Ask the maintainers for the internal maintainer
+>   guide and working notes (kept outside this repo).
 
 ## What it does (signal chain)
 

@@ -45,6 +45,16 @@ def test_gap_break_cuts_on_seconds_even_when_plotting_hours():
     assert len(x) == 4 and np.isnan(y[2])        # NaN vertex inside the hole
 
 
+def test_robust_ylim_ignores_spikes():
+    from plot_pps_log import robust_ylim
+    y = np.concatenate([np.random.default_rng(0).normal(0, 50, 1000),
+                        [94700.0, -52000.0]])          # ms-scale one-sample spikes
+    lo, hi, n_off = robust_ylim(y)
+    assert hi < 1000 and lo > -1000                    # scaled to the wander
+    assert 2 <= n_off <= 12   # both spikes reported (plus a few legit tail samples)
+    assert robust_ylim(np.array([np.nan])) is None
+
+
 def test_render_smoke(tmp_path):
     import matplotlib
     matplotlib.use("Agg")

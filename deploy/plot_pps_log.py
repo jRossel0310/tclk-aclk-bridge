@@ -84,6 +84,22 @@ def sliding_ppm(t, phase_us, window_s=300.0):
     return out
 
 
+def robust_ylim(y, lo_pct=0.5, hi_pct=99.5, pad_frac=0.15):
+    """Percentile-based axis limits so a few extreme samples cannot flatten
+    the trace everyone actually wants to see. Returns (lo, hi, n_offscale),
+    or None if there is nothing finite to scale to."""
+    y = np.asarray(y, dtype=np.float64)
+    y = y[np.isfinite(y)]
+    if y.size == 0:
+        return None
+    lo, hi = np.percentile(y, [lo_pct, hi_pct])
+    if hi <= lo:
+        hi = lo + 1.0
+    pad = (hi - lo) * pad_frac
+    lo, hi = lo - pad, hi + pad
+    return lo, hi, int(((y < lo) | (y > hi)).sum())
+
+
 def _gap_break(t_s, x_plot, y):
     """Insert NaNs at holes so the plotted line breaks instead of bridging.
 
@@ -105,28 +121,54 @@ def render(run, out_path, window_s=300.0):
     SURFACE, INK, INK2, BLUE, ORANGE = (
         "#fcfcfb", "#0b0b0b", "#52514e", "#2a78d6", "#eb6834")
     hours = (run.t - run.t[0]) / 3600.0
-    fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(10, 6), sharex=True, facecolor=SURFACE,
-        gridspec_kw={"height_ratios": [3, 2], "hspace": 0.12})
+    fig, (ax1, ax2, ax3) = plt.subplots(
+        3, 1, figsize=(10, 7), sharex=True, facecolor=SURFACE,
+        gridspec_kw={"height_ratios": [3, 2, 1], "hspace": 0.14})
 
-    th, ph = _gap_break(run.t, hours, run.phase_us - run.phase_us[0])
+    phase = run.phase_us - run.phase_us[0]
+    th, ph = _gap_break(run.t, hours, phase)
     ax1.plot(th, ph, color=BLUE, lw=1.4)
-    dr = np.flatnonzero(np.diff(run.rej) > 0) + 1
-    if dr.size:
-        ax1.plot(hours[dr], np.full(dr.size, np.nanmin(ph)), "|",
-                 color=ORANGE, ms=9, mew=1.6,
-                 label="PPS_REJECT increment (%d)" % int(run.rej[-1] - run.rej[0]))
-        ax1.legend(loc="upper left", frameon=False, fontsize=9,
-                   labelcolor=INK2)
+    lim = robust_ylim(phase)
+    if lim:
+        lo, hi, n_off = lim
+        ax1.set_ylim(lo, hi)
+        if n_off:
+            ax1.text(0.99, 0.95,
+                     "%d sample(s) off-scale (|max| %.1f ms)"
+                     % (n_off, np.nanmax(np.abs(phase)) / 1000.0),
+                     transform=ax1.transAxes, ha="right", va="top",
+                     fontsize=8, color=INK2)
     ax1.set_ylabel("phase vs NTP (us)", color=INK)
 
-    tp, pp = _gap_break(run.t, hours, sliding_ppm(run.t, run.phase_us, window_s))
+    ppm = sliding_ppm(run.t, run.phase_us, window_s)
+    tp, pp = _gap_break(run.t, hours, ppm)
     ax2.plot(tp, pp, color=BLUE, lw=1.4)
     ax2.axhline(0.0, color=INK2, lw=0.8, alpha=0.5)
+    lim = robust_ylim(ppm)
+    if lim:
+        lo, hi, n_off = lim
+        ax2.set_ylim(min(lo, -0.05), max(hi, 0.05))
+        if n_off:
+            ax2.text(0.99, 0.95, "%d sample(s) off-scale" % n_off,
+                     transform=ax2.transAxes, ha="right", va="top",
+                     fontsize=8, color=INK2)
     ax2.set_ylabel("ppm (%d s window)" % int(window_s), color=INK)
-    ax2.set_xlabel("hours since first sample", color=INK)
 
-    for ax in (ax1, ax2):
+    # Rejects as a per-minute rate. Per-event ticks saturate into a solid bar
+    # during a chatter storm (observed 2026-08-05: 1,762 in 45 min).
+    edges = np.arange(run.t[0], run.t[-1] + 60.0, 60.0)
+    idx = np.minimum(np.searchsorted(run.t, edges), len(run.t) - 1)
+    rate = np.diff(run.rej[idx]).astype(float)
+    ax3.step((edges[1:] - run.t[0]) / 3600.0, rate, where="pre",
+             color=ORANGE, lw=1.2)
+    ax3.set_ylabel("rejects/min", color=INK)
+    ax3.set_ylim(bottom=0)
+    ax3.set_xlabel("hours since first sample", color=INK)
+    ax3.text(0.99, 0.90, "total +%d" % int(run.rej[-1] - run.rej[0]),
+             transform=ax3.transAxes, ha="right", va="top",
+             fontsize=8, color=INK2)
+
+    for ax in (ax1, ax2, ax3):
         ax.set_facecolor(SURFACE)
         ax.grid(True, color=INK2, alpha=0.15, lw=0.6)
         for s in ("top", "right"):

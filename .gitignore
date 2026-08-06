@@ -119,3 +119,15 @@ docs/generated/
 # briefly swept into a commit when .gitignore itself got deleted: never again
 paper/
 poster/
+
+docs/generated
+docs/superpowers
+
+pps-live.log
+pps-live.png
+
+# The handoff notes carry the board's console password, so they stay local like
+# the other internal docs above. The built handoff PDF (docs/pipeline-handoff.pdf)
+# has no credential in it and IS tracked. Delete this line to publish the notes,
+# but strip the password first.
+docs/HANDOFF.md
