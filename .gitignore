@@ -131,3 +131,10 @@ pps-live.png
 # has no credential in it and IS tracked. Delete this line to publish the notes,
 # but strip the password first.
 docs/HANDOFF.md
+
+# Capture data and figures pulled off the board into the repo root. One pattern
+# per line: a missing newline here once let an 827 MB CSV into a commit, and the
+# CSV rule said .png, so neither file was actually ignored.
+day-*.png
+events-tclk-*.csv
+events-*.csv
