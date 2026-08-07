@@ -126,11 +126,6 @@ docs/superpowers
 pps-live.log
 pps-live.png
 
-# The handoff notes carry the board's console password, so they stay local like
-# the other internal docs above. The built handoff PDF (docs/pipeline-handoff.pdf)
-# has no credential in it and IS tracked. Delete this line to publish the notes,
-# but strip the password first.
-docs/HANDOFF.md
 
 # Capture data and figures pulled off the board into the repo root. One pattern
 # per line: a missing newline here once let an 827 MB CSV into a commit, and the
